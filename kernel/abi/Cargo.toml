@@ -1,0 +1,8 @@
+[package]
+name = "absd-abi"
+version = "0.1.0"
+edition = "2024"
+description = "Definitions shared by the ABSD kernel and its userspace programs"
+
+[lib]
+doctest = false

@@ -1,0 +1,926 @@
+[
+ {
+  "observation_id": "sha256:7520d161729d747faacceefa721354374fa04136ed7d3158bec9ed4efeb273ea",
+  "posture": {
+   "all_inputs": [
+    {
+     "artifact_id": "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3",
+     "key": {
+      "profile_id": "nq.host",
+      "question_id": "nq.host.load_pressure",
+      "subject_id": "host:local",
+      "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+     },
+     "receiver_status": "delivered"
+    }
+   ],
+   "assessments": [
+    {
+     "artifact": {
+      "artifact_id": "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3",
+      "attempt_interval": {
+       "clock": {
+        "digest": "sha256:0165d395744ea07ebc5c981c58fc8001a20505f92cddeb349e71bae91b6b80f0",
+        "id": "nq.local_linux_realtime",
+        "version": "1"
+       },
+       "ended_at": "2026-10-10T23:16:18.586Z",
+       "qualification": {
+        "code": "absolute_clock_quality_unqualified",
+        "detail": "the local Linux wall clock has no qualified finite UTC-error bound",
+        "state": "unqualified"
+       },
+       "started_at": "2026-10-10T23:16:17.917Z"
+      },
+      "claim": {
+       "claim_id": "claim:host_load_pressure",
+       "condition_effect": "explicitly_absent",
+       "dependency_failure_ids": [],
+       "dependency_input_ids": [
+        "993b7844-2136-40dc-b5d9-20fd99a15987"
+       ],
+       "dependency_refusal_ids": [],
+       "limitations": [
+        "One scheduler snapshot does not identify the workload causing load"
+       ],
+       "nonclaims": [
+        "the causal source of the bounded condition is not established",
+        "the host boot or deployment generation is not established"
+       ],
+       "proposition": "bounded condition host_load_pressure is explicitly absent",
+       "required_distinctions": [
+        "subject_identity"
+       ],
+       "state_binding_ids": [
+        "state:subject_identity"
+       ],
+       "status": "established"
+      },
+      "claim_id": "claim:host_load_pressure",
+      "contract_schema": "nq.diagnostic_execution.v2",
+      "dependency_acquisitions": [
+       {
+        "clock": {
+         "digest": "sha256:0165d395744ea07ebc5c981c58fc8001a20505f92cddeb349e71bae91b6b80f0",
+         "id": "nq.local_linux_realtime",
+         "version": "1"
+        },
+        "ended_at": "2026-10-10T23:16:18.586Z",
+        "qualification": {
+         "code": "absolute_clock_quality_unqualified",
+         "detail": "the local Linux wall clock has no qualified finite UTC-error bound",
+         "state": "unqualified"
+        },
+        "started_at": "2026-10-10T23:16:17.917Z"
+       }
+      ],
+      "key": {
+       "profile_id": "nq.host",
+       "question_id": "nq.host.load_pressure",
+       "subject_id": "host:local",
+       "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+      },
+      "profile_semantic_id": "sha256:382b8dac14ef9353a3603757d60fc8fbc727e1bcaf088c9aab4bdf895d3f6ab1",
+      "request_id": "2994328e-e5cd-4840-b436-b4e045f130f1",
+      "run_id": "e9696223-3509-4ea7-a86b-c975171833c8"
+     },
+     "key": {
+      "profile_id": "nq.host",
+      "question_id": "nq.host.load_pressure",
+      "subject_id": "host:local",
+      "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+     },
+     "nq_trace": {
+      "artifact_id": "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3",
+      "evaluator": {
+       "digest": "sha256:554e4525b4835f732106cd9fe100925dcd0d4d706afb7c45fb380c8383f76032",
+       "id": "nq.detector_evaluator",
+       "version": "1"
+      },
+      "limitations": [
+       {
+        "code": "absolute_clock_quality_unqualified",
+        "detail": "timestamps share the local Linux wall clock; absolute UTC accuracy is not qualified",
+        "kind": "other"
+       },
+       {
+        "code": "boot_or_deployment_state_unbound",
+        "detail": "the current host profile does not export boot or deployment generation identity",
+        "kind": "other"
+       },
+       {
+        "code": "failure_domain_separation_unverified",
+        "detail": "this local execution carries no cross-vantage independence warrant",
+        "kind": "unverified_separation"
+       },
+       {
+        "code": "raw_evidence_not_publicly_retrievable",
+        "detail": "exact raw provider bytes are committed in NQ custody but no supported raw-evidence retrieval surface exists",
+        "kind": "unavailable_evidence"
+       }
+      ],
+      "nonclaims": [
+       "agreement with another artifact does not establish independent corroboration",
+       "this artifact grants no reliance, authorization, or action",
+       "this bounded diagnostic does not establish whole-subject health"
+      ],
+      "outcome": {
+       "coherence": "jointly_established",
+       "condition": "explicitly_absent",
+       "coverage": "complete",
+       "derivation": "completed",
+       "refusals": [],
+       "summary": "current complete coverage places one-minute load below the detector threshold",
+       "unsupported": []
+      },
+      "primary_claim": {
+       "claim_id": "claim:host_load_pressure",
+       "condition_effect": "explicitly_absent",
+       "dependency_failure_ids": [],
+       "dependency_input_ids": [
+        "993b7844-2136-40dc-b5d9-20fd99a15987"
+       ],
+       "dependency_refusal_ids": [],
+       "limitations": [
+        "One scheduler snapshot does not identify the workload causing load"
+       ],
+       "nonclaims": [
+        "the causal source of the bounded condition is not established",
+        "the host boot or deployment generation is not established"
+       ],
+       "proposition": "bounded condition host_load_pressure is explicitly absent",
+       "required_distinctions": [
+        "subject_identity"
+       ],
+       "state_binding_ids": [
+        "state:subject_identity"
+       ],
+       "status": "established"
+      },
+      "primary_state_bindings": [
+       {
+        "binding_id": "state:subject_identity",
+        "kind": "subject_identity",
+        "supporting_input_ids": [
+         "993b7844-2136-40dc-b5d9-20fd99a15987"
+        ],
+        "value": "host:local"
+       }
+      ],
+      "projection": {
+       "identity": {
+        "digest": "sha256:75ff2be747e32e4dbdecd2acf5aeef119fbb96aca0d625e359104d61cc6c4407",
+        "id": "nq.detector_input_projection",
+        "version": "1"
+       },
+       "omitted_distinctions": []
+      },
+      "threshold_policy": {
+       "digest": "sha256:52b815509d26878fad1f88c6352bcd17537452f704072e56664e18434fee855e",
+       "id": "nq.host.load_pressure.threshold_policy",
+       "version": "1"
+      }
+     },
+     "reason": "the exact diagnostic basis has authority-owned present support (support sha256:c9567e7afed076598935607f7883bb65545422396d4779b16040a008e23e3b71)",
+     "requirement": "mandatory",
+     "standing": "current",
+     "status": "explicitly_absent"
+    }
+   ],
+   "completeness": "complete",
+   "condition": "clean",
+   "coverage": "complete",
+   "current": true,
+   "delivery": "not_required",
+   "evaluated_at": "2026-10-10T23:16:28Z",
+   "evaluator": {
+    "digest": "sha256:493c4bd1e728e139f3e6a34732dc1728e6c868947cc55d7277aedefe23e99e4c",
+    "id": "nightshift.operational_posture_evaluator",
+    "version": "2"
+   },
+   "headline": "clean",
+   "input_evidence": {
+    "inputs": [
+     {
+      "artifact": {
+       "artifact_id": "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3",
+       "attempt_interval": {
+        "clock": {
+         "digest": "sha256:0165d395744ea07ebc5c981c58fc8001a20505f92cddeb349e71bae91b6b80f0",
+         "id": "nq.local_linux_realtime",
+         "version": "1"
+        },
+        "ended_at": "2026-10-10T23:16:18.586Z",
+        "qualification": {
+         "code": "absolute_clock_quality_unqualified",
+         "detail": "the local Linux wall clock has no qualified finite UTC-error bound",
+         "state": "unqualified"
+        },
+        "started_at": "2026-10-10T23:16:17.917Z"
+       },
+       "canonicalization": {
+        "digest": "sha256:e49d92d4e86052e66ed2a481b9386d3b214ce3d2df5fd109a6491ccb9ffb24f3",
+        "id": "rfc8785-jcs",
+        "version": "1"
+       },
+       "claims": [
+        {
+         "claim_id": "claim:host_load_pressure",
+         "condition_effect": "explicitly_absent",
+         "dependency_failure_ids": [],
+         "dependency_input_ids": [
+          "993b7844-2136-40dc-b5d9-20fd99a15987"
+         ],
+         "dependency_refusal_ids": [],
+         "limitations": [
+          "One scheduler snapshot does not identify the workload causing load"
+         ],
+         "nonclaims": [
+          "the causal source of the bounded condition is not established",
+          "the host boot or deployment generation is not established"
+         ],
+         "proposition": "bounded condition host_load_pressure is explicitly absent",
+         "required_distinctions": [
+          "subject_identity"
+         ],
+         "state_binding_ids": [
+          "state:subject_identity"
+         ],
+         "status": "established"
+        }
+       ],
+       "completed_at": "2026-10-10T23:16:18.624Z",
+       "evaluator": {
+        "digest": "sha256:554e4525b4835f732106cd9fe100925dcd0d4d706afb7c45fb380c8383f76032",
+        "id": "nq.detector_evaluator",
+        "version": "1"
+       },
+       "execution_clock": {
+        "digest": "sha256:0165d395744ea07ebc5c981c58fc8001a20505f92cddeb349e71bae91b6b80f0",
+        "id": "nq.local_linux_realtime",
+        "version": "1"
+       },
+       "inputs": {
+        "admitted": [
+         {
+          "admission_rule": {
+           "digest": "sha256:4cb36738646984310898061b6d14dcf93345620a9b6fafd39c04f2ad2ad89977",
+           "id": "nq.local_provider_admission",
+           "version": "1"
+          },
+          "input_id": "993b7844-2136-40dc-b5d9-20fd99a15987",
+          "normalization_rule": {
+           "digest": "sha256:23364600692e582f8086d68d049f504d45e8042243b985ce4707a2065e6d58fb",
+           "id": "nq.protocol_report_normalization",
+           "version": "1"
+          },
+          "normalized_artifact_id": "sha256:f8d65a8c330122e6f06aed4178868ecf9aa37a4dfea58e90eb2972f126b36dff",
+          "projected_artifact_id": "sha256:0ffa4e68e8c94c493bdf102b84e52ddfc73227bc868df085848bc62620cf4b6b",
+          "projection_rule": {
+           "digest": "sha256:75ff2be747e32e4dbdecd2acf5aeef119fbb96aca0d625e359104d61cc6c4407",
+           "id": "nq.detector_input_projection",
+           "version": "1"
+          }
+         }
+        ],
+        "excluded": [],
+        "expected": [
+         {
+          "expectation_id": "expected:current_provider_report",
+          "required": true,
+          "role": "profile_report"
+         }
+        ],
+        "failed": [],
+        "received": [
+         {
+          "acquisition": {
+           "clock": {
+            "digest": "sha256:0165d395744ea07ebc5c981c58fc8001a20505f92cddeb349e71bae91b6b80f0",
+            "id": "nq.local_linux_realtime",
+            "version": "1"
+           },
+           "ended_at": "2026-10-10T23:16:18.586Z",
+           "qualification": {
+            "code": "absolute_clock_quality_unqualified",
+            "detail": "the local Linux wall clock has no qualified finite UTC-error bound",
+            "state": "unqualified"
+           },
+           "started_at": "2026-10-10T23:16:17.917Z"
+          },
+          "availability_at_derivation": "committed_unavailable",
+          "capture_mode": "exact_source",
+          "capture_policy": {
+           "digest": "sha256:5ee42cb2a487048bd7757161ceb7c3e1ee8c46703652479d53adc22a91aa2033",
+           "id": "nq.capture.exact_provider_response",
+           "version": "1"
+          },
+          "expectation_id": "expected:current_provider_report",
+          "input_id": "993b7844-2136-40dc-b5d9-20fd99a15987",
+          "provider_intake_id": "993b7844-2136-40dc-b5d9-20fd99a15987",
+          "raw_artifact_id": "sha256:1ff0453e54707564ba72eb07a3c896202c9ffec0d213067c11e6134252ff15af",
+          "received_at": "2026-10-10T23:16:18.586Z"
+         }
+        ],
+        "refused": [],
+        "selected": [
+         {
+          "input_id": "993b7844-2136-40dc-b5d9-20fd99a15987",
+          "projected_artifact_id": "sha256:0ffa4e68e8c94c493bdf102b84e52ddfc73227bc868df085848bc62620cf4b6b",
+          "role": "profile_report"
+         }
+        ],
+        "selection_rule": {
+         "digest": "sha256:de9501bd983b10c1590cddaafe9fbfa0fbea2e951d8bed9f4e9bd112bb2712bc",
+         "id": "nq.fresh_single_admitted_report",
+         "version": "1"
+        }
+       },
+       "limitations": [
+        {
+         "code": "absolute_clock_quality_unqualified",
+         "detail": "timestamps share the local Linux wall clock; absolute UTC accuracy is not qualified",
+         "kind": "other"
+        },
+        {
+         "code": "boot_or_deployment_state_unbound",
+         "detail": "the current host profile does not export boot or deployment generation identity",
+         "kind": "other"
+        },
+        {
+         "code": "failure_domain_separation_unverified",
+         "detail": "this local execution carries no cross-vantage independence warrant",
+         "kind": "unverified_separation"
+        },
+        {
+         "code": "raw_evidence_not_publicly_retrievable",
+         "detail": "exact raw provider bytes are committed in NQ custody but no supported raw-evidence retrieval surface exists",
+         "kind": "unavailable_evidence"
+        }
+       ],
+       "nonclaims": [
+        "agreement with another artifact does not establish independent corroboration",
+        "this artifact grants no reliance, authorization, or action",
+        "this bounded diagnostic does not establish whole-subject health"
+       ],
+       "outcome": {
+        "coherence": "jointly_established",
+        "condition": "explicitly_absent",
+        "coverage": "complete",
+        "derivation": "completed",
+        "refusals": [],
+        "summary": "current complete coverage places one-minute load below the detector threshold",
+        "unsupported": []
+       },
+       "primary_claim_id": "claim:host_load_pressure",
+       "producer": {
+        "build": {
+         "digest": "sha256:f5f6c8e3d6ad2df3e936594fcdf4c2fcca0a50ed0b50d0f4014fedb997f31612",
+         "id": "nq.evaluator_build",
+         "version": "2"
+        },
+        "cohort": {
+         "digest": "sha256:6c1b84643540b96c5cbea083b56e0d22da8d4b7736799710443999784c1b520d",
+         "id": "nq.compiled_diagnostic_cohort",
+         "version": "1"
+        },
+        "node_id": "nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f"
+       },
+       "profile": {
+        "digest": "sha256:c8c10fed1cc5598d953b4defbc98e8c106fc59e035c249d43681698a5c7b4ff9",
+        "id": "nq.host",
+        "version": "1"
+       },
+       "profile_semantic_id": "sha256:382b8dac14ef9353a3603757d60fc8fbc727e1bcaf088c9aab4bdf895d3f6ab1",
+       "projection": {
+        "identity": {
+         "digest": "sha256:75ff2be747e32e4dbdecd2acf5aeef119fbb96aca0d625e359104d61cc6c4407",
+         "id": "nq.detector_input_projection",
+         "version": "1"
+        },
+        "omitted_distinctions": []
+       },
+       "question": {
+        "digest": "sha256:7de797da3d9d3a6ae8e21e5d77b95095453336cd38f606ffb3eb29ff6a32e2cf",
+        "id": "nq.host.load_pressure",
+        "version": "1"
+       },
+       "request_id": "2994328e-e5cd-4840-b436-b4e045f130f1",
+       "run_id": "e9696223-3509-4ea7-a86b-c975171833c8",
+       "schema": "nq.diagnostic_execution.v2",
+       "started_at": "2026-10-10T23:16:17.917Z",
+       "state_bindings": [
+        {
+         "binding_id": "state:subject_identity",
+         "kind": "subject_identity",
+         "supporting_input_ids": [
+          "993b7844-2136-40dc-b5d9-20fd99a15987"
+         ],
+         "value": "host:local"
+        }
+       ],
+       "state_model": {
+        "digest": "sha256:3eb3f3ab1e8b76dda3bfe9869e6e5a4d57e7d72d3414537b778f6c8f82a4bc07",
+        "id": "nq.host.subject_binding_state",
+        "version": "1"
+       },
+       "subject": {
+        "id": "host:local",
+        "scope": {
+         "digest": "sha256:63018d3e968fd57925529baf0dcd668ad7f83994bdf912afd1c88a9a1d206908",
+         "id": "nq.scope.host",
+         "version": "1"
+        }
+       },
+       "threshold_policy": {
+        "digest": "sha256:52b815509d26878fad1f88c6352bcd17537452f704072e56664e18434fee855e",
+        "id": "nq.host.load_pressure.threshold_policy",
+        "version": "1"
+       },
+       "vantage": {
+        "digest": "sha256:4978d14794a6f0e1db4a47fd5f05c031b8f3c47b80ba3ae7e270aba033d6f53f",
+        "id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local",
+        "version": "684d78cb-e530-41e4-bb07-29a54474fd2e"
+       }
+      },
+      "key": {
+       "profile_id": "nq.host",
+       "question_id": "nq.host.load_pressure",
+       "subject_id": "host:local",
+       "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+      },
+      "status": "delivered"
+     }
+    ],
+    "inputs_id": "sha256:d92a3a2174538ea83a214038c4453555c697792c0add4039f753ce211e2fd530",
+    "schema": "nightshift.diagnostic_inputs.v2"
+   },
+   "inventory_valid": true,
+   "policy": {
+    "delivery_required": false,
+    "generation": "generation:laned-refhost-host-load-1",
+    "inventory": [
+     {
+      "binding": {
+       "claim_id": "claim:host_load_pressure",
+       "evaluator": {
+        "digest": "sha256:554e4525b4835f732106cd9fe100925dcd0d4d706afb7c45fb380c8383f76032",
+        "id": "nq.detector_evaluator",
+        "version": "1"
+       },
+       "producer_build": {
+        "digest": "sha256:f5f6c8e3d6ad2df3e936594fcdf4c2fcca0a50ed0b50d0f4014fedb997f31612",
+        "id": "nq.evaluator_build",
+        "version": "2"
+       },
+       "producer_cohort": {
+        "digest": "sha256:6c1b84643540b96c5cbea083b56e0d22da8d4b7736799710443999784c1b520d",
+        "id": "nq.compiled_diagnostic_cohort",
+        "version": "1"
+       },
+       "producer_node_id": "nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f",
+       "profile": {
+        "digest": "sha256:c8c10fed1cc5598d953b4defbc98e8c106fc59e035c249d43681698a5c7b4ff9",
+        "id": "nq.host",
+        "version": "1"
+       },
+       "profile_semantic_id": "sha256:382b8dac14ef9353a3603757d60fc8fbc727e1bcaf088c9aab4bdf895d3f6ab1",
+       "projection": {
+        "identity": {
+         "digest": "sha256:75ff2be747e32e4dbdecd2acf5aeef119fbb96aca0d625e359104d61cc6c4407",
+         "id": "nq.detector_input_projection",
+         "version": "1"
+        },
+        "omitted_distinctions": []
+       },
+       "question": {
+        "digest": "sha256:7de797da3d9d3a6ae8e21e5d77b95095453336cd38f606ffb3eb29ff6a32e2cf",
+        "id": "nq.host.load_pressure",
+        "version": "1"
+       },
+       "state_model": {
+        "digest": "sha256:3eb3f3ab1e8b76dda3bfe9869e6e5a4d57e7d72d3414537b778f6c8f82a4bc07",
+        "id": "nq.host.subject_binding_state",
+        "version": "1"
+       },
+       "subject": {
+        "id": "host:local",
+        "scope": {
+         "digest": "sha256:63018d3e968fd57925529baf0dcd668ad7f83994bdf912afd1c88a9a1d206908",
+         "id": "nq.scope.host",
+         "version": "1"
+        }
+       },
+       "threshold_policy": {
+        "digest": "sha256:52b815509d26878fad1f88c6352bcd17537452f704072e56664e18434fee855e",
+        "id": "nq.host.load_pressure.threshold_policy",
+        "version": "1"
+       },
+       "vantage": {
+        "digest": "sha256:4978d14794a6f0e1db4a47fd5f05c031b8f3c47b80ba3ae7e270aba033d6f53f",
+        "id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local",
+        "version": "684d78cb-e530-41e4-bb07-29a54474fd2e"
+       }
+      },
+      "max_age_seconds": 300,
+      "required_state_bindings": [
+       {
+        "kind": "subject_identity",
+        "value": "host:local"
+       }
+      ],
+      "requirement": "mandatory"
+     }
+    ],
+    "policy_id": "sha256:5f5ab8b2d51f7d68f75bbdf39a64e50e0527459cb1f2a8ebd506a17acb24cf2c",
+    "role": {
+     "digest": "sha256:04ae3fb87b1e2adc5789a0c91e63ae5ae928a1e61f21e7a53acfa2fe2df7dcc3",
+     "id": "nightshift-role:host",
+     "version": "1"
+    },
+    "schema": "nightshift.diagnostic_posture_policy.v2",
+    "subject": {
+     "id": "host:local",
+     "scope": {
+      "digest": "sha256:63018d3e968fd57925529baf0dcd668ad7f83994bdf912afd1c88a9a1d206908",
+      "id": "nq.scope.host",
+      "version": "1"
+     }
+    }
+   },
+   "posture_id": "sha256:b958f21b26b1eb66dbc8696a25c6ae6187d046fb4c64c8a4a8ca39192db0cee4",
+   "present_support": {
+    "artifact_ids": [
+     "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3"
+    ],
+    "authority_id": "pulse-authority:laned-refhost-load-pressure-v1",
+    "diagnostic_inputs_id": "sha256:d92a3a2174538ea83a214038c4453555c697792c0add4039f753ce211e2fd530",
+    "evaluated_at": {
+     "clock_id": "pulse-linux-boottime:sha256:585610c36ddf653e5c0e54c2d48e65b8c4f53ce3d96e7bfbce914a4a5d1d8d73",
+     "tick": 94933680
+    },
+    "evidence_refs": [
+     "sha256:5e839a89be8f1697ef3d98018c229c7420d03dba60cb3c3057530c6e1423a606"
+    ],
+    "expiry": {
+     "clock_id": "pulse-linux-boottime:sha256:585610c36ddf653e5c0e54c2d48e65b8c4f53ce3d96e7bfbce914a4a5d1d8d73",
+     "tick": 95233430
+    },
+    "observation_cycle_id": "cycle:fe7845b8-f28e-4266-95de-320fd6bf12a2",
+    "observation_id": "sha256:7520d161729d747faacceefa721354374fa04136ed7d3158bec9ed4efeb273ea",
+    "query_id": "sha256:5fe69c09c6267d0774193f10995899c52a4a0f8be5dac7b33435fa7adbec68cd",
+    "request_nonce": "support-query:2f4e6348-29e9-4346-b1ea-7d76ae2bbd32",
+    "schema": "nightshift.qualified_support.v1",
+    "scope_id": "sha256:63018d3e968fd57925529baf0dcd668ad7f83994bdf912afd1c88a9a1d206908",
+    "standing": "current",
+    "subject_id": "host:local",
+    "support_id": "sha256:c9567e7afed076598935607f7883bb65545422396d4779b16040a008e23e3b71"
+   },
+   "recurrence": [
+    {
+     "key": {
+      "profile_id": "nq.host",
+      "question_id": "nq.host.load_pressure",
+      "subject_id": "host:local",
+      "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+     },
+     "reason": "the exact completed current slot remains within its standing window",
+     "records": [
+      {
+       "evidence": {
+        "artifact": {
+         "artifact_id": "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3",
+         "attempt_interval": {
+          "clock": {
+           "digest": "sha256:0165d395744ea07ebc5c981c58fc8001a20505f92cddeb349e71bae91b6b80f0",
+           "id": "nq.local_linux_realtime",
+           "version": "1"
+          },
+          "ended_at": "2026-10-10T23:16:18.586Z",
+          "qualification": {
+           "code": "absolute_clock_quality_unqualified",
+           "detail": "the local Linux wall clock has no qualified finite UTC-error bound",
+           "state": "unqualified"
+          },
+          "started_at": "2026-10-10T23:16:17.917Z"
+         },
+         "claim": {
+          "claim_id": "claim:host_load_pressure",
+          "condition_effect": "explicitly_absent",
+          "dependency_failure_ids": [],
+          "dependency_input_ids": [
+           "993b7844-2136-40dc-b5d9-20fd99a15987"
+          ],
+          "dependency_refusal_ids": [],
+          "limitations": [
+           "One scheduler snapshot does not identify the workload causing load"
+          ],
+          "nonclaims": [
+           "the causal source of the bounded condition is not established",
+           "the host boot or deployment generation is not established"
+          ],
+          "proposition": "bounded condition host_load_pressure is explicitly absent",
+          "required_distinctions": [
+           "subject_identity"
+          ],
+          "state_binding_ids": [
+           "state:subject_identity"
+          ],
+          "status": "established"
+         },
+         "claim_id": "claim:host_load_pressure",
+         "contract_schema": "nq.diagnostic_execution.v2",
+         "dependency_acquisitions": [
+          {
+           "clock": {
+            "digest": "sha256:0165d395744ea07ebc5c981c58fc8001a20505f92cddeb349e71bae91b6b80f0",
+            "id": "nq.local_linux_realtime",
+            "version": "1"
+           },
+           "ended_at": "2026-10-10T23:16:18.586Z",
+           "qualification": {
+            "code": "absolute_clock_quality_unqualified",
+            "detail": "the local Linux wall clock has no qualified finite UTC-error bound",
+            "state": "unqualified"
+           },
+           "started_at": "2026-10-10T23:16:17.917Z"
+          }
+         ],
+         "key": {
+          "profile_id": "nq.host",
+          "question_id": "nq.host.load_pressure",
+          "subject_id": "host:local",
+          "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+         },
+         "profile_semantic_id": "sha256:382b8dac14ef9353a3603757d60fc8fbc727e1bcaf088c9aab4bdf895d3f6ab1",
+         "request_id": "2994328e-e5cd-4840-b436-b4e045f130f1",
+         "run_id": "e9696223-3509-4ea7-a86b-c975171833c8"
+        },
+        "attempt": {
+         "attempt_id": "attempt:laned-refhost-host-load-1",
+         "request_id": "2994328e-e5cd-4840-b436-b4e045f130f1",
+         "slot_id": "sha256:86fe5a33c8ab2b010021cd30e66f506217ff505c55802b495b4be61d83c952bc",
+         "started_at": "2026-10-10T23:16:17.917Z"
+        },
+        "completed_at": "2026-10-10T23:16:18.624Z",
+        "kind": "completed"
+       },
+       "key": {
+        "profile_id": "nq.host",
+        "question_id": "nq.host.load_pressure",
+        "subject_id": "host:local",
+        "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+       },
+       "policy": {
+        "cadence_seconds": 3600,
+        "first_due_at": "2026-10-10T23:16:17Z",
+        "jitter_bound_seconds": 0,
+        "max_execution_budget_seconds": 60,
+        "schedule_id": "schedule:laned-refhost-host-load",
+        "standing_window_seconds": 300
+       },
+       "slot": {
+        "budget_seconds": 60,
+        "due_at": "2026-10-10T23:16:17Z",
+        "key": {
+         "profile_id": "nq.host",
+         "question_id": "nq.host.load_pressure",
+         "subject_id": "host:local",
+         "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+        },
+        "occurrence": 0,
+        "schedule_id": "schedule:laned-refhost-host-load",
+        "slot_id": "sha256:86fe5a33c8ab2b010021cd30e66f506217ff505c55802b495b4be61d83c952bc"
+       }
+      }
+     ],
+     "requirement": "mandatory",
+     "slot_id": "sha256:86fe5a33c8ab2b010021cd30e66f506217ff505c55802b495b4be61d83c952bc",
+     "standing": "current"
+    }
+   ],
+   "recurrence_axis": "current",
+   "recurrence_evidence": {
+    "delivery": "not_required",
+    "obligations": [
+     {
+      "key": {
+       "profile_id": "nq.host",
+       "question_id": "nq.host.load_pressure",
+       "subject_id": "host:local",
+       "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+      },
+      "policy": {
+       "cadence_seconds": 3600,
+       "first_due_at": "2026-10-10T23:16:17Z",
+       "jitter_bound_seconds": 0,
+       "max_execution_budget_seconds": 60,
+       "schedule_id": "schedule:laned-refhost-host-load",
+       "standing_window_seconds": 300
+      }
+     }
+    ],
+    "records": [
+     {
+      "evidence": {
+       "artifact": {
+        "artifact_id": "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3",
+        "attempt_interval": {
+         "clock": {
+          "digest": "sha256:0165d395744ea07ebc5c981c58fc8001a20505f92cddeb349e71bae91b6b80f0",
+          "id": "nq.local_linux_realtime",
+          "version": "1"
+         },
+         "ended_at": "2026-10-10T23:16:18.586Z",
+         "qualification": {
+          "code": "absolute_clock_quality_unqualified",
+          "detail": "the local Linux wall clock has no qualified finite UTC-error bound",
+          "state": "unqualified"
+         },
+         "started_at": "2026-10-10T23:16:17.917Z"
+        },
+        "claim": {
+         "claim_id": "claim:host_load_pressure",
+         "condition_effect": "explicitly_absent",
+         "dependency_failure_ids": [],
+         "dependency_input_ids": [
+          "993b7844-2136-40dc-b5d9-20fd99a15987"
+         ],
+         "dependency_refusal_ids": [],
+         "limitations": [
+          "One scheduler snapshot does not identify the workload causing load"
+         ],
+         "nonclaims": [
+          "the causal source of the bounded condition is not established",
+          "the host boot or deployment generation is not established"
+         ],
+         "proposition": "bounded condition host_load_pressure is explicitly absent",
+         "required_distinctions": [
+          "subject_identity"
+         ],
+         "state_binding_ids": [
+          "state:subject_identity"
+         ],
+         "status": "established"
+        },
+        "claim_id": "claim:host_load_pressure",
+        "contract_schema": "nq.diagnostic_execution.v2",
+        "dependency_acquisitions": [
+         {
+          "clock": {
+           "digest": "sha256:0165d395744ea07ebc5c981c58fc8001a20505f92cddeb349e71bae91b6b80f0",
+           "id": "nq.local_linux_realtime",
+           "version": "1"
+          },
+          "ended_at": "2026-10-10T23:16:18.586Z",
+          "qualification": {
+           "code": "absolute_clock_quality_unqualified",
+           "detail": "the local Linux wall clock has no qualified finite UTC-error bound",
+           "state": "unqualified"
+          },
+          "started_at": "2026-10-10T23:16:17.917Z"
+         }
+        ],
+        "key": {
+         "profile_id": "nq.host",
+         "question_id": "nq.host.load_pressure",
+         "subject_id": "host:local",
+         "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+        },
+        "profile_semantic_id": "sha256:382b8dac14ef9353a3603757d60fc8fbc727e1bcaf088c9aab4bdf895d3f6ab1",
+        "request_id": "2994328e-e5cd-4840-b436-b4e045f130f1",
+        "run_id": "e9696223-3509-4ea7-a86b-c975171833c8"
+       },
+       "attempt": {
+        "attempt_id": "attempt:laned-refhost-host-load-1",
+        "request_id": "2994328e-e5cd-4840-b436-b4e045f130f1",
+        "slot_id": "sha256:86fe5a33c8ab2b010021cd30e66f506217ff505c55802b495b4be61d83c952bc",
+        "started_at": "2026-10-10T23:16:17.917Z"
+       },
+       "completed_at": "2026-10-10T23:16:18.624Z",
+       "kind": "completed"
+      },
+      "key": {
+       "profile_id": "nq.host",
+       "question_id": "nq.host.load_pressure",
+       "subject_id": "host:local",
+       "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+      },
+      "policy": {
+       "cadence_seconds": 3600,
+       "first_due_at": "2026-10-10T23:16:17Z",
+       "jitter_bound_seconds": 0,
+       "max_execution_budget_seconds": 60,
+       "schedule_id": "schedule:laned-refhost-host-load",
+       "standing_window_seconds": 300
+      },
+      "slot": {
+       "budget_seconds": 60,
+       "due_at": "2026-10-10T23:16:17Z",
+       "key": {
+        "profile_id": "nq.host",
+        "question_id": "nq.host.load_pressure",
+        "subject_id": "host:local",
+        "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+       },
+       "occurrence": 0,
+       "schedule_id": "schedule:laned-refhost-host-load",
+       "slot_id": "sha256:86fe5a33c8ab2b010021cd30e66f506217ff505c55802b495b4be61d83c952bc"
+      }
+     }
+    ],
+    "recurrence_id": "sha256:3b0ece4a89e13ce30b65455aad5b6fa2b35b9b0010263818135f5359da44d65e",
+    "schema": "nightshift.recurrence_evidence.v2"
+   },
+   "schedule_obligations": [
+    {
+     "key": {
+      "profile_id": "nq.host",
+      "question_id": "nq.host.load_pressure",
+      "subject_id": "host:local",
+      "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+     },
+     "policy": {
+      "cadence_seconds": 3600,
+      "first_due_at": "2026-10-10T23:16:17Z",
+      "jitter_bound_seconds": 0,
+      "max_execution_budget_seconds": 60,
+      "schedule_id": "schedule:laned-refhost-host-load",
+      "standing_window_seconds": 300
+     }
+    }
+   ],
+   "schema": "nightshift.operational_posture.v2",
+   "unexpected_inputs": []
+  },
+  "schema": "nightshift.observation_record.v2",
+  "source_admissions": [
+   {
+    "artifact": {
+     "artifact_id": "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3",
+     "canonical_bytes_length": 6892,
+     "canonical_bytes_sha256": "sha256:3c8bc4346c4dd676a1f66b76a29801656a162726b48ab760faab4ce024cb7ecf",
+     "contract_schema": "nq.diagnostic_execution.v2"
+    },
+    "disposition": "admitted_report",
+    "judgment": {
+     "judgment_digest": "sha256:f18c977a759828e8c01f1bb6e14962827c220bf343edadeb40d88c5d54c825fe",
+     "judgment_schema": "nq-ng.judgment.v1",
+     "report_id": "ae2642c0-efc5-4d2f-a073-4fe27df5e210"
+    },
+    "nonclaims": [
+     "admission establishes evidence eligibility only",
+     "this provenance does not establish freshness, reliance, authorization, or action",
+     "source and resolver honesty remain environmental"
+    ],
+    "origin": {
+     "committed_at": "2026-10-10T23:16:18.634Z",
+     "completed_at": "2026-10-10T23:16:18.624Z",
+     "evaluation_id": "850558ae-d960-45e1-bdde-196495070780",
+     "run_id": "e9696223-3509-4ea7-a86b-c975171833c8"
+    },
+    "provenance_id": "sha256:8b87aab24800d8a794021cc68abe01cf3a982a07dd69268a46ce38c1cf89c22c",
+    "provider": {
+     "admission_context_digest": "sha256:c9f46edfb006c7bef5199e8e39da92f6df65f80d819db2c3d1a26077c36af984",
+     "profile_semantic_id": "sha256:382b8dac14ef9353a3603757d60fc8fbc727e1bcaf088c9aab4bdf895d3f6ab1",
+     "provider_admission_id": "sha256:95639e014331bfa0c27bbc864e562e6f9cb38e4fa3a5d470b9c1665139f56517",
+     "provider_intake_id": "993b7844-2136-40dc-b5d9-20fd99a15987",
+     "raw_sha256": "sha256:1ff0453e54707564ba72eb07a3c896202c9ffec0d213067c11e6134252ff15af",
+     "source_admission_id": "684d78cb-e530-41e4-bb07-29a54474fd2e"
+    },
+    "schema": "nq.diagnostic_admission_provenance.v1",
+    "source": {
+     "kind": "local_nq_store",
+     "source_id": "nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f"
+    }
+   }
+  ],
+  "support": {
+   "artifact_ids": [
+    "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3"
+   ],
+   "authority_id": "pulse-authority:laned-refhost-load-pressure-v1",
+   "diagnostic_inputs_id": "sha256:d92a3a2174538ea83a214038c4453555c697792c0add4039f753ce211e2fd530",
+   "evaluated_at": {
+    "clock_id": "pulse-linux-boottime:sha256:585610c36ddf653e5c0e54c2d48e65b8c4f53ce3d96e7bfbce914a4a5d1d8d73",
+    "tick": 94933680
+   },
+   "evidence_refs": [
+    "sha256:5e839a89be8f1697ef3d98018c229c7420d03dba60cb3c3057530c6e1423a606"
+   ],
+   "expiry": {
+    "clock_id": "pulse-linux-boottime:sha256:585610c36ddf653e5c0e54c2d48e65b8c4f53ce3d96e7bfbce914a4a5d1d8d73",
+    "tick": 95233430
+   },
+   "observation_cycle_id": "cycle:fe7845b8-f28e-4266-95de-320fd6bf12a2",
+   "observation_id": "sha256:7520d161729d747faacceefa721354374fa04136ed7d3158bec9ed4efeb273ea",
+   "query_id": "sha256:5fe69c09c6267d0774193f10995899c52a4a0f8be5dac7b33435fa7adbec68cd",
+   "request_nonce": "support-query:2f4e6348-29e9-4346-b1ea-7d76ae2bbd32",
+   "schema": "nightshift.qualified_support.v1",
+   "scope_id": "sha256:63018d3e968fd57925529baf0dcd668ad7f83994bdf912afd1c88a9a1d206908",
+   "standing": "current",
+   "subject_id": "host:local",
+   "support_id": "sha256:c9567e7afed076598935607f7883bb65545422396d4779b16040a008e23e3b71"
+  }
+ }
+]

@@ -1,0 +1,15 @@
+[package]
+name = "absd-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+test = false
+doctest = false
+
+
+[dependencies]
+absd-broker = { path = "../broker" }
+absd-fs = { path = "../fs" }
+absd-fsd = { path = "../fsd" }
+absd-release = { path = "../release" }

@@ -1,0 +1,24 @@
+# Programs of the source-portability probe (docs/COMPATIBILITY-LEDGER.md).
+# Tab-separated: CRATE VERSION SHA256 BIN EXPECT [SIGNATURE]. SHA256 is the
+# crates.io checksum of the registry archive. EXPECT is "run" (built for ABSD
+# and run by scripts/compat-matrix.py) or "fail" (the ABSD build must fail
+# and its log must contain SIGNATURE, the first wall the ledger records).
+uu_basename	0.12.0	b29c8c798465d8001a90b6231554f8e00e9c4cf781a9f7d0b96224dcaac77ecd	basename	run
+uu_seq	0.12.0	ad149ba156667c2ce8d1d87411e091632db5608d5c8777fbe1a134856e89eae0	seq	run
+uu_cut	0.12.0	d2087dececd3be61b5671c0978605e0fa9ecbe707294137896efdb2848094326	cut	run
+uu_fold	0.12.0	b28755578b0b98318371e055fcc70b94c9198bacfce0d125d3049ab1c2d2beb2	fold	run
+uu_nl	0.12.0	6ab04808b361b764c96380882db6e593d12c7ae5d62582fcee0ca670ba356349	nl	run
+uu_uniq	0.12.0	53c59563ff6419f674e2cd5b50cef9f3a0f0e73a06291dd635c006fc253ad268	uniq	run
+uu_base64	0.12.0	bd6b72f857b343f12c7f4be39917343a00d214a8250eaf49509cf9df6f6c8ddc	base64	run
+b3sum	1.8.7	d12cbf49ea673482c08f7a2cbede6388e698bdae001e9e1536c314cf2741ea5d	b3sum	run
+jsonxf	1.1.1	50d6889ea54a6add10ed8a757719ec88293201265fa7fe56e09ae66b6df038a6	jsonxf	run
+ripgrep	15.2.0	a30750b6d0743bfdd2656ebbaf4555aa278c43144b84bc389bcbfa399485ec71	rg	run
+uu_wc	0.12.0	e45457ac8613955d62a62e2cea12aab7023a4d015c24a30b4719ee9138d8598d	wc	fail	The target OS is not yet supported in the errno crate
+uu_head	0.12.0	a5d8bd166467c73ad000c303a0d8c3c3fa03160000bb4493cfd40b8f7816fb95	head	fail	The target OS is not yet supported in the errno crate
+uu_cat	0.12.0	75143ac91809c365ca76bb141ea2a7a35ffdf821046f52e14bd83b710bb5ce34	cat	fail	The target OS is not yet supported in the errno crate
+uu_sort	0.12.0	45084032c01910cb5d0515acbcea8ee6377d07e46e6fc84afde79fbd9dc6c6f8	sort	fail	The target OS is not yet supported in the errno crate
+hexyl	0.17.0	e0df0c7b9afa020673c0942ae257a938b257d79e6395d8f1b8b45898f3391c5e	hexyl	fail	errno-0.3.9/src/lib.rs
+sd	1.0.0	70613c41881ca1e5b69e6bb110f2ac499739c03a151b00e41e16090974b826a8	sd	fail	errno-0.3.5/src/lib.rs
+jaq	3.1.1	e1cb2dc59f15c78d3ad513134f6ba9f2c2fae3389b0482c31eccf34ef24a54cc	jaq	fail	target_family not defined
+xsv	0.13.0	884ad28ba7c2d59ffe64dad30b38d45fadb747f07b465faa519ec25bfac97f5f	xsv	fail	rand-0.4.6/src/os.rs
+fd-find	10.5.0	f35becce49c551724fd26d9824ec01d6578868cecbcc4e3d060658f9f8ad1e4d	fd	fail	no `Signal` in `platform`

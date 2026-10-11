@@ -1,0 +1,3 @@
+schema = "nq.config.v1"
+database_path = "/tmp/absd-reference/nq/store/nq.db"
+admissions_dir = "/tmp/absd-reference/nq/nonexistent-admissions"

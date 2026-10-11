@@ -1,0 +1,16 @@
+[package]
+name = "absd-sqlite"
+version = "0.1.0"
+edition = "2024"
+description = "SQLite's native ABSD VFS over absd-fs, and the few C library symbols SQLite links against"
+
+[dependencies]
+absd-fs = { path = "../fs" }
+absd-runtime = { path = "../runtime" }
+# Whichever version the consuming workspace's rusqlite links (0.34 for AG,
+# 0.30 for Nightshift); the VFS uses bindings present in both.
+libsqlite3-sys = { version = ">=0.30, <0.35", features = ["bundled"] }
+
+[lib]
+test = false
+doctest = false

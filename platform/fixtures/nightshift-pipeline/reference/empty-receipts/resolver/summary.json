@@ -1,0 +1,44 @@
+{
+ "absent": {
+  "default_ttl_ms": 600000,
+  "exit": 0,
+  "sha256": "309473a739e5711d1591b3aa2cac7eb2d49ea281b443ed19424d87c6bb36df98",
+  "status": "absent",
+  "stderr": ""
+ },
+ "current": {
+  "default_ttl_ms": 600000,
+  "exit": 0,
+  "sha256": "61ab51747e4939f62ec427b0bff50a7f801af79c8634ec09d2b4809d426114d6",
+  "status": "contradictory",
+  "stderr": ""
+ },
+ "current-edge": {
+  "default_ttl_ms": 600000,
+  "exit": 0,
+  "sha256": "20f267743f1679c2f188fbdd0af0841065834abbb55a3b1b38a47068a76daf1d",
+  "status": "contradictory",
+  "stderr": ""
+ },
+ "deployment-wall-at-run-end": {
+  "default_ttl_ms": 86400000,
+  "exit": 0,
+  "sha256": "9663b2a0ae9c175f50098d848f79ed80e87dcb249ed8ec51f00debee0e0df726",
+  "status": "contradictory",
+  "stderr": ""
+ },
+ "stale-edge": {
+  "default_ttl_ms": 600000,
+  "exit": 0,
+  "sha256": "309421665101de5dee5e112f24664102227d7ef318f6973be7bb20e7fd77b290",
+  "status": "contradictory",
+  "stderr": ""
+ },
+ "wrong-subject": {
+  "default_ttl_ms": 600000,
+  "exit": 0,
+  "sha256": "dee3227dee49370fa0fe9b16d479d725d1d07cb0364ac97b9616f6f2c9d4ed4d",
+  "status": "contradictory",
+  "stderr": ""
+ }
+}

@@ -1,0 +1,99 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt MAN 1
+.Os ABSD
+.Sh NAME
+.Nm man
+.Nd print manual pages
+.Sh SYNOPSIS
+.Nm
+.Op Ar section
+.Ar name
+.Nm
+.Fl k
+.Ar word
+.Sh DESCRIPTION
+.Nm
+prints the manual page
+.Ar name
+to standard output.
+With
+.Ar section
+(a digit, 1 to 9) it looks only in that section; otherwise it searches the
+sections in the order 1, 8, 6, 2, 3, 5, 7, 4, 9 and prints the first page
+it finds.
+.Pp
+With
+.Fl k
+it prints the index line of every page whose name or one-line description
+contains
+.Ar word ,
+ignoring ASCII case.
+.Pp
+The pages are plain text.
+They are written in mdoc, the BSD manual page macro language, and rendered on the build host, with a pinned GNU groff, when the system
+image is built; ABSD itself has no roff formatter and no pager.
+The page is copied to standard output unchanged; to read part of a long
+page, pipe it through
+.Nm head
+or
+.Nm tail ,
+for example
+.Ql man afterboot | head -n 40 .
+.Pp
+A page name contains only letters, digits,
+.Ql \&. ,
+.Ql _ ,
+and
+.Ql - ,
+and does not start with
+.Ql \&. ;
+anything else, such as a path, is refused.
+There are no other options and no
+.Ev MANPATH .
+.Sh FILES
+.Bl -tag -width "/share/man/catS/name.0"
+.It Pa /share/man/cat Ns Ar S Ns Pa / Ns Ar name Ns Pa .0
+the rendered page
+.Ar name
+of section
+.Ar S
+.It Pa /share/man/whatis
+the index
+.Fl k
+searches: one line per page,
+.Ql name(S) - description
+.El
+.Pp
+.Pa /share
+is mounted read-only in every SSH session.
+.Sh EXIT STATUS
+0 when a page, or at least one index line, was printed; 1 when there is no
+such page, nothing matched, or a file could not be read; 2 for a usage
+error or an invalid page name.
+When the reader of its output goes away
+.Pq Ql man intro | head -n 5
+.Nm
+stops at once, silently, with status 1; there is no signal to stop it.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ man 7 handles
+absd$ man -k file
+filesystem(7) - the ABSD filesystem and its file server
+absd$ man nosuchpage
+man: no entry for nosuchpage in the manual
+absd-sh: man: exit status 1
+.Ed
+.Sh DIAGNOSTICS
+.Bl -tag -width Ds
+.It "man: no entry for NAME in the manual"
+No section has a page of that name; with a section given,
+.Dq in section S of the manual .
+.It "man: /share/man: ...: no manual is visible to this process"
+The process has no view of
+.Pa /share ,
+for example under
+.Ql nofs man intro .
+.El
+.Sh SEE ALSO
+.Xr intro 1

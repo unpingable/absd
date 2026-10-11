@@ -1,0 +1,8 @@
+[package]
+name = "absd-fbcon"
+version = "0.1.0"
+edition = "2024"
+description = "Framebuffer text rasterizer and embedded font for the ABSD kernel"
+
+[lib]
+doctest = false

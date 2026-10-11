@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "/tmp/absd-reference/bin/nightshift-observation-resolver" --store "/tmp/absd-reference/runs/i-fresh-ag/state/nightshift.sqlite" --resolver-id nightshift-observation-resolver/v1 --default-ttl-ms 86400000

@@ -1,0 +1,8 @@
+[package]
+name = "absd-fs"
+version = "0.1.0"
+edition = "2024"
+description = "Experimental ABSD filesystem: whole-image copy-on-write metadata over one bounded region"
+
+[dependencies]
+sha2 = { version = "0.10", default-features = false }

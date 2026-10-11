@@ -1,0 +1,184 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt FILESYSTEM 7
+.Os ABSD
+.Sh NAME
+.Nm filesystem
+.Nd the ABSD filesystem and its file server
+.Sh DESCRIPTION
+ABSD has one filesystem, on the second half of its one disk.
+The kernel knows nothing of files: it gives out a block device handle.
+In the qualified boot exactly one process, the file server
+.Nm absd-fsd ,
+holds the only read-write handle to the disk, and every other process
+reaches files through it, over a
+.Em channel :
+a pair of kernel pipes to the server.
+Nothing else links the filesystem code over a writable disk; two writers
+would corrupt it.
+.Ss Channels are the authority
+The server keeps, for each channel, a mount list (subtrees, each read-only
+or read-write) and a table of the files opened through it.
+A channel is therefore a capability: holding it is what lets a process see
+files, and it sees exactly what the mount list allows.
+.Pp
+Paths are resolved by the server, lexically, under the channel's mount
+list:
+.Ql ..
+cannot leave it, anything outside it does not exist for the client
+.Pq Dq ABSD path not found ,
+a read-only mount refuses every change
+.Pq Dq ABSD filesystem is mounted read-only ,
+and the directories leading to a mount point list only the way down.
+There are no symbolic links, so resolution is exact.
+.Pp
+The SSH server binds each session's channel to:
+.Bl -column "/tmp/session-N" "read-write" -offset indent
+.It Pa /home/operator Ta read-write
+.It Pa /tmp/session-N Ta read-write, this session only
+.It Pa /bin Ta read-only
+.It Pa /etc Ta read-only
+.It Pa /share Ta read-only
+.It Pa /var/log Ta read-only
+.El
+.Pp
+No session's channel may include
+.Pa /ssh ;
+only the SSH server's own control channel reads it.
+That channel sees
+.Pa /ssh ,
+.Pa /bin ,
+and
+.Pa /etc
+read-only and
+.Pa /var/log
+read-write, where the SSH server writes its log; the file server writes
+its own log into the filesystem directly.
+A process can ask the server to bind a spare channel for a child with its
+own mounts or fewer, never more; see
+.Xr handles 7 .
+When a session ends its channel is released: its open files are closed
+and committed, and whatever the session left running is refused from then
+on.
+A release discards nothing the session sent while it was bound: a request
+already waiting is read and refused, and bytes that break framing are
+reported, before the channel goes quiet.
+The channel is not bound again until that is done.
+Binding the channel to a new session discards whatever predates the new
+binding, so no request of an earlier session runs under a later one.
+.Ss Objects
+Files and directories, nothing else.
+There are no owners, groups, permission bits, symbolic or hard links,
+device nodes, or sparse files.
+An object records one time, its modification time: the last change to a
+file's content or size, or to a directory's entries, in whole seconds UTC
+from the machine's clock when the file server made the change.
+It is unknown (0) when no clock reading was available, and for files the
+image builder installed.
+There is no access, change, or creation time.
+An object has one flag, read-only (no command sets it yet), and an identity:
+the filesystem's random id and an object serial that is never reused.
+The
+.Nm stat
+command prints them.
+.Ss One namespace for every session
+The server runs each request to completion before the next, from whatever
+channel, so every session sees the same files at every moment.
+Writes land in arrival order, each one whole; where two cover the same
+bytes the later wins.
+Creating a file that must not exist has exactly one winner.
+A rename replaces its target atomically.
+Locks are advisory, per open file, shared by every channel, and never wait:
+a contended lock is refused at once.
+A sequence of requests (look, then create) is not atomic against another
+session's.
+.Ss Commits
+A
+.Em commit
+writes the whole metadata image to the half of the metadata area not in
+use, flushes the disk, writes the superblock that selects it, and flushes
+again.
+That superblock write is the moment the change becomes durable.
+.Pp
+Creating, removing, and renaming (files and directories) are committed
+before the request returns.
+File data is committed when the file is closed, when
+.Nm sync
+is run, when the session ends, and at most about 200 ms after a write that
+was not otherwise committed.
+.Nm sync
+returns once everything the server has accepted, from every session, is
+committed and flushed;
+.Ql sync -v
+prints the commit sequence then on the disk, and
+.Nm df
+shows it too.
+.Ss What survives a crash
+Two failure models are qualified.
+First, the machine stops abruptly (QEMU killed, or the kernel's stop) and
+every sector the disk acknowledged is kept.
+Second, a device law for power loss: any write not covered by a completed
+flush may be lost or reordered, per aligned 512-byte or 4 KiB unit.
+The second was enforced by a model of the device on the host and in the
+guest; no real power was cut and no real drive's flush was tested.
+.Pp
+Under either model, after a crash the namespace is the one of the last
+commit: a rename is never half done, and a committed file is whole.
+Data written but not yet committed may be partly present or absent.
+File contents carry no checksum: corruption of file data on the disk is
+not detected.
+.Ss Refusal and recovery
+Mounting checks both superblocks, the digest of the selected metadata image,
+and every structural rule of the namespace.
+Anything wrong refuses the mount.
+The mount never repairs and never falls back to the older superblock.
+A disk that is entirely zero is formatted at first boot; so is a filesystem
+whose format was interrupted before its first commit.
+Any other disk without an ABSD layout is refused.
+A filesystem of another format version (an image from before format 2)
+is refused by name,
+.Ql FSD FAILED mount: UnsupportedFormat ... ,
+and never formatted over; it is moved to format 2 on the host by building
+a new image from its files.
+.Pp
+In the qualified boot a refused mount, or a disk error while committing,
+ends the file server
+.Po
+.Ql FSD FAILED ...
+on the serial console
+.Pc ,
+and with it the boot.
+There is no on-target repair tool, no
+.Nm fsck ,
+and no rescue boot.
+The platform's host-side reader
+.Pq Pa scripts/absd_fs.py
+reads an image the mount would accept; it is a test tool, not a recovery
+procedure.
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr handles 7 ,
+.Xr process 7 ,
+.Xr afterboot 8
+.Pp
+In the platform repository:
+.Pa docs/FILESYSTEM.md
+(format 2 and its operation contract) and
+.Pa docs/POWER-LOSS.md
+(the device law).
+.Pp
+A refused filesystem cannot be repaired on ABSD or on the host; the only
+procedure is to build a new image
+.Pq Xr afterboot 8 ,
+copying files out first, while the old one still boots, with
+.Ql ssh host cat FILE .
+.Sh CAVEATS
+The format is experimental, with no compatibility promise: a format change
+means a new filesystem.
+Every commit writes the whole metadata image, so its cost grows with the
+number of objects, and the number of objects is bounded by a 64 KiB record
+budget
+.Pq Dq storage full .
+.Nm df
+counts data blocks only.
+There are no quotas: every session shares the space.

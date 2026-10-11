@@ -1,0 +1,56 @@
+[workspace]
+members = ["abi", "fbcon", "user"]
+
+[package]
+name = "absd-kernel"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+absd-abi = { path = "abi" }
+absd-fbcon = { path = "fbcon" }
+
+[features]
+arm64 = []
+# Explicit local-VM follow-on gate; also requires matching FDT boot request.
+arm64-smp-qualification = ["arm64"]
+# The physical-boot profile: no block write or flush can be issued by this
+# kernel, whatever the boot command line says (docs/PHYSICAL-BOOT.md).
+block-read-only = []
+# Deliberate negative control: this preparatory tree cannot build AP startup.
+ap-startup = []
+# Deliberate negative control: CPU1 is kernel-only in this lane.
+ap-userspace = []
+# Isolated local-VM prototype; also requires exact `smp-user-test` boot mode.
+smp-user-test = []
+# Isolated scheduler tranche, requiring the explicit preemptive test boot.
+smp-scheduler-test = ["smp-user-test"]
+
+# The kernel is built optimized but keeps the dev profile's checks: debug
+# assertions (interrupts disabled at entry, among others), overflow
+# checks, and debug info stay on. Unoptimized, every syscall, pipe
+# transfer, and switch cost about ten times more under TCG, and a program
+# start over the file server took seconds (a 1.5 MB image 26 s, 1 MiB read
+# at 66 KB/s; at opt-level 2: 0.5 s and 3.7 MB/s). The library crates
+# (and absd-fbcon, the console rasterizer) are built with the default
+# red-zone setting, so they must only run with interrupts disabled.
+[profile.dev]
+panic = "abort"
+opt-level = 2
+
+[profile.release]
+panic = "abort"
+
+[[bin]]
+name = "absd-kernel"
+path = "src/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "absd-arm64"
+path = "src/arch/aarch64/kernel.rs"
+test = false
+bench = false
+required-features = ["arm64"]

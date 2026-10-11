@@ -1,0 +1,399 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 8, 2026
+.Dt ABSD-SH 1
+.Os ABSD
+.Sh NAME
+.Nm absd-sh
+.Nd the ABSD command shell
+.Sh SYNOPSIS
+.Nm
+.Op Fl c Ar line
+.Sh DESCRIPTION
+.Nm
+reads one line at a time and runs it: one pipeline, or several joined
+by
+.Ql \&; ,
+.Ql && ,
+and
+.Ql || .
+Without arguments it writes the prompt
+.Ql absd$\ \&
+before every line, and at the end of its input exits with the status of the
+last line.
+With
+.Fl c
+it runs
+.Ar line
+and exits with its status.
+It is the shell an interactive SSH session starts.
+It is deliberately small: it is not a POSIX shell and does not run
+scripts.
+.Pp
+A command given to
+.Nm ssh
+.Pq Ql ssh host ls /bin
+does not run under
+.Nm
+unless it uses the shell's syntax: the SSH server splits it at
+whitespace and runs its first word directly (a bare name as
+.Pa /bin/ Ns Ar name ) ,
+but a command holding
+.Ql | ,
+.Ql < ,
+.Ql > ,
+.Ql \&; ,
+.Ql & ,
+or
+.Ql \&"
+runs as
+.Ql absd-sh -c
+with the whole text as its line.
+Lines on the shell's standard input work too:
+.Ql echo 'ls /bin | wc -l' | ssh host .
+.Ss Words
+A line splits into words at whitespace.
+Double quotes group:
+.Ql \&"a b"
+is one word, and
+.Ql a"b c"
+is the word
+.Ql ab c .
+Inside quotes,
+.Ql \e"
+and
+.Ql \e\e
+stand for
+.Ql \&"
+and
+.Ql \e ,
+and
+.Ql | ,
+.Ql < ,
+.Ql > ,
+.Ql \&; ,
+.Ql &
+are ordinary characters.
+Outside quotes a backslash is an ordinary character.
+Nothing else is special:
+.Ql $ ,
+.Ql * ,
+.Ql \(ti ,
+and
+.Ql #
+are ordinary characters, so there are no variables, no globbing, and no
+comments.
+An unterminated quote is a syntax error, and so is any single
+.Ql &
+outside quotes, even inside a word (there are no background jobs).
+.Ss Commands
+The first word names the command.
+The builtins are listed below.
+Any other name runs a program from the filesystem: the word itself when it
+contains a
+.Ql / ,
+resolved against the working directory, otherwise
+.Pa /bin/ Ns Ar name .
+There is no
+.Ev PATH
+search.
+A program is a static ABSD executable; there is no
+.Ql #!
+and no execute permission.
+The remaining words are its arguments.
+It starts with the shell's working directory and environment, and with any
+of its three standard streams that is not piped or redirected shared with
+the shell.
+.Pp
+Commands cannot start programs.
+The shell starts every command without the spawn right
+.Pq Xr process 7 ,
+and nothing gives it back: a command that tries to start a program, such as
+another
+.Nm
+given
+.Fl c ,
+is refused
+.Pq Dq permission denied ,
+and an inner
+.Nm
+reports that command's status as 126.
+So every process of a session is the shell or one of its commands, and the
+shell can end all of them.
+.Ss Lists
+A line may hold several pipelines:
+.Bl -tag -width "a || b" -compact
+.It Ar a No \&; Ar b
+runs
+.Ar b
+after
+.Ar a ,
+whatever its status
+.It Ar a No && Ar b
+runs
+.Ar b
+only if
+.Ar a Ns 's
+status is 0
+.It Ar a No || Ar b
+runs
+.Ar b
+only if it is not
+.El
+.Pp
+They run left to right, each decided by the status of the last one
+run; the line's status is the last one run.
+A trailing
+.Ql \&;
+is allowed; an empty element
+.Po
+.Ql a ;; b ,
+.Ql \&; a ,
+.Ql a &&
+.Pc
+is a syntax error.
+.Ic exit
+ends the line, an interrupted pipeline (^C) ends it, and so does the
+session ending;
+.Ic cd
+may be an element.
+.Ss Pipelines and redirection
+Commands joined by
+.Ql |
+run at the same time, each one's standard output feeding the next one's
+standard input through a kernel pipe.
+When a reader ends first, the writer's next write fails with a broken pipe
+error; there is no signal.
+A pipeline's status is its last command's.
+.Pp
+Each command may redirect its streams:
+.Bl -tag -width "2>> file" -compact
+.It Ic < Ar file
+standard input from
+.Ar file
+.It Ic > Ar file
+standard output to
+.Ar file ,
+created or truncated
+.It Ic >> Ar file
+standard output appended to
+.Ar file
+.It Ic 2> Ar file
+standard error to
+.Ar file
+.It Ic 2>> Ar file
+standard error appended to
+.Ar file
+.El
+.Pp
+The shell opens every redirection itself, with its own authority, before
+anything starts; if one cannot be opened nothing starts and the status is
+1.
+The command never holds the file: its stream is a pipe, and the shell copies
+between the pipe and the file.
+.Pp
+These are syntax errors (status 2, nothing starts): an empty command in a
+pipeline, a redirection without a file name, the same stream redirected
+twice, output both to a file and into a pipe, input both from a file and
+from a pipe, and descriptor duplication such as
+.Ql 2>&1 .
+.Ss Narrowing a command's authority
+By default a started command gets the shell's filesystem authority: a file
+server channel bound to the shell's own mounts, never more.
+Two prefixes narrow it for one command:
+.Bl -tag -width "nofs cmd" -compact
+.It Ic ro Ar command ...
+the same mounts, all read-only
+.It Ic nofs Ar command ...
+no filesystem at all
+.El
+.Pp
+A command started this way still writes its standard output and error;
+.Ql ro cmd > file
+writes
+.Ar file
+through the shell, while
+.Ar cmd
+itself cannot write anywhere.
+The prefixes apply to programs, not to builtins.
+.Pp
+Each command needs a file server channel of its own: one of the shell's
+spare channels (at most two, fewer while other sessions are open), or, for
+one command at a time, the shell's own channel lent to it.
+.Ic ro
+and
+.Ic nofs
+need a spare, and so does every command while the shell is copying a
+redirection.
+A command that gets no channel is not started (status 126).
+See
+.Sx CAVEATS .
+.Ss Builtins
+.Bl -tag -width "shutdown"
+.It Ic cd Op Ar dir
+Change the working directory to
+.Ar dir ,
+which must be an existing directory the session can see; without
+.Ar dir ,
+to
+.Pa / .
+.It Ic pwd
+Print the working directory.
+.It Ic echo Oo Fl n Oc Op Ar word ...
+Print the words separated by single spaces, and a newline unless
+.Fl n .
+.It Ic help
+Print the shell's grammar and builtins on one screen.
+.It Ic status
+Print the status of the last pipeline run.
+.It Ic exit Op Ar n
+Exit with status
+.Ar n ,
+or with the last status.
+.It Ic ps
+List this session's processes; see
+.Xr ps 1 .
+.It Ic shutdown Op Fl h | Fl p | Fl r Ar now
+Ask
+.Nm sshd
+to halt the machine, or with
+.Fl r
+to restart it; see
+.Xr shutdown 8 .
+.It Ic reboot
+Ask
+.Nm sshd
+to restart the machine; see
+.Xr reboot 8 .
+.El
+.Pp
+.Ic ps ,
+.Ic shutdown ,
+and
+.Ic reboot
+are requests to the SSH server on the session's control channel, which
+only a shell
+.Nm sshd
+started for a session holds (interactive, or running a
+.Ql ssh host 'a | b'
+command); any other
+.Nm
+answers
+.Ql no session control channel
+with status 1.
+.Pp
+.Ic pwd ,
+.Ic echo ,
+.Ic status ,
+.Ic help ,
+and
+.Ic ps
+may start a pipeline (the shell writes their output into the next command)
+and may take
+.Ic > ,
+.Ic >> ,
+and
+.Ic 2> .
+.Ic cd ,
+.Ic exit ,
+.Ic shutdown ,
+and
+.Ic reboot
+cannot be part of a pipeline.
+.Ss Diagnostics and status
+When the last command of a pipeline exits with a nonzero status the shell
+reports
+.Ql absd-sh: Ar name Ns : exit status Ar n .
+The statuses the shell itself assigns:
+.Bl -tag -width "128" -compact
+.It 1
+a redirection could not be opened or completed
+.It 2
+a syntax error, or a builtin used wrongly
+.It 126
+the program was found but could not be started
+.It 127
+the program was not found
+.It 128
+the program ended without an exit status (it faulted or was killed)
+.It 130
+the line was interrupted with ^C (nothing more is printed)
+.El
+.Ss On a terminal
+With a terminal
+.Pq Ql ssh -t ,
+or plain
+.Ql ssh host ,
+the SSH server, not the shell, echoes and edits the line: DEL or BS erases
+a character, ^U the line, and ^C discards the line being typed.
+Arrow, function, and Alt keys (escape sequences) are dropped: nothing
+moves the cursor, and nothing is typed or shown for them.
+.Pp
+^C while a line runs interrupts it.
+The key never reaches the command's input: the SSH server tells the shell
+on the session's control channel, and the shell kills every command of the
+running pipeline with the process handle it holds, waits for them, and
+prompts again; the line's status is 130.
+What a command wrote to a redirection file before it was killed stays
+there.
+The shell looks for ^C between bounded waits on its commands, so it acts
+within a few milliseconds of the SSH server passing it on.
+A ^C typed at the prompt only discards the line; it does not interrupt the
+next command.
+A line holds at most 4095 bytes.
+^D on an empty line ends input for the whole session: a command reading
+standard input sees end of file, and so does the shell, which then exits.
+Standard output and standard error arrive on the one screen, in the order
+written.
+The terminal type and window size are not used.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ cat /etc/motd | wc -l
+1
+absd$ ls /home/operator > /home/operator/listing
+absd$ ro cp /etc/motd /home/operator/copy
+cp: /etc/motd -> /home/operator/copy: ABSD filesystem is mounted read-only
+absd-sh: cp: exit status 1
+absd$ nofs df
+df: this process has no file server channel (-2)
+absd-sh: df: exit status 1
+.Ed
+.Sh SEE ALSO
+.Xr intro 1 ,
+.Xr ps 1 ,
+.Xr filesystem 7 ,
+.Xr handles 7 ,
+.Xr process 7 ,
+.Xr reboot 8 ,
+.Xr shutdown 8
+.Sh CAVEATS
+There is no process-tree kill; none is needed, since commands cannot
+start programs.
+Without a terminal
+.Pq Ql ssh -T
+there is no ^C.
+.Pp
+When the session ends (the client disconnects, the idle timeout passes, or
+the system is going down), the SSH server tells the shell on its control
+channel first.
+The shell kills and reaps every command it is running, as for ^C, and
+exits; what a redirection had copied into a file so far is kept.
+Only if the shell has not exited within a second of reading that, or has
+not read it within 10 seconds, does the server kill it
+.Pq Ql SSH SESSION END ... forced=true .
+Its commands are then left running, adopted by init, which has no right to
+end them; each keeps its file server channel out of use until it ends, and
+a
+.Xr shutdown 8
+or
+.Xr reboot 8
+while one runs stops the machine instead of halting or restarting it.
+.Pp
+How many commands of one pipeline can hold a file server channel at once
+depends on how many sessions are open; there is no fixed number to rely on
+beyond two.
+.Pp
+Standard input is shared with the shell, but lines the shell has already
+read are not visible to a command.
+.Sh BUGS
+There are no globbing, variables, descriptor duplication, job control,
+background jobs, here-documents, or scripts.

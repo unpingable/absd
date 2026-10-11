@@ -1,0 +1,11 @@
+[package]
+name = "absd-sh"
+version = "0.1.0"
+edition = "2024"
+description = "absd-sh's line parser and builtins, host-tested; the ABSD binary is src/bin/absd_sh.rs"
+
+[dependencies]
+
+# Tested on the host on its own; the ABSD binary includes src/lib.rs by path,
+# so the platform workspace and its lock do not change.
+[workspace]

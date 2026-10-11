@@ -1,0 +1,8 @@
+[package]
+name = "absd-release"
+version = "0.1.0"
+edition = "2024"
+description = "ABSD release identity: the compiled-in identity and the release record (docs/RELEASE.md sections 2 and 3)"
+
+[dependencies]
+sha2 = { version = "0.10", default-features = false }

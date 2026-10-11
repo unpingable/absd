@@ -1,0 +1,121 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt SSHD.CONF 5
+.Os ABSD
+.Sh NAME
+.Nm sshd.conf
+.Nd limits of the SSH server
+.Sh SYNOPSIS
+.Pa /etc/sshd.conf
+.Sh DESCRIPTION
+.Nm sshd
+reads
+.Nm
+once, when it starts, through the file server; changing the file takes
+effect at the next boot.
+It is not OpenSSH's
+.Pa sshd_config :
+the keywords differ and there are only these.
+.Pp
+Each line is a keyword and one value, separated by spaces or tabs.
+Blank lines and lines whose first word begins with
+.Ql #
+are ignored.
+Each keyword may appear once; values are decimal whole numbers.
+An absent keyword keeps its default.
+.Bl -tag -width "login-grace-time seconds"
+.It Cm port Ar number
+The TCP port to listen on, 1 to 65535.
+Default 22.
+.It Cm max-connections Ar number
+Connections served at once, authenticated or not, 1 to 4.
+Default 4.
+Each connection has one session.
+Four is what the kernel's tables serve: 48 pipes, of which the file server
+channels and the server's own streams take 24 and each shell session
+without a terminal 5 (a fifth such session would be refused its shell).
+.It Cm login-grace-time Ar seconds
+How long a connection may take to authenticate before it is dropped,
+1 to 3600.
+Default 30.
+.It Cm idle-timeout Ar seconds
+How long a connection may pass with no traffic in either direction and no
+output from its command before it is closed, 1 to 604800.
+Default 1800.
+.It Cm max-auth-tries Ar number
+Refused authentication attempts before the connection is dropped, 1 to
+100.
+Default 6.
+.El
+.Pp
+Without the file every value is its default, and
+.Nm sshd
+says so on the console.
+The operator image installs the file with the default values.
+.Ss When every connection is taken
+While
+.Cm max-connections
+connections are open,
+.Nm sshd
+takes no new one.
+A further client's TCP handshake is still completed by the network stack,
+up to the listener's backlog (which equals
+.Cm max-connections ),
+but a connection over the limit is refused at the transport boundary at
+once: reset with no banner and no session slot, with
+.Ql SSH GLOBAL REFUSED
+recorded on the console.
+Stock
+.Nm ssh
+reports the reset and exits with status 255 rather than waiting out its
+.Cm ConnectTimeout .
+.Pp
+A source address holds at most two unauthenticated connections at once;
+further pre-authentication connections from the same source are refused
+the same way, with
+.Ql SSH PREAUTH REFUSED ... reason=source-limit
+on the console.
+Authenticated sessions do not consume that allowance, but still count
+against
+.Cm max-connections .
+.Pp
+Separately, every session needs a file server channel; there are ten.
+Four connections take at most four channels and their commands' spares,
+and a session whose shell ends its commands leaves none held when it ends
+.Pq Xr absd-sh 1 .
+A command left running because the server had to kill its shell
+.Pq Ql SSH SESSION END ... forced=true
+keeps its channel out of use until it ends.
+A session that finds none free is refused: a shell request fails,
+and stock
+.Nm ssh
+prints
+.Dq shell request failed on channel 0
+and exits with status 255; a command is not started, and the client gets
+.Dq sshd: NAME: no free file server slot
+and status 126.
+The channels come back as those commands end.
+.Sh DIAGNOSTICS
+At every start
+.Nm sshd
+prints on the console, and writes to
+.Pa /var/log/sshd :
+.Bd -literal -offset indent
+sshd: port 22, at most 4 connections, login grace 30 s, idle
+timeout 1800 s, 6 authentication tries (/etc/sshd.conf)
+.Ed
+.Pp
+A malformed file (an unknown keyword, including OpenSSH's such as
+.Cm Port ,
+a keyword twice, a missing or extra value, a value out of range, a byte
+that is not printable ASCII, more than 4096 bytes) is refused: the console
+names the file, the line, and the reason,
+.Nm sshd
+does not start, and the boot fails.
+No default replaces a value the operator wrote.
+See
+.Xr afterboot 8
+for fixing it.
+.Sh SEE ALSO
+.Xr network.conf 5 ,
+.Xr afterboot 8

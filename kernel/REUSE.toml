@@ -1,0 +1,11 @@
+version = 1
+
+# REUSE annotations. Convention: docs/SOURCE-LICENSING.md.
+
+# First-party ABSD source: Apache-2.0 (owner decision 2026-10-10,
+# docs/SOURCE-LICENSING.md). Files carry no header; this annotation and
+# provenance.toml are the record. Later, more specific annotations win.
+[[annotations]]
+path = "**"
+SPDX-License-Identifier = "Apache-2.0"
+

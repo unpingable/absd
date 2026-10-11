@@ -1,0 +1,1 @@
+{"name":"absd","version":[0,1,0],"features":{"threads":false,"signals":null,"fs":true},"note":"a \"quoted\" needle","nested":[{"a":1},{"b":[true,false]}]}

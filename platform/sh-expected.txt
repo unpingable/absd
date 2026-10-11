@@ -1,0 +1,59 @@
+absd$ /
+absd$ absd$ /bin
+absd$ absd-sh
+cat
+echo
+ls
+printenv
+pwd
+sh-probe
+uname
+absd$ Welcome to ABSD.
+absd$ hi
+absd$ quoted  words
+absd$ absd-sh: nosuch: not found
+absd$ cat: /nosuch: ABSD path not found
+absd-sh: cat: exit status 1
+absd$ 1
+absd$ hello
+absd$ Welcome to ABSD.
+absd$ COUNT bytes=65536 sum=8189175
+absd$ COUNT bytes=20000 sum=1752600
+absd$ COUNT bytes=20000 sum=1752600
+absd$ HEAD 8 bytes=[0, 1, 2, 3, 4, 5, 6, 7]
+sh-probe flood: write failed: BrokenPipe; still running, exiting 3
+absd$ 0
+absd$ absd-sh: nosuch: not found
+absd$ 0
+absd$ a | b < >
+absd$ absd-sh: /etc/nosuch: not found
+absd$ absd-sh: /etc/out: cannot write: read-only here
+absd$ 1
+absd$ absd-sh: /etc/out: cannot write: read-only here
+absd$ absd-sh: /etc/err: cannot write: read-only here
+absd$ absd-sh: echo: a builtin can only start a pipeline
+absd$ absd-sh: syntax error: empty command in pipeline
+absd$ absd-sh: syntax error: descriptor duplication (`>&`) is not supported
+absd$ absd$ Welcome to ABSD.
+absd$ SH LAUNCH session status=3
+bin/
+etc/
+SH LAUNCH command status=0
+SH PIPE consumed parent-copy-after-spawn=-9 respawn=InvalidInput count=COUNT bytes=5000 sum=622690 statuses=0,0
+SH PIPE retained-writer while-held=-110 running=true after-close=COUNT bytes=3000 sum=21000 status=0
+SH PIPE retained-reader head=HEAD 4 bytes=[0, 1, 2, 3] head-status=0 writer-blocked-while-held=true after-close-status=3 stderr=sh-probe flood: write failed: BrokenPipe; still running, exiting 3
+SH BROKEN PIPE reader-exited=0 raw=-32 std=BrokenPipe writer-still-running=yes
+SH PIPE rights write-end-as-stdin=PermissionDenied end-kept-by-refused-spawn=true eof-after-drop=true status=0
+SH REDIRECT $ sh-probe escape /etc/escaped /etc/redirected > /etc/redirected
+SH REDIRECT $ echo appended by the shell >> /etc/redirected
+SH REDIRECT $ sh-probe flood 20000 | sh-probe count > /etc/counted 2> /etc/count-errors
+SH REDIRECT $ cat < /etc/redirected
+ESCAPE create=ReadOnlyFilesystem target=ReadOnlyFilesystem raw-block=-1
+appended by the shell
+SH REDIRECT $ cat /etc/counted /etc/escaped
+COUNT bytes=20000 sum=2493160
+cat: /etc/escaped: ABSD path not found
+absd-sh: cat: exit status 1
+SH REDIRECT $ status
+1
+SH REDIRECT files redirected+appended counted errors-empty escaped=absent

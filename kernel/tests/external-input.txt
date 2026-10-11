@@ -1,0 +1,11 @@
+ABSD external workload fixture: bounded stream and exact captured echo.
+block 01: 0123456789abcdef fedcba9876543210
+block 02: 0123456789abcdef fedcba9876543210
+block 03: 0123456789abcdef fedcba9876543210
+block 04: 0123456789abcdef fedcba9876543210
+block 05: 0123456789abcdef fedcba9876543210
+block 06: 0123456789abcdef fedcba9876543210
+block 07: 0123456789abcdef fedcba9876543210
+block 08: 0123456789abcdef fedcba9876543210
+block 09: 0123456789abcdef fedcba9876543210
+block 10: 0123456789abcdef fedcba9876543210

@@ -1,0 +1,81 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt E1000 4
+.Os ABSD
+.Sh NAME
+.Nm e1000
+.Nd Intel 82540EM Ethernet driver
+.Sh DESCRIPTION
+The
+.Nm
+driver in the kernel drives one Intel 82540EM network controller (PCI
+vendor 8086, device 100e), the model QEMU emulates as
+.Ql -device e1000 .
+It is probed only when the boot command line carries the
+.Ql net
+option; every other boot leaves network devices untouched.
+.Pp
+The driver resets the controller, masks all its interrupts, reads the MAC
+address from receive address 0 (refusing a controller that does not mark
+it valid), and waits a bounded time for link up.
+A link that is not up by then is not a refusal: the controller is given
+out with the link down, the link flag is read live on every
+.Ql nic_info ,
+and frames flow once carrier returns with nothing re-probed.
+It keeps one receive ring of 32 and one transmit ring of 16 descriptors,
+each with a 2 KiB buffer in kernel memory, and polls them on the kernel's
+tick; it uses no interrupts.
+.Pp
+The kernel moves whole Ethernet frames, 14 to 1514 bytes, and nothing
+else.
+Exactly one process holds the network card's handle: in the qualified
+boot, the SSH server.
+The TCP/IP stack runs inside that process (smoltcp): static IPv4 only,
+10.0.2.15/24 with gateway 10.0.2.2, answering ARP, ICMP echo, and TCP.
+There are no kernel sockets, no IPv6, UDP, DNS, or DHCP, and no outbound
+client on the system.
+.Pp
+Everything the device writes is treated as untrusted.
+A received frame is delivered only if its descriptor is complete, holds the
+whole frame, reports no error, and has a length in range; anything else is
+counted as refused and dropped.
+If the device moves a ring pointer outside its ring, or a send does not
+complete in time, the driver disables the controller: receiving and sending
+stop, and every later request fails.
+.Sh DIAGNOSTICS
+On the serial console:
+.Bl -tag -width Ds
+.It Ql NIC CONTROLLER pci=BB:DD.F vendor=8086 device=100e mac=...
+the controller was found.
+.It Ql NETWORK LINK OK rx_descriptors=32 tx_descriptors=16 buffer_bytes=2048
+the link is up and the rings are ready.
+.It Ql NIC LINK DOWN AT PROBE rx_descriptors=32 tx_descriptors=16 buffer_bytes=2048
+the rings are ready and the controller is given out, with no carrier yet.
+.It Ql NIC UNAVAILABLE Ar reason
+no usable controller; nothing is given out and a
+.Ql net
+boot fails.
+.It Ql NIC DISABLED reason= Ns Ar reason
+the driver stopped the controller (fail closed).
+.It Ql NIC STATS rx_frames=... rx_refused=... rx_missed=... tx_frames=...
+counters at the end of the boot.
+.El
+.Sh QUALIFICATION
+QEMU-qualified on the 82540EM model
+.Pq Ql -device e1000
+by the platform's network, SSH, and file server matrices.
+Physical hardware qualification: none.
+The Ethernet controllers in current laptops (Intel I219, I225) are
+different devices and are not supported.
+.Sh SEE ALSO
+.Xr afterboot 8
+.Pp
+In the kernel repository:
+.Pa docs/NETWORK.md .
+.Sh CAVEATS
+Polling on the tick adds up to a millisecond of receive latency, and a
+burst faster than 32 descriptors drain between ticks is dropped (counted as
+.Ql rx_missed ;
+TCP resends it).
+No multicast filters, checksum or segmentation offload, or VLANs.
+The address is compiled in; it cannot be configured yet.

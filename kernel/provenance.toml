@@ -1,0 +1,88 @@
+# File-level provenance and licensing inventory for the kernel repository.
+# Convention and field meanings: docs/SOURCE-LICENSING.md.
+# Checked by scripts/spdx-check.py. The last rule that matches a path wins.
+#
+# First-party ABSD source is Apache-2.0 (owner decision 2026-10-10). `pending`
+# remains the value for anything whose licence is undecided: it is not a
+# grant, a public-domain dedication, or a statement that no copyright exists.
+
+version = 1
+
+# First-party source, build inputs, tests and records written for ABSD.
+# Named roots only: a new top-level directory is unclassified until someone
+# says what it is.
+[[files]]
+path = [
+    ".gitignore",
+    "AGENTS.md",
+    "Cargo.toml",
+    "HANDOFF.md",
+    "Makefile",
+    "README.md",
+    "build.rs",
+    "grub.cfg",
+    "linker.ld",
+    "provenance.toml",
+    "rust-toolchain.toml",
+    "abi/**",
+    "docs/**",
+    "fbcon/**",
+    "provenance/**",
+    "scripts/**",
+    "src/**",
+    "tests/**",
+    "user/**",
+]
+class = "first-party"
+license = "Apache-2.0"
+
+[[files]]
+path = "Cargo.lock"
+class = "generated"
+generator = "cargo, from the first-party manifests"
+license = "Apache-2.0"
+
+[[files]]
+path = ["provenance/inventory/**", "provenance/baseline/**"]
+class = "generated"
+generator = "scripts/provenance.py update"
+license = "Apache-2.0"
+
+# Glyph bytes from a public-domain font inside a file whose layout and
+# constants the first-party generator writes. The font's terms are recorded
+# as upstream's; the file as a whole is not declared public domain.
+[[files]]
+path = "fbcon/src/font8x13.rs"
+class = "generated"
+generator = "scripts/font-8x13.py"
+origin = "X.Org font-misc-misc 8x13-ISO8859-1 (Debian xfonts-base), printable ASCII only"
+upstream-license = "LicenseRef-font-misc-misc-public-domain"
+upstream-notice = "font-misc-misc COPYING: \"Public domain font.  Share and enjoy.\""
+license = "Apache-2.0"
+in-artifacts = ["kernel-image"]
+
+# REUSE-IgnoreStart: the notice quoted below is upstream's, not this file's.
+
+# Not on main: lane/native-hardware-a1-20261009. Recorded now so the
+# classification is settled before the merge (owner decision 2026-10-10: keep
+# the BSD-3-Clause implementation and Intel's attribution; classify the
+# sibling files by actual derivation). src/i219.rs carries Intel's notice and
+# adapts register sequences from the FreeBSD e1000 shared code. The audit's
+# comparison found nothing from FreeBSD or Linux in i219_device.rs,
+# i219_pci.rs or i219_ring.rs (they follow this kernel's own e1000 driver),
+# so they are first-party under the src/** rule and get no entry here. They
+# were written in the same session with the FreeBSD files open; the
+# comparison is textual and cannot rule out logic carried over without text.
+# On merge this rule needs LICENSES/BSD-3-Clause.txt.
+[[files]]
+path = "src/i219.rs"
+class = "adapted"
+origin = "Intel e1000 shared code as carried in FreeBSD sys/dev/e1000 (e1000_ich8lan.c, e1000_phy.c, if_em.c) at revision 833d39bd2e38421a14ea489a956261a0fa993fbc"
+upstream-license = "BSD-3-Clause"
+upstream-notice = "Copyright (c) 2001-2020, Intel Corporation. All rights reserved. (the header of src/i219.rs)"
+license = "BSD-3-Clause"
+first-party-portion = "Apache-2.0"
+in-artifacts = ["kernel-image"]
+binary-actions = ["Reproduce Intel's BSD-3-Clause notice (the header of src/i219.rs) with any image that contains the driver."]
+
+# REUSE-IgnoreEnd

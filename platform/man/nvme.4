@@ -1,0 +1,73 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt NVME 4
+.Os ABSD
+.Sh NAME
+.Nm nvme
+.Nd polled NVM Express storage driver
+.Sh DESCRIPTION
+The
+.Nm
+driver in the kernel drives one NVM Express controller, found by PCI class
+(mass storage, non-volatile memory, NVMe).
+With more than one, the first in PCI bus, device, and function order is
+used.
+It resets and enables the controller with one admin and one I/O queue pair
+of 16 entries in kernel memory, identifies the controller and its first
+active namespace, and accepts only a namespace formatted with 512-byte
+blocks and no metadata; any other format is refused by name.
+It moves one 512-byte block per command through a bounce page and polls
+for completion with interrupts masked, at most 5000 ticks per command.
+A flush is an NVMe FLUSH waited to completion.
+.Pp
+A namespace is writable only when the boot option
+.Ql nvme-write= Ns Ar serial
+names its controller's serial number exactly.
+Otherwise the driver refuses every write and flush, and init receives a
+read-only block handle.
+.Pp
+At boot the kernel uses an NVMe namespace if a usable controller is
+present, and otherwise the ATA disk on the primary IDE channel.
+Above the driver nothing knows which is in use.
+.Sh DIAGNOSTICS
+On the console:
+.Bl -tag -width Ds
+.It Ql NVME CONTROLLER pci=BB:DD.F vendor=... device=... serial=... model=...
+the controller was found.
+.It Ql NVME NAMESPACE nsid=1 lba_bytes=512 sectors=N access=read-only|read-write
+the namespace, and whether this boot may write it.
+.It Ql NVME UNAVAILABLE Ar reason
+the controller was refused (for example a 4 KiB block format) or failed;
+the ATA probe runs instead.
+.It Ql BLOCK BACKEND nvme access=...
+the block device is this namespace.
+.El
+.Sh QUALIFICATION
+QEMU-qualified on QEMU's NVMe controller model
+.Pq Ql -device nvme
+with 512-byte blocks, by the kernel's
+.Ql make nvme-test
+(write, read back, flush, bounds, a fresh boot reading the same data,
+read-only without
+.Ql nvme-write= ,
+refusal of a 4 KiB format) and by the laptop-shaped QEMU machine.
+Physical hardware qualification: none.
+The physical boot image, whose kernel refuses every disk write, has not yet
+been booted on hardware.
+.Pp
+The qualified SSH boot described in
+.Xr afterboot 8
+does not use this driver: its disk is QEMU's IDE disk, driven by
+.Xr ata 4 .
+.Sh SEE ALSO
+.Xr ata 4 ,
+.Xr afterboot 8
+.Pp
+In the kernel repository:
+.Pa HANDOFF.md
+(Block storage and durable boots) and
+.Pa docs/PHYSICAL-BOOT.md .
+.Sh CAVEATS
+One queue pair, one block per command, polled: throughput is low by
+design.
+No interrupts, MSI, or namespace other than the first active one.

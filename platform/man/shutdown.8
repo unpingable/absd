@@ -1,0 +1,175 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt SHUTDOWN 8
+.Os ABSD
+.Sh NAME
+.Nm shutdown
+.Nd halt or restart a served ABSD machine
+.Sh SYNOPSIS
+.Nm
+.Nm
+.Cm now
+.Nm
+.Fl h | Fl p | Fl r
+.Cm now
+.Sh DESCRIPTION
+.Nm
+asks the SSH server to end the boot in order: every session is told and
+ends, the file server commits and stops, and the machine halts, or, with
+.Fl r ,
+restarts.
+.Fl h
+and
+.Fl p
+are the same as no option.
+Any other argument is refused with status 2 and changes nothing.
+.Pp
+It is not a program, and the operator can ask in two ways:
+.Bl -tag -width Ds
+.It Ql ssh host shutdown
+The SSH server takes the command itself; nothing is started.
+.It Ic shutdown No typed to an interactive shell
+.Xr absd-sh 1
+passes the words to the SSH server on the session's control channel and
+prints the answer.
+A shell that has no such channel (one started by another shell) answers
+.Ql no session control channel .
+.El
+.Pp
+Either way the SSH server decides: every authenticated session of the
+operator may ask, and the first request wins; a later one is refused with
+status 1
+.Pq Ql a halt is already under way .
+The server holds no right over the machine: it acts by ending its sessions
+and exiting with a status that tells init which end was asked for.
+Init holds the machine and ends the boot.
+No session process holds any right to stop the machine.
+.Pp
+In order:
+.Bl -enum
+.It
+The requesting session prints
+.Ql ABSD is going down for halt: ...
+and ends with status 0 (a shell prints it and then sees the end of its
+input).
+New connections are refused.
+.It
+Every session with something running is told
+.Ql sshd: the system is going down for halt; this session ends
+(on its terminal, or on standard error), and its input is closed after
+what the client already sent.
+A shell, or a command reading its input, finishes; the session ends with
+its status as usual.
+.It
+After 10 seconds the server ends whatever still runs; that session closes
+without an exit status (OpenSSH reports 255).
+A session's shell is told first, on its control channel, and kills and
+reaps the commands it is running before it exits.
+The server kills a shell itself only if it has not exited within a second
+of reading that, or has not read it within 10 seconds (a shell waiting on
+the file server reads it late).
+Commands cannot start programs
+.Pq Xr absd-sh 1 ,
+so a shell that ends its commands leaves nothing behind.
+A shell the server had to kill
+.Pq Ql SSH SESSION END ... forced=true
+may leave the commands it was running; see
+.Sx CAVEATS .
+.It
+The file server commits every session's files and stops.
+Every write it acknowledged is on the disk.
+.It
+If a process the sessions started is still running, init waits up to 20
+seconds for it to end; init has no right to end it.
+With nothing left, init halts or restarts the machine.
+.El
+.Sh EXIT STATUS
+0 when the request was accepted, 1 when another is already under way, 2
+for a form this page does not list.
+.Sh DIAGNOSTICS
+On the serial console, in order:
+.Ql SSH SHUTDOWN REQUESTED ,
+.Ql SSH SHUTDOWN GRACE OVER
+(only if something had to be ended),
+.Ql SSH SESSION END ... forced=false
+for each shell told to end,
+.Ql SSH SHUTDOWN COMPLETE ,
+.Ql FSD STOPPED ,
+.Ql SERVED SHUTDOWN action=halt ... drained=true ,
+and
+.Ql ABSD BOOT OK .
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr ps 1 ,
+.Xr filesystem 7 ,
+.Xr handles 7 ,
+.Xr afterboot 8 ,
+.Xr reboot 8
+.Pp
+In the kernel repository:
+.Pa docs/PROCESS-STARTUP.md
+("Served boot and orderly shutdown").
+.Sh QUALIFICATION
+Qualified in a served boot
+.Pq Ql net fsd served
+under QEMU, where a halt ends QEMU with status 3.
+A qualification boot
+.Pq Ql net fsd
+is ended by init's deadline for the SSH server instead, and
+.Nm
+there is not qualified; see
+.Xr afterboot 8 .
+On a physical machine a halt stops the CPU and leaves the machine powered
+(there is no ACPI power-off); this is not tested.
+.Sh CAVEATS
+If a process is still running 20 seconds after the file server stopped,
+init cannot end it.
+A requested
+.Nm
+then stops the machine at once, after storage is committed (QEMU status
+71,
+.Ql SERVED SHUTDOWN UNREAPED ,
+.Ql SERVED SHUTDOWN ESCALATED requested=halt reason=unreaped outcome=stop code=17 ) ;
+a requested
+.Nm reboot
+records the same escalation
+.Pq Ql outcome=recovery_reset
+and takes the whole-machine recovery reset, so the machine comes back up
+as asked, with the leftover process in the kernel's pre-reset census.
+A file server that ends with a failure, or does not end within 30 seconds,
+stops a requested halt with code 18 (QEMU status 75) and escalates a
+requested reboot to the same recovery reset
+.Pq Ql reason=file_server_status | file_server_timeout .
+The escalation line is always printed before the stop or the reset; the
+operator's request never silently becomes the other outcome.
+That happens only if a shell was killed before it could end its commands
+.Pq Ql SSH SESSION END ... forced=true
+or the SSH server itself ended with sessions running.
+A
+.Ic reboot
+with a command still running in a session restarts the machine when that
+session's shell ends the command
+.Pq Ql forced=false ,
+the case the server is built for.
+There is no delay form
+.Pq Ql shutdown +5
+and no message to the sessions beyond the notice.
+.Pp
+A failure of the SSH server or the file server during service (not a
+requested end) resets the whole machine, at most three times in a row:
+the file server counts the generations that reached service and did not
+end as requested, on disk, before it serves
+.Pq Ql FSD RECOVERY seq=N streak=K ... ,
+and the fourth such failure stops the machine instead
+.Pq Ql SERVED RECOVERY ESCALATED reason=recovery_budget_exhausted ... code=20 ,
+QEMU status 83.
+Only a requested
+.Nm
+or
+.Nm reboot
+that init completed as asked clears the count (the file server stopped
+cleanly and every session process ended within the bound); an SSH server
+that merely exits, or an end that escalates, does not.
+After that stop the machine needs the console or a power cycle, and the
+next boot serves once more with the count carried, so an operator can log
+in and reboot it cleanly.

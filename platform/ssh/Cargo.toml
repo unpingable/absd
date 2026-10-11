@@ -1,0 +1,65 @@
+# The ABSD SSH server (`sshd`). A separate workspace, like `nq/` and `ag/`,
+# so that sunset's dependency closure stays out of the root lock; its own
+# lock is `ssh/Cargo.lock`. sunset 0.6.0 is the registry archive (checked
+# against the lock checksum by scripts/stage-ssh.sh) with
+# patches/sunset-server-channel.patch, staged beside this repository as
+# `../absd-std-staged-ssh/sunset`.
+#
+# The same sources build for Linux (development and the reference matrix,
+# scripts/ssh-linux-matrix.py) and for ABSD.
+[package]
+name = "absd-sshd"
+version = "0.1.0"
+edition = "2024"
+autobins = false
+
+[[bin]]
+name = "sshd"
+path = "src/main.rs"
+
+# Session-side helper for the SSH matrix (/bin/sshtest on ABSD).
+[[bin]]
+name = "sshtest"
+path = "src/sshtest.rs"
+
+# The file server of an `fsd` boot (ABSD only): the one process with the
+# read-write block handle; sshd and its sessions reach storage through it.
+[[bin]]
+name = "absd-fsd"
+path = "src/fsd_main.rs"
+
+[dependencies]
+# `std` selects sunset's alloc-owned buffers, longer usernames and ML-KEM.
+sunset = { version = "=0.6.0", default-features = false, features = ["std"] }
+# The versions sunset itself resolves (host key seed from the system RNG,
+# SHA-256 host key fingerprints).
+getrandom = "0.4"
+sha2 = "0.11"
+base64 = "0.22"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "absd")'.dependencies]
+absd-runtime = { path = "../runtime" }
+# TCP/IP: smoltcp over the kernel NIC, in this process (sshd owns the NIC).
+absd-net = { path = "../net" }
+# The file server's protocol and dispatcher (sshd binds slots; absd-fsd serves).
+absd-fs = { path = "../fs" }
+absd-fsd = { path = "../fsd" }
+# The compiled release identity the file server checks the selected
+# release record against (docs/RELEASE.md).
+absd-release = { path = "../release" }
+
+[patch.crates-io]
+sunset = { path = "../../absd-std-staged-ssh/sunset" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("absd"))'] }
+
+[workspace]
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1

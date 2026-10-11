@@ -1,0 +1,50 @@
+# What this source tree was assembled from. Generated; do not edit.
+# `tree` is the Git tree id of `path` in this repository:
+#     git rev-parse HEAD:<path>
+# It is the tree of the named commit's files less those `exclude` names
+# (and `keep` restores), or, where `files_from` is given, of exactly the
+# files that list names. Nothing else is changed.
+
+[release]
+id = "absd-preview-20261010"
+date = "2026-10-10"
+status = "technical preview: built, booted and smoke-tested from a clean clone under software emulation; the qualification suites were not run on these revisions (see not_run); scheduled after 2026-10-17"
+assembler = "47a1bfce6eff53ba02941beb2af68d9d1b44a49c"
+# Qualification that was NOT run on this release. An empty list would mean
+# everything the README names was run; nothing listed here is a pass.
+not_run = ["kernel suite (kernel `make check`) on kernel 260b4a2", "platform gate, core profile (`tools/check.sh platform`) on platform 65cf80f with kernel 260b4a2", "platform gate, full profile with the Pulse, AG, Nightshift and NQ workloads (development repositories only)", "second clean build to compare image digests"]
+
+[toolchain]
+rust_kernel = "1.98.0 (kernel/rust-toolchain.toml)"
+rust_platform = "1.95.0, with rust-src (platform/scripts/verify-inputs.sh pins the compiler, cargo and library source digests)"
+host = "Ubuntu 24.04 x86_64"
+clang = "18.1.3 (clang, llvm-ar-18, llvm-strip-18)"
+qemu = "8.2.2 (qemu-system-x86_64)"
+grub = "2.12 (grub-mkrescue, with xorriso 1.5.6)"
+groff = "1.23.0 (exact; platform/scripts/verify-inputs.sh)"
+
+[[component]]
+name = "kernel"
+role = "kernel, architecture support, boot, kernel tests"
+source = "absd-kernel (private development repository)"
+commit = "260b4a20755a70db2ec8aa4556b9c576285fe284"
+commit_date = "2026-10-10T21:00:53-04:00"
+source_tree = "8ad68868df98fb6b3d52f0086f4cc64e1acd42e8"
+path = "kernel"
+tree = "120e0b343442fdc611efdc9587581a905d25ec53"
+files = 288
+excluded_files = 527
+exclude = ["docs/*/*", "AGENTS.md"]
+
+[[component]]
+name = "platform"
+role = "native userspace, servers, shell, SSH, Rust standard-library port, image tooling, platform tests"
+source = "absd-rust-std (private development repository)"
+commit = "65cf80f9440f8bba018f5993aa70744e4e0d5b64"
+commit_date = "2026-10-10T21:00:56-04:00"
+source_tree = "491134c488942feff83a2ab5c10483c11601c2a8"
+path = "platform"
+tree = "c5f3d95bb2b9c175197900dc5b436598b130f21e"
+files = 445
+excluded_files = 79
+exclude = ["docs/u1-endurance-20261008/*", "docs/user-tools-20261008/*", "AGENTS.md", "patches/ag-*.patch", "patches/nq-absd.patch", "patches/nightshiftd-absd.patch", "patches/pulse-*.patch", "ag/*", "nq/*", "provenance/upstream-notices/*", "integration/*", "durable/*", "tools/*", "fixtures/nightshift-pipeline/tools/*"]

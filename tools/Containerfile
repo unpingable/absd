@@ -1,0 +1,21 @@
+# The environment the README describes, as a container: Ubuntu 24.04, the
+# host packages, and the two pinned Rust toolchains. Used to check that a
+# clean clone builds; nothing in the build requires a container.
+#
+#   docker build -t absd-build -f tools/Containerfile tools
+#   docker run --rm -it --device /dev/kvm absd-build     # then clone inside
+# /dev/kvm is needed only by the platform gate's containment matrix.
+FROM ubuntu:24.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates curl git make python3 xz-utils \
+        build-essential clang-18 clang llvm-18 lld-18 \
+        grub-common grub-pc-bin xorriso mtools \
+        qemu-system-x86 groff-base openssh-client python3-cryptography bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd -m builder
+USER builder
+ENV PATH=/home/builder/.cargo/bin:$PATH
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none \
+    && rustup toolchain install 1.95.0 1.98.0 1.94.0 --profile minimal \
+        --component rust-src --component rustfmt --component clippy \
+    && rustup default 1.95.0

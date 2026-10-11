@@ -1,0 +1,3 @@
+Portable source travels until it meets an assumption.
+The needle is a word we search for, and a needle may appear twice.
+Unicode survives the trip: naïve café, Ωmega, 数字.

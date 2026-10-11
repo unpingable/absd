@@ -1,0 +1,9 @@
+# Cases of compat/cases.tsv whose ABSD result differs from Linux, each
+# with the ledger classification. Tab-separated: CASE REASON, where CASE is
+# the case header without "== ".
+/bin/cut -f1 missing.txt	IRRELEVANT POSIX ASSUMPTION: the message is std's io::Error text for NotFound ("ABSD path not found"), not strerror(ENOENT); kind and status agree
+/bin/b3sum prose.txt blob.bin	NATIVE SEMANTIC MISSING: b3sum always builds a rayon thread pool; std::thread spawn is Unsupported
+/bin/b3sum	NATIVE SEMANTIC MISSING: b3sum always builds a rayon thread pool; std::thread spawn is Unsupported
+/bin/b3sum --no-mmap --length 16 blob.bin	NATIVE SEMANTIC MISSING: b3sum always builds a rayon thread pool; std::thread spawn is Unsupported
+/bin/rg -j2 needle tree	NATIVE SEMANTIC MISSING: -j2 asks for the parallel walker, whose thread spawn is Unsupported; rg reports "unsupported platform" (status 2)
+/bin/rg -c needle	IRRELEVANT POSIX ASSUMPTION: grep-cli's is_readable_stdin is false off Unix and Windows, so rg searches ./ instead of its piped stdin

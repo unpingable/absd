@@ -1,0 +1,11 @@
+CAP A explicit-rw read=true transition=true
+CAP B raw-token=refused same-slot-rw-decoy=true state=unchanged
+CAP C read=true write=refused duplicate-rw=refused forward-rw=refused forward-ro=true spawn-enabled=true
+CAP stale same-slot-reissue=true old-token=refused fresh-ro=true
+CAP close grant-survives=true final-holder-exit-census=equal
+CAP normal-exit final-holder-census=equal
+CAP kill final-holder-census=equal
+CAP fault vector=6 final-holder-census=equal
+CAP LEAF pid={LEAF_PID}
+CAP grantor-death gate-eof=true read=true object-census=equal terminal-slot=adopted
+CAP OK

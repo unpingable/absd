@@ -1,0 +1,7 @@
+[package]
+name = "absd-broker"
+version = "0.1.0"
+edition = "2024"
+description = "Wire codecs for ABSD init-brokered spawning: startup record, requests, replies"
+
+[dependencies]

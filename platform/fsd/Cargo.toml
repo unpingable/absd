@@ -1,0 +1,9 @@
+[package]
+name = "absd-fsd"
+version = "0.1.0"
+edition = "2024"
+description = "ABSD file server: the wire protocol, mount lists, and the request dispatcher over absd-fs"
+
+[dependencies]
+absd-fs = { path = "../fs" }
+absd-release = { path = "../release" }

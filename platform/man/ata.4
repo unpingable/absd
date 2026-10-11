@@ -1,0 +1,68 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt ATA 4
+.Os ABSD
+.Sh NAME
+.Nm ata
+.Nd polled ATA disk driver for the primary IDE channel
+.Sh DESCRIPTION
+The
+.Nm
+driver in the kernel drives one ATA disk: the master of the primary IDE
+channel (I/O ports 0x1f0 to 0x1f7 and 0x3f6), with 28-bit LBA addressing
+and PIO transfers of one 512-byte sector per command.
+At boot it identifies the disk
+.Pq Dv IDENTIFY DEVICE
+and takes its size from the identify data; a missing drive, an ATAPI or
+SATA signature, or a disk larger than 2^28 sectors (128 GiB) is not used.
+.Pp
+Each read or write waits for the drive's status, polling after every timer
+tick or IRQ 14, at most 20000 times; a drive that never becomes ready is an
+I/O error, never a hang.
+A flush is
+.Dv FLUSH CACHE
+waited to completion.
+.Pp
+The kernel uses an NVMe namespace when a usable controller is present
+.Pq Xr nvme 4 ,
+and otherwise this disk.
+Above the driver nothing knows which is in use: the block device is a
+kernel object whose one read-write handle belongs to the file server
+.Pq Xr filesystem 7 .
+.Sh DIAGNOSTICS
+On the console:
+.Bl -tag -width Ds
+.It Ql BLOCK DEVICE OK sectors=N
+a disk was found, N sectors of 512 bytes.
+.It Ql BLOCK BACKEND ata access=read-write
+the block device is this disk.
+.It Ql block: no device
+no usable disk: the boot has no block device.
+.It Ql BLOCK DEVICE FAILED: Ar error
+the disk failed at boot; the machine stops.
+.El
+.Sh QUALIFICATION
+QEMU-qualified on QEMU's PIIX IDE controller with a raw image attached as
+.Ql -drive file=IMAGE,format=raw,if=ide,index=0 :
+this is the disk of the operator image
+.Pq Xr afterboot 8
+and of every SSH, file server, and crash-consistency matrix of the
+platform, and of the kernel's durable-boot tests.
+Under QEMU a write completes only after QEMU's own
+.Fn write
+of that sector returned, so an acknowledged sector survives QEMU ending
+abruptly, and a flush becomes the host's
+.Fn fdatasync .
+No claim is made about power loss on real hardware.
+.Pp
+Physical hardware qualification: none.
+The physical boot image refuses every disk write and has not yet been
+booted on hardware.
+.Sh SEE ALSO
+.Xr nvme 4 ,
+.Xr filesystem 7 ,
+.Xr afterboot 8
+.Sh CAVEATS
+PIO, one sector per command, polled: throughput is low by design.
+No secondary channel, no slave drive, no DMA, no 48-bit addressing, no
+SATA (AHCI) controller.

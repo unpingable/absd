@@ -1,0 +1,42 @@
+{
+ "artifact_id": "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3",
+ "binaries": {
+  "nq": "932e288df3b04205093ef67dcca29908adf46b1a7dc8a942c9140ac1001b482a",
+  "nq-host-helper": "e12f37c3730f1fa8b24799e90dc319f5be5e4a4a046a5937994200616d2e5bab"
+ },
+ "completed_at": "2026-10-10T23:16:18.624Z",
+ "files": {
+  "artifact.json": {
+   "bytes": 6892,
+   "sha256": "3c8bc4346c4dd676a1f66b76a29801656a162726b48ab760faab4ce024cb7ecf"
+  },
+  "nq.toml": {
+   "bytes": 98,
+   "sha256": "0197677039024ecb5915053d29254d6b488c0400356230e242f052110d17d3ea"
+  },
+  "reference/provenance.json": {
+   "bytes": 1659,
+   "sha256": "6ff4bd295004e73efde6587303c41732a51ef800d5718bbee181ac14fcd22b13"
+  },
+  "store/nq.db": {
+   "bytes": 638976,
+   "sha256": "fdc0fc5b38ce3fe426a48cb2d53789fb502519a4b3bc949572898d39da0db919"
+  }
+ },
+ "host": {
+  "account": "operator",
+  "hostname": "refhost",
+  "root": "/srv/absd-reference/nq",
+  "uid": 1000
+ },
+ "nq_commit": "80574417f0188afd37992db7ac764a6f0f72ff62",
+ "nq_source": "NQ-NG",
+ "nq_tree": "13c0b6b36ec26b941adc586088275df248360492",
+ "origin": "scripts/make-nq-fixture.sh",
+ "profile_digest": "sha256:b140f63b590331bf5409963711f7908ab4f501edd78a6fe66b447944b40afbc6",
+ "reference": "stdout of the same Linux nq: nq --config <nq.toml> --json diagnostics qualify <artifact_id>",
+ "schema": "absd.nq-fixture/v1",
+ "source_id": "nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f",
+ "started_at": "2026-10-10T23:16:17.917Z",
+ "writer": "real nq debug build in a synthetic host (scripts/nq_fixture.py): init, watcher admit host-local (real nq-host-helper, allow_same_identity_in_debug), --json diagnostics execute host-local; store copied with journal_mode=DELETE"
+}

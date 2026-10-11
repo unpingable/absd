@@ -1,0 +1,40 @@
+[package]
+name = "absd-std-probe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+absd-runtime = { path = "runtime" }
+absd-net = { path = "net" }
+absd-fs = { path = "fs" }
+absd-fsd = { path = "fsd" }
+absd-release = { path = "release" }
+# The features below are the ones these crates were built with while the
+# integration programs (integration/) shared this manifest and their
+# dependencies enabled them for the whole package. They are stated here so
+# that moving those programs out left every program built from this package
+# with the same library code as before.
+serde_json = { version = "1.0", features = ["alloc"] }
+serde = { version = "1.0", features = ["derive", "alloc"] }
+serde_jcs = "0.2"
+sha2 = "0.10"
+# `rand_core 0.6` resolves `getrandom 0.2`, whose only backend for an unknown
+# target is the explicitly selected RDRAND fallback (the 0.3 line is selected
+# through the target cfg in .cargo/config.toml).
+getrandom-0-2 = { package = "getrandom", version = "0.2", features = ["rdrand"] }
+
+[workspace]
+members = ["runtime", "fs", "fsd", "sqlite", "broker", "net", "release"]
+# `integration` is the separate workspace of the programs that exercise other
+# projects' code on ABSD (README, "Profiles and inputs"), and
+# `durable`, whose AG image module needs AG's crates, belongs to it. Nothing
+# in this workspace depends on either.
+exclude = ["durable", "integration"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1

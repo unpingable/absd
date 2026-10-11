@@ -1,0 +1,283 @@
+# Known obligations, decisions and limits. Each stays here until resolved, so
+# a release starts from this list and not from a fresh investigation.
+#
+# status:     open | resolved | latent (applies once its condition appears)
+# kind:       mechanical | owner-decision | counsel | note
+# applies_to: source (publishing this repository), binary (distributing an
+#             image), site (wording on absd.dev that depends on a fact here)
+# detect:     optional. exists/missing {path}; grep/grep-absent {files,
+#             pattern, max}; inventory {column, values, max}; private-names.
+#             "max" is the accepted count: growth past it fails the check.
+# origin:     the review that raised it.
+
+# ------------------------------------------------------------ licensing
+
+[[obligation]]
+id = "LIC-FIRST-PARTY"
+title = "No licence has been chosen for ABSD's own code; the repository has no LICENSE file"
+kind = "owner-decision"
+applies_to = ["source", "binary"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10: owner decision, Apache-2.0 only for first-party source; recorded in provenance.toml, REUSE.toml, LICENSE and docs/SOURCE-LICENSING.md. The copyright line is not decided and files carry no header."
+detect = { kind = "spdx", category = "unknown-licensing" }
+note = "provenance.toml records first-party files as license = \"pending\"; scripts/spdx-check.py --mode release fails on them until the owner decides. The dependency set does not appear to constrain the choice. Not selected by tooling."
+
+[[obligation]]
+id = "LIC-AI-AUTHORSHIP"
+title = "Copyright status of AI-generated code, and what a licence over it conveys, is unresolved"
+kind = "counsel"
+applies_to = ["source", "binary"]
+origin = "audit-20261010"
+status = "open"
+
+[[obligation]]
+id = "STD-PATCH-LICENSE"
+title = "The Rust std patch reuses upstream text and states no licence or upstream attribution"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, commit b80c9d5b (SPDX lane): PATCH_AUDIT.md and provenance.toml state the upstream, its terms and its attribution; the patch is kept (owner decision 2026-10-10)"
+detect = { kind = "grep-absent", files = ["PATCH_AUDIT.md", "patches/README*"], pattern = "MIT OR Apache-2\\.0" }
+
+[[obligation]]
+id = "VENDOR-ESCAPER-LICENSE"
+title = "vendor/rustc-literal-escaper carries no licence text"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, commit b80c9d5b (SPDX lane): the vendored directory is content-pinned, so its terms are carried by REUSE.toml, LICENSES/ and vendor/README.md"
+detect = { kind = "missing", path = "LICENSES/MIT.txt" }
+
+[[obligation]]
+id = "VENDOR-TEMPFILE-CHANGES"
+title = "vendor/tempfile's edited upstream files carry no statement of what was changed"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, commit b80c9d5b (SPDX lane): vendor/README.md lists the changed files and lines"
+detect = { kind = "missing", path = "vendor/README.md" }
+
+[[obligation]]
+id = "PATCH-LICENSE-HEADERS"
+title = "The sunset and ring patch files name no licence"
+kind = "note"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, commit b80c9d5b (SPDX lane): by design the patch files carry no identifier (it would also license the first-party lines); provenance.toml and PATCH_AUDIT.md are the record"
+
+[[obligation]]
+id = "STUB-MANIFEST-LICENCES"
+title = "The first-party stub crates declared the licence of the crates they stand in for"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "spdx-20261010"
+status = "resolved"
+resolved = "2026-10-10, owner decision: the inherited license fields were removed; the stubs are first-party, licence pending"
+detect = { kind = "grep", files = ["vendor/ctrlc-stub/Cargo.toml", "vendor/nix-absd/Cargo.toml"], pattern = "^license" }
+
+[[obligation]]
+id = "REUSE-COMPLIANCE"
+title = "The repository is not REUSE-compliant and makes no such claim: first-party files carry no copyright line"
+kind = "note"
+applies_to = ["source"]
+origin = "spdx-20261010"
+status = "open"
+
+[[obligation]]
+id = "OWNER-PROJECT-NOTICES"
+title = "Pulse and Nightshift material is Apache-2.0 with NOTICE files: the notices are recorded in provenance.toml and in the workload-images notice bundle, and must accompany any image or source tree that includes those programs"
+kind = "mechanical"
+applies_to = ["source", "binary"]
+origin = "audit-20261010"
+status = "open"
+note = "Owner decision 2026-10-10: carry the notices into both inventories (done). Open until a release actually ships them."
+blocks = false
+
+[[obligation]]
+id = "WORKLOAD-IMAGES-NOT-INVENTORIED"
+title = "Test-matrix images (NQ, AG, Pulse, Nightshift, probes) and the release directory's extra programs are not inventoried crate by crate; only the operator image is"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "baseline-20261010"
+status = "open"
+note = "They link further third-party code (SQLite, ring, tokio and others). Inventory them before distributing any of them."
+
+# ------------------------------------------------------------ binaries
+
+[[obligation]]
+id = "NOTICE-IMAGE"
+title = "Built images carry no third-party licence or notice text; nothing installs any"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+detect = { kind = "grep-absent", files = ["scripts/operator_image.py", "scripts/release*.py"], pattern = "(?i)third.party|NOTICES" }
+note = "scripts/provenance.py notices operator-image produces the candidate bundle; installing it is not done."
+
+[[obligation]]
+id = "NOTICE-MISSING-TEXTS"
+title = "Shipped components whose source carries no licence text (texts must come from upstream)"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+detect = { kind = "inventory", column = "texts", values = ["MISSING"], max = 5 }
+
+[[obligation]]
+id = "GRUB-SOURCE"
+title = "The ISO carries GRUB binaries (GPL-3.0-or-later): corresponding source for the exact host build must be available, or GRUB left out"
+kind = "owner-decision"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+note = "grub-mkrescue --fonts= --locales= --install-modules= reduces what is carried without removing the obligation. Whether GRUB beside ABSD on one ISO is mere aggregation is a question for counsel."
+
+[[obligation]]
+id = "UNIFONT"
+title = "The ISO carries GNU Unifont (unicode.pf2) with no licence text collected"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+
+[[obligation]]
+id = "REPRODUCIBLE-ISO"
+title = "grub-mkrescue output is not byte-reproducible and the host GRUB version is not pinned, so an ISO's exact third-party content is not fixed by a commit"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+
+# ------------------------------------------------------------ portability and disclosure
+
+[[obligation]]
+id = "PORT-ABSOLUTE-PATHS"
+title = "Build manifests name absolute paths on the development machine; a clone elsewhere does not build"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10: the root manifest's five Pulse dependencies name a staged copy beside the checkout (scripts/stage-pulse-source.sh), as the AG ones do; no manifest names an absolute path. They are counted under PORT-SIBLING-CHECKOUTS now."
+detect = { kind = "grep", files = ["Cargo.toml", "*/Cargo.toml", ".cargo/config.toml"], pattern = "(/home/[a-z_][a-z0-9_-]*/|/Users/|/data/git/)" }
+
+[[obligation]]
+id = "PORT-SCRIPT-PATHS"
+title = "Build and test scripts name the developer's home directory (toolchain location and others)"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, lane/source-distribution-20261010: the toolchain location is ABSD_RUST_TOOLCHAIN, by default under $HOME, and input locations come from scripts/inputs.sh. The detector no longer counts /home/operator/, the guest's own home directory, which the matrices name."
+detect = { kind = "grep", files = ["scripts/*"], exclude = ["scripts/provenance.py", "scripts/test_provenance.py"], pattern = "/home/(?!operator/)[a-z_][a-z0-9_-]*/" }
+
+[[obligation]]
+id = "PORT-SIBLING-CHECKOUTS"
+title = "The build depends on sibling checkouts of other private projects and on staged copies beside the repository"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "open"
+detect = { kind = "grep", files = ["Cargo.toml", "*/Cargo.toml"], pattern = "path *= *\"(\\.\\./)+absd-std-staged|path *= *\"\\.\\./\\.\\./", max = 15 }
+note = "Raised from 10 to 15 on 2026-10-10: the root manifest's five Pulse dependencies moved here from absolute paths (PORT-ABSOLUTE-PATHS). The staged copies are made by the stage scripts from inputs scripts/inputs.sh locates, including the examples of a source distribution."
+
+[[obligation]]
+id = "DISCLOSE-PATHS"
+title = "Tracked files contain development-machine paths (a disclosure matter, harmless while private)"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "open"
+detect = { kind = "grep", files = ["*"], exclude = ["provenance/*", "scripts/provenance.py", "scripts/test_provenance.py", "docs/PROVENANCE.md"], pattern = "(/home/[a-z_][a-z0-9_-]*/|/data/git/)" }
+
+[[obligation]]
+id = "DISCLOSE-PRIVATE-NAMES"
+title = "Tracked files contain the development host's name and other private names"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "open"
+detect = { kind = "private-names", exclude = ["provenance/*"] }
+
+[[obligation]]
+id = "DISCLOSE-FIXTURE-HOST-DATA"
+title = "Fixture stores and receipts hold a real snapshot of the development host (CPU count, load, kernel release, the owner's login and uid, temp paths); they are digest-pinned, so changing them means regenerating fixtures"
+kind = "owner-decision"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, fixtures lane (owner ruling: machine-specific fixtures are publication defects): every Linux-produced fixture was produced again by the real pinned tools under synthetic names, by tracked scripts. scripts/make-nq-fixture.sh runs nq and its helper in unprivileged namespaces that present host refhost, account operator (uid 1000) and the tree /srv/absd-reference/nq; scripts/make-pulse-fixture.sh records the label refhost; scripts/make-reference-fixture.sh produces the Nightshift pipeline and AG references under refhost labels at /tmp/absd-reference with seed-derived test keys. No tracked fixture, text or binary, holds the development host's name, the owner's login, a home, session or development path. Kept as measured, not identifying: CPU count (12), load averages, uptime, the stock distribution kernel release (6.5.0-44-generic, in the NQ store and fixtures/pulse/manifest.json), the hash of a random boot id (the Pulse clock id), and in the NQ store the device and inode numbers, sizes, modification times and digests of the helper, the C library and the loader. Not checked mechanically: this obligation has no detector; DISCLOSE-PRIVATE-NAMES and DISCLOSE-PATHS cover text files only."
+
+[[obligation]]
+id = "DISCLOSE-HISTORY"
+title = "History and lane branches hold private paths, host names, vendored trees and built binaries: publish a curated snapshot, not the history"
+kind = "owner-decision"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "open"
+
+[[obligation]]
+id = "KEY-TEST-FIXTURE"
+title = "A private key is tracked as a test fixture (fixtures/ag-native/.../secrets/issuer.pk8): test-only as far as this machine's records show; before publication confirm it was never enrolled elsewhere, or regenerate the fixture"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, fixtures lane: that the key was never enrolled elsewhere could not be established, so the fixture was produced again (scripts/make-reference-fixture.sh) with a test key derived from a published seed, SHA-256 of the string \"ABSD test fixture key, not a credential\" (fixtures/ag-native/README.md; SHA-256 of the raw public key f343565680d785393860dea3c21ec36c72cf81d5c40c2a0ab826bd391497cfe9). The tracked key is public by construction. The retired key remains in this repository's private history (DISCLOSE-HISTORY) and must be treated as disclosed if that history is ever published."
+# Fires if the retired key comes back: the fixture's manifest binds every
+# file's digest (the AG matrix refuses drift), and these are the retired
+# issuer.pk8 and issuer.pub.der.
+detect = { kind = "grep", files = ["fixtures/ag-native/manifest.json"], pattern = "0a6d604545e291a7bf77ccf0bb7b41c35775d8e41a996b9daf1a49a2315ff6a9|936e5daf614c81fdd58442be6140b06133dc76c70afe21606182a6806df9a171" }
+
+[[obligation]]
+id = "PRIVATE-PROJECT-MATERIAL"
+title = "Fixtures, patches and path dependencies bring in the owner's other private projects (AG, NQ, Nightshift, Pulse)"
+kind = "owner-decision"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "open"
+
+# ------------------------------------------------------------ process
+
+[[obligation]]
+id = "AGENT-SOURCE-POLICY"
+title = "Agents have a written rule for consulting and incorporating existing source"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, this lane: docs/PROVENANCE.md states the rule and AGENTS.md points to it"
+detect = { kind = "grep-absent", files = ["AGENTS.md"], pattern = "docs/PROVENANCE\\.md" }
+
+[[obligation]]
+id = "TOOLCHAIN-PIN"
+title = "provenance/config.toml names the Rust 1.95.0 sources and notice set; it must change with the pinned toolchain"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "baseline-20261010"
+status = "resolved"
+resolved = "2026-10-10: config.toml and scripts/verify-inputs.sh both name 1.95.0"
+detect = { kind = "grep-absent", files = ["scripts/verify-inputs.sh"], pattern = "1\\.95\\.0" }
+
+# ------------------------------------------------------------ site wording
+
+[[obligation]]
+id = "SITE-ONLY-C"
+title = "absd.dev /compatibility/ says the only C on ABSD is SQLite; this repository also compiles ring's C for the ABSD target (test images)"
+kind = "note"
+applies_to = ["site"]
+origin = "audit-20261010"
+status = "open"
+detect = { kind = "exists", path = "scripts/build-ag-loopctl.sh" }
+
+[[obligation]]
+id = "SITE-DEPENDS"
+title = "absd.dev /research/ says nothing in ABSD depends on the Constellation programs; true of the root manifest since the integration programs moved to their own workspace (2026-10-10), which does depend on two of them"
+kind = "note"
+applies_to = ["site"]
+origin = "audit-20261010"
+status = "open"

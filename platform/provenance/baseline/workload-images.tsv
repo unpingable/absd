@@ -1,0 +1,5 @@
+component	version	origin	use	license	elected	texts	units	source
+AG	21c8da0	owner-project	included	Apache-2.0	Apache-2.0	Apache-2.0.txt	image	the owner's project, Apache-2.0, no NOTICE file; built with patches/ag-*.patch
+NQ	8057441	owner-project	included	Apache-2.0	Apache-2.0	Apache-2.0.txt	image	the owner's project, Apache-2.0, no NOTICE file; built with patches/nq-absd.patch
+Nightshift	e2675dd	owner-project	included	Apache-2.0	Apache-2.0	nightshift.NOTICE,Apache-2.0.txt	image	the owner's project, Apache-2.0 with a NOTICE file; built with patches/nightshiftd-absd.patch
+Pulse (constellation-monitor)	public cut at 81c2354	owner-project	included	Apache-2.0	Apache-2.0	pulse.NOTICE,Apache-2.0.txt	image	the owner's project, published under Apache-2.0 with a NOTICE file; built with patches/pulse-*.patch

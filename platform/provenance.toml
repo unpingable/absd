@@ -1,0 +1,219 @@
+# File-level provenance and licensing inventory for the platform repository.
+# Convention and field meanings: docs/SOURCE-LICENSING.md.
+# Checked by scripts/spdx-check.py. The last rule that matches a path wins.
+#
+# First-party ABSD source is Apache-2.0 (owner decision 2026-10-10). `pending`
+# remains the value for anything whose licence is undecided: it is not a
+# grant, a public-domain dedication, or a statement that no copyright exists.
+#
+# Linked registry crates are not listed here. Their licences and notices are
+# the release tooling's dependency inventory.
+
+version = 1
+
+# First-party source, build inputs, tests, fixtures and records written for
+# ABSD. Named roots only: a new top-level directory is unclassified until
+# someone says what it is.
+[[files]]
+path = [
+    "*",
+    ".cargo/**",
+    "broker/**",
+    "compat/**",
+    "docs/**",
+    "durable/**",
+    "integration/**",
+    "fixtures/**",
+    "fs/**",
+    "fsd/**",
+    "man/**",
+    "net/**",
+    "observe/**",
+    "operator/**",
+    "perf/**",
+    "provenance/**",
+    "release/**",
+    "runtime/**",
+    "scripts/**",
+    "sh/**",
+    "sqlite/**",
+    "src/**",
+    "ssh/**",
+    "targets/**",
+    "tests/**",
+    "tools/**",
+    "vendor/README.md",
+]
+class = "first-party"
+license = "Apache-2.0"
+
+[[files]]
+path = ["Cargo.lock", "**/Cargo.lock", "pins/**"]
+class = "generated"
+generator = "cargo, from the first-party manifests and the staged upstream trees"
+license = "Apache-2.0"
+
+[[files]]
+path = ["provenance/inventory/**", "provenance/baseline/**"]
+class = "generated"
+generator = "scripts/provenance.py update"
+license = "Apache-2.0"
+
+# The NOTICE files of the owner's Apache-2.0 projects whose material this
+# repository patches and builds, verbatim, so that a source tree or image
+# that includes those programs can carry them (Apache-2.0 section 4(d)).
+[[files]]
+path = "provenance/upstream-notices/pulse.NOTICE"
+class = "imported"
+origin = "constellation-monitor public cut at 81c2354, NOTICE"
+license = "Apache-2.0"
+
+[[files]]
+path = "provenance/upstream-notices/nightshift.NOTICE"
+class = "imported"
+origin = "Nightshift at e2675dd, NOTICE"
+license = "Apache-2.0"
+
+# A private key kept as a test fixture. scripts/provenance.py refuses any
+# other credential-shaped file. It is the Ed25519 key whose seed is SHA-256
+# of the string "ABSD test fixture key, not a credential", derived by
+# scripts/reference_fixture.py (fixtures/ag-native/README.md): anyone can
+# derive it, so it is public by construction and must never be enrolled
+# anywhere. Its enrollment is a stub and the matrix that uses it never signs.
+# It replaced, on 2026-10-10, a key openssl had generated at random for the
+# first reference run (commit 000e2c1d), whose use on other hosts could not
+# be ruled out; that key remains in the development repository's history
+# and is in no source release.
+[[files]]
+path = "fixtures/ag-native/reference/i-fresh-ag/ag/secrets/**"
+class = "first-party"
+license = "Apache-2.0"
+kind = "test-key"
+
+# REUSE-IgnoreStart: the notices quoted below are upstream's, not this file's.
+
+# --- Carried patches -------------------------------------------------------
+# A patch is ABSD's change expressed against someone else's file: its context
+# and removed lines are upstream's, its added lines are first-party. The
+# upstream terms are recorded; no file-level identifier is asserted, because
+# that would also license the first-party lines. The patch files are
+# content-pinned by scripts/verify-inputs.sh and carry no header.
+
+[[files]]
+path = "patches/rust-1.95.0-absd-std.patch"
+class = "adapted"
+origin = "rust-lang/rust 1.95.0, library/ (the pinned rust-src component)"
+upstream-license = "MIT OR Apache-2.0"
+upstream-notice = "The Rust Project Developers (see https://thanks.rust-lang.org), as rust-lang/rust REUSE.toml states for library/** at 1.95.0"
+license = "Apache-2.0"
+in-artifacts = ["operator-image", "workload-images"]
+binary-actions = ["Every program links the standard library as modified by this patch: the Rust library notice set applies to every binary, and the modification should be stated where the library is credited."]
+
+[[files]]
+path = "patches/sunset-server-channel.patch"
+class = "adapted"
+origin = "sunset 0.6.0 (crates.io archive)"
+upstream-license = "0BSD"
+upstream-notice = "Sunset SSH is (c) 2022-2024 Matt Johnston and contributors"
+license = "Apache-2.0"
+in-artifacts = ["operator-image"]
+binary-actions = ["sshd links sunset 0.6.0 as modified by this patch; say so where sunset is credited."]
+
+[[files]]
+path = "patches/ring-absd.patch"
+class = "adapted"
+origin = "ring 0.17.14 (crates.io archive), build.rs"
+upstream-license = "Apache-2.0 AND ISC"
+upstream-notice = "ring ships LICENSE, LICENSE-BoringSSL and LICENSE-other-bits; no NOTICE file"
+license = "Apache-2.0"
+in-artifacts = ["workload-images"]
+binary-actions = ["ag-loopctl links ring 0.17.14 (BoringSSL-derived C and assembly) built with this patch: ring's three licence files accompany any image that carries it."]
+
+[[files]]
+path = ["patches/pulse-nq-load-support-absd.patch", "patches/pulse-absd-frame-pressure.patch"]
+class = "adapted"
+origin = "constellation-monitor public cut at 81c2354 (the owner's project)"
+upstream-license = "Apache-2.0"
+upstream-notice = "NOTICE at that commit, carried verbatim as provenance/upstream-notices/pulse.NOTICE"
+license = "Apache-2.0"
+notice-files = ["provenance/upstream-notices/pulse.NOTICE"]
+in-artifacts = ["workload-images"]
+binary-actions = ["Apache-2.0 with a NOTICE file: the Pulse programs built from this material carry that NOTICE and the licence text in any image or source tree that includes them."]
+
+[[files]]
+path = ["patches/ag-store-absd.patch", "patches/ag-loopctl-absd.patch", "ag/Cargo.toml"]
+class = "adapted"
+origin = "AG at 21c8da0 (the owner's project); ag/Cargo.toml restates crates/ag-app/Cargo.toml"
+upstream-license = "Apache-2.0"
+upstream-notice = "LICENSE at that commit; no NOTICE file"
+license = "Apache-2.0"
+in-artifacts = ["workload-images"]
+
+[[files]]
+path = ["patches/nq-absd.patch", "nq/Cargo.toml"]
+class = "adapted"
+origin = "NQ-NG at 8057441 (the owner's project); nq/Cargo.toml restates crates/nq-app/Cargo.toml"
+upstream-license = "Apache-2.0"
+upstream-notice = "LICENSE at that commit; no NOTICE file"
+license = "Apache-2.0"
+in-artifacts = ["workload-images"]
+
+[[files]]
+path = "patches/nightshiftd-absd.patch"
+class = "adapted"
+origin = "Nightshift at e2675dd (the owner's project)"
+upstream-license = "Apache-2.0"
+upstream-notice = "NOTICE at that commit, carried verbatim as provenance/upstream-notices/nightshift.NOTICE"
+license = "Apache-2.0"
+notice-files = ["provenance/upstream-notices/nightshift.NOTICE"]
+in-artifacts = ["workload-images"]
+binary-actions = ["Apache-2.0 with a NOTICE file: the Nightshift programs built from this material carry that NOTICE and the licence text in any image or source tree that includes them."]
+
+# --- Vendored crates -------------------------------------------------------
+# Content-pinned by scripts/verify-inputs.sh, so attribution lives in
+# REUSE.toml, LICENSES/ and vendor/README.md, not inside these directories.
+
+[[files]]
+path = "vendor/tempfile/**"
+class = "imported"
+origin = "tempfile 3.27.0 (crates.io archive, vcs sha1 5c8fa12e)"
+license = "MIT OR Apache-2.0"
+notice-files = ["vendor/tempfile/LICENSE-MIT", "vendor/tempfile/LICENSE-APACHE"]
+in-artifacts = ["workload-images"]
+
+[[files]]
+path = ["vendor/tempfile/src/file/imp/mod.rs", "vendor/tempfile/src/lib.rs"]
+class = "imported"
+origin = "tempfile 3.27.0, with three ABSD lines (vendor/README.md)"
+license = "MIT OR Apache-2.0"
+first-party-portion = "Apache-2.0"
+
+[[files]]
+path = "vendor/tempfile/src/file/imp/absd.rs"
+class = "first-party"
+license = "Apache-2.0"
+note = "ABSD file added inside an MIT OR Apache-2.0 crate; not part of upstream"
+
+[[files]]
+path = "vendor/rustc-literal-escaper/**"
+class = "imported"
+origin = "rust-lang/literal-escaper v0.0.5 as embedded in proc-macro2 1.0.106 (src/rustc_literal_escaper.rs, src/num.rs)"
+license = "MIT OR Apache-2.0"
+
+[[files]]
+path = ["vendor/rustc-literal-escaper/src/lib.rs", "vendor/rustc-literal-escaper/Cargo.toml"]
+class = "imported"
+origin = "as above; lib.rs gains four ABSD lines and the manifest is rewritten for the std workspace (vendor/README.md)"
+license = "MIT OR Apache-2.0"
+first-party-portion = "Apache-2.0"
+
+# First-party substitute crates: written for ABSD, taking only the crate and
+# feature names of ctrlc and nix. Their manifests used to carry the licence
+# string of the crate each stands in for; the owner removed those on
+# 2026-10-10, since a stub does not inherit a licence by imitating an API.
+[[files]]
+path = ["vendor/ctrlc-stub/**", "vendor/nix-absd/**"]
+class = "first-party"
+license = "Apache-2.0"
+
+# REUSE-IgnoreEnd

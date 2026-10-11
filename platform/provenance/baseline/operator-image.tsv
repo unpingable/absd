@@ -1,0 +1,391 @@
+component	version	origin	use	license	elected	texts	units	source
+ABSD kernel and init	kernel repository, pinned commit	first-party	included			MISSING	image	see the kernel repository's provenance/inventory/kernel-image.tsv for its third-party content (Rust core/alloc, console font)
+GNU Unifont	as shipped in host package grub-common (unicode.pf2)	host-package	included	not recorded by the host package (upstream: GPL-2.0-or-later with a font embedding exception; verify for the shipped version)	not recorded by the host package (upstream: GPL-2.0-or-later with a font embedding exception; verify for the shipped version)	MISSING	image	/usr/share/grub/unicode.pf2 copied by grub-mkrescue
+GRUB	host package grub-common	host-package	included	GPL-3.0-or-later	GPL-3.0-or-later	copyright,GPL-3	image	boot images, modules and locale catalogues copied by grub-mkrescue
+absd-broker	0.1.0	first-party	linked		n/a		commands,ports,sshd	broker
+absd-durable	0.1.0	first-party	not-built		n/a			durable
+absd-fs	0.1.0	first-party	linked		n/a		commands,ports,sshd	fs
+absd-fsd	0.1.0	first-party	linked		n/a		commands,ports,sshd	fsd
+absd-net	0.1.0	first-party	linked		n/a		sshd	net
+absd-release	0.1.0	first-party	linked		n/a		commands,ports,sshd	release
+absd-runtime	0.1.0	first-party	linked		n/a		commands,ports,sshd	runtime
+absd-sqlite	0.1.0	first-party	not-built		n/a			sqlite
+absd-sshd	0.1.0	first-party	linked		n/a		sshd	ssh
+absd-std-probe	0.1.0	first-party	linked		n/a		commands	.
+addr2line	0.25.1	registry	not-built		n/a			1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b
+adler2	2.0.1	registry	not-built		n/a			320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa
+aead	0.6.1	registry	not-built		n/a			1973cfbc1a2daf9cf550e74e1f088c28e7f7d8c1e1418fb6c9dc5184b7e84c99
+aes	0.9.3	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	35f0f96ce78e38c3dc6d8948aa8163d06385be74000f3c7a95bf1eef35d3ea32
+aes-gcm	0.11.1	registry	not-built		n/a			7f2b8006a0c83f52b62ba44a97b58bf76fe2f70a329e588f67f89691d93d498f
+ag-campaign	0.1.0	outside-repository	not-built		n/a			
+ag-kernel	0.1.0	outside-repository	not-built		n/a			
+ag-primitives	0.1.0	outside-repository	not-built		n/a			
+ag-store	0.1.0	outside-repository	not-built		n/a			
+aho-corasick	1.1.4	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301
+aho-corasick	1.1.5	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba
+alloc	0.0.0	toolchain	linked	MIT OR Apache-2.0	MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+android_system_properties	0.1.6	registry	not-built		n/a			ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc
+anstream	1.0.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	824a212faf96e9acacdbd09febd34438f8f711fb84e09a8916013cd7815ca28d
+anstyle	1.0.14	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000
+anstyle-parse	1.0.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	52ce7f38b242319f7cabaa6813055467063ecdc9d355bbb4ce0c68908cd8130e
+anstyle-query	1.1.5	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc
+anstyle-wincon	3.0.11	registry	not-built		n/a			291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d
+anyhow	1.0.103	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3
+anyhow	1.0.104	registry	not-built		n/a			330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470
+approx	0.5.1	registry	not-built		n/a			cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6
+ariadne	0.6.0	registry	not-built		n/a			8454c8a44ce2cb9cc7e7fae67fc6128465b343b92c6631e94beca3c8d1524ea5
+ascii	1.1.0	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16
+autocfg	1.5.1	registry	build-only		n/a		ports,sshd	f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53
+base64	0.22.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6
+base64-simd	0.8.0	registry	linked	MIT	MIT	MISSING	ports	339abbe78e73178762e23bea9dfd08e697eb3f3301cd4be981c0f78ba5859195
+base64ct	1.8.3	registry	not-built		n/a			2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06
+bigdecimal	0.4.10	registry	linked	MIT/Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	4d6867f1565b3aad85681f1015055b087fcfd840d6aeee6eee7f2da317603695
+bitflags	1.3.2	registry	linked	MIT/Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a
+bitflags	2.13.1	registry	not-built		n/a			b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da
+bitflags	2.13.2	registry	not-built		n/a			3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06
+block-buffer	0.10.4	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands,ports,sshd	3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71
+block-buffer	0.12.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa
+bstr	1.13.0	registry	linked	MIT OR Apache-2.0	MIT	COPYING,LICENSE-APACHE,LICENSE-MIT	ports	1f7dc094d718f2e1c1559ad110e27eeaae14a5465d3d56dd6dbd793079fbd530
+bstr	1.13.1	registry	linked	MIT OR Apache-2.0	MIT	COPYING,LICENSE-APACHE,LICENSE-MIT	ports	6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f
+bumpalo	3.20.3	registry	not-built		n/a			72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649
+byteorder	1.5.0	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	sshd	1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b
+cc	1.2.67	registry	not-built		n/a			e17dd265a7d0f31ef544e1b20e03add05d3b45b491b633b10d67145d2acc1a38
+cc	1.4.4	registry	not-built		n/a			0ad534f4357a5264cce5019c989cf66a4f0dc4e0d1b1d15f8aacec0ff7360273
+cc	1.4.5	registry	build-only		n/a		std	005ec2760ca554fae18df7a11195552ec576cd665632a881bc011d5bb2fd4d80
+cfg-if	1.0.4	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands,ports,std	9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801
+cfg-if	1.0.5	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600
+cfg_aliases	0.2.2	registry	not-built		n/a			f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527
+chacha20	0.10.2	registry	not-built		n/a			65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06
+chacha20	0.9.1	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	c3613f74bd2eac03dad61bd53dbe620703d4371614fe0bc3b9f04dd36fe4e818
+chrono	0.4.45	registry	not-built		n/a			1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327
+cipher	0.4.4	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad
+cipher	0.5.2	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c
+clap	4.6.6	registry	not-built		n/a			473c7e07f409a8d772161724aa8db6a765a2532a70f9667eeb7b49d3d02fbdca
+clap	4.6.7	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	aa8876b300ab35ba921adea3dfd70157a46249b33f95c9084ae5709785478946
+clap_builder	4.6.6	registry	not-built		n/a			7b48fea5a88e9ae728a2dcbedbfc0e730f7d60da42e1cb049a83c9fb8b789889
+clap_builder	4.6.7	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d
+clap_derive	4.6.4	registry	not-built		n/a			d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061
+clap_lex	1.1.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9
+cmov	0.5.4	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a
+codspeed	5.0.1	registry	not-built		n/a			7083f253260bcb4aaa3b4aa4c52973703dabc1a85c2f193997e2689aafa8a919
+codspeed-divan-compat	5.0.1	registry	not-built		n/a			bc1065d507e1cbab731a7976db4cef7e47e49b87b4dbc0a925df07d343558420
+codspeed-divan-compat-macros	5.0.1	registry	not-built		n/a			2fd05482a95823ffe421e8a9ba24fa22a6a30d594e2c60455cbb43a41bf2d8fa
+codspeed-divan-compat-walltime	5.0.1	registry	not-built		n/a			d2f8eae75b8fa85357020a404899c4280d590c9fd1c47640b3ce53106c62d2ee
+colorchoice	1.0.5	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570
+colored	3.1.1	registry	not-built		n/a			faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34
+compiler_builtins	0.1.160	toolchain	linked	MIT AND Apache-2.0 WITH LLVM-exception AND (MIT OR Apache-2.0)	Apache-2.0 WITH LLVM-exception AND MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+condtype	1.3.0	registry	not-built		n/a			baf0a07a401f374238ab8e2f11a104d2851bf9ce711ec69804834de8af45c7af
+const-oid	0.10.2	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c
+const-oid	0.9.6	registry	not-built		n/a			c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8
+core	0.0.0	toolchain	linked	MIT OR Apache-2.0	MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+core-foundation-sys	0.8.7	registry	not-built		n/a			773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b
+cpubits	0.1.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	15b85f9c39137c3a891689859392b1bd49812121d0d61c9caf00d46ed5ce06ae
+cpufeatures	0.2.17	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands,ports,sshd	59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280
+cpufeatures	0.3.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566
+crc32fast	1.5.1	registry	not-built		n/a			8498c871161e1742aaa9d52551b2d6ebdd4c3d45a3be423e3728f33b955be550
+crossbeam-deque	0.8.7	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	5181e0de7b61eb03a81e347d6dd8797bae9da5146707b51077e2d71a54ec0ceb
+crossbeam-epoch	0.9.20	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	2d6914041f254d6e9176c01941b21115dcfb7089e55135a35411081bd106ef3f
+crossbeam-utils	0.8.22	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17
+crypto-common	0.1.7	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands,ports,sshd	78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a
+crypto-common	0.2.2	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453
+ctr	0.10.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	baaca1c4b237092596f64d571e9db6ce4109c4ef9742e27590f1709594461f21
+ctrlc	3.5.2	first-party	not-built		n/a			vendor/ctrlc-stub
+ctutils	0.4.2	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e
+curve25519-dalek	4.1.3	registry	not-built		n/a			97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be
+curve25519-dalek	5.0.0	registry	linked	BSD-3-Clause	BSD-3-Clause	LICENSE	sshd	b5eed333089e2e1c1ac8c6c0398e5e2497b4c9926ca6d0365ed1e099afa5bc23
+curve25519-dalek-derive	0.1.1	registry	build-only		n/a		sshd	f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3
+data-encoding	2.11.1	registry	linked	MIT	MIT	LICENSE	ports	4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06
+data-encoding-macro	0.1.21	registry	linked	MIT	MIT	LICENSE	ports	c6a127ecbb3c4632e1525380e04c0c3fcf8dcb44d32a79ea290d8a36906edcd8
+data-encoding-macro-internal	0.1.19	registry	build-only		n/a		ports	c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead
+defmt	1.1.1	registry	not-built		n/a			e2953bfe4f93bbd20cc71198842756f77d161884c99ebbabc41d80231ded88d1
+defmt-macros	1.1.1	registry	not-built		n/a			bad9c72e7ca2137e0dc3813245a0d282fd6daad32fd800af018306a9169b5fe8
+defmt-parser	1.0.0	registry	not-built		n/a			10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e
+der	0.7.10	registry	not-built		n/a			e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb
+des	0.9.0	registry	not-built		n/a			916a94e407b54f9034d71dd748234cd1e516ced6284009906ae246f177eafe5a
+digest	0.10.7	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands,ports,sshd	9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292
+digest	0.11.3	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2
+displaydoc	0.2.7	registry	build-only		n/a		ports	c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8
+divan-macros	0.1.17	registry	not-built		n/a			8dc51d98e636f5e3b0759a39257458b22619cac7e96d932da6eeb052891bb67c
+ed25519	2.2.3	registry	not-built		n/a			115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53
+ed25519	3.0.0	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	29fcf32e6c73d1079f83ab4d782de2d81620346a5f38c6237a86a22f8368980a
+ed25519-dalek	2.2.0	registry	not-built		n/a			70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9
+ed25519-dalek	3.0.0	registry	linked	BSD-3-Clause	BSD-3-Clause	LICENSE	sshd	6ebaa1a2bf1290ab3bfe5a7b771d050ebffab2711c19a81691c683a5144a25de
+either	1.18.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34
+encoding_rs	0.8.35	registry	linked	(Apache-2.0 OR MIT) AND BSD-3-Clause	BSD-3-Clause AND MIT	COPYRIGHT,LICENSE-APACHE,LICENSE-MIT,LICENSE-WHATWG	ports	75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3
+encoding_rs_io	0.1.7	registry	linked	MIT OR Apache-2.0	MIT	COPYING,LICENSE-APACHE,LICENSE-MIT	ports	1cc3c5651fb62ab8aa3103998dade57efdd028544bd300516baa31840c252a83
+equivalent	1.0.2	registry	not-built		n/a			877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f
+errno	0.3.14	registry	not-built		n/a			39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb
+fallible-iterator	0.3.0	registry	not-built		n/a			2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649
+fallible-streaming-iterator	0.1.9	registry	not-built		n/a			7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a
+fastrand	2.5.0	registry	not-built		n/a			da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223
+fiat-crypto	0.2.9	registry	not-built		n/a			28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d
+fiat-crypto	0.3.0	registry	not-built		n/a			64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24
+find-msvc-tools	0.1.11	registry	not-built		n/a			d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890
+find-msvc-tools	0.1.12	registry	build-only		n/a		std	3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d
+find-msvc-tools	0.1.9	registry	not-built		n/a			5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582
+flate2	1.1.10	registry	not-built		n/a			6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb
+fluent	0.17.0	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	ports	8137a6d5a2c50d6b0ebfcb9aaa91a28154e0a70605f112d30cb0cd4a78670477
+fluent-bundle	0.16.0	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	ports	01203cb8918f5711e73891b347816d932046f95f54207710bda99beaeb423bf4
+fluent-langneg	0.13.1	registry	linked	Apache-2.0 OR MIT	MIT	MISSING	ports	7eebbe59450baee8282d71676f3bfed5689aeab00b27545e83e5f14b1195e8b0
+fluent-syntax	0.12.0	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	ports	54f0d287c53ffd184d04d8677f590f4ac5379785529e5e08b1c8083acdd5c198
+foldhash	0.1.5	registry	not-built		n/a			d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2
+foldhash	0.2.0	registry	not-built		n/a			77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb
+futures-core	0.3.34	registry	not-built		n/a			92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e
+futures-task	0.3.34	registry	not-built		n/a			cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd
+futures-util	0.3.34	registry	not-built		n/a			0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc
+generic-array	0.14.7	registry	linked	MIT	MIT	LICENSE	commands,ports,sshd	85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a
+getrandom	0.2.17	registry	not-built		n/a			ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0
+getrandom	0.3.4	registry	not-built		n/a			899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd
+getrandom	0.4.3	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099
+ghash	0.6.0	registry	not-built		n/a			2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5
+gimli	0.32.3	registry	not-built		n/a			e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7
+glob	0.3.4	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b
+globset	0.4.19	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	e47d37d2ae4464254884b60ab7071be2b876a9c35b696bd018ddcc76847309cd
+grep	0.4.1	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	309217bc53e2c691c314389c7fa91f9cd1a998cda19e25544ea47d94103880c3
+grep-cli	0.1.12	registry	linked	Unlicense OR MIT	MIT	LICENSE-MIT,UNLICENSE	ports	cf32d263c5d5cc2a23ce587097f5ddafdb188492ba2e6fb638eaccdc22453631
+grep-matcher	0.1.9	registry	linked	Unlicense OR MIT	MIT	LICENSE-MIT,UNLICENSE	ports	f9417543f4870fc8f1c8e1af870afae2431007626d9e703fce6471c468d33847
+grep-pcre2	0.1.10	registry	not-built		n/a			b752bb6f57dd3716e55b63a33ca05b5825c3d66cd427468874a5564af6ca365c
+grep-printer	0.3.1	registry	linked	Unlicense OR MIT	MIT	LICENSE-MIT,UNLICENSE	ports	fd76035e87871f51c1ee5b793e32122b3ccf9c692662d9622ef1686ff5321acb
+grep-regex	0.1.14	registry	linked	Unlicense OR MIT	MIT	LICENSE-MIT,UNLICENSE	ports	0ce0c256c3ad82bcc07b812c15a45ec1d398122e8e15124f96695234db7112ef
+grep-searcher	0.1.17	registry	linked	Unlicense OR MIT	MIT	LICENSE-MIT,UNLICENSE	ports	72348823a0eafc4bc2e9051064f28b5b42cc100b571b3a35d67918d711efcbc6
+hash32	0.3.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606
+hashbrown	0.15.5	registry	not-built		n/a			9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1
+hashbrown	0.16.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	std	841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100
+hashbrown	0.17.1	registry	not-built		n/a			ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a
+hashlink	0.10.0	registry	not-built		n/a			7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1
+heapless	0.9.3	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4
+heck	0.5.0	registry	build-only		n/a		sshd	2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea
+hex	0.4.3	registry	not-built		n/a			7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70
+hmac	0.13.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f
+hybrid-array	0.4.15	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	27f864f10dfb56725ce5ce5472bc52252c8f93a4ab86327122cebf62c5f59a17
+iana-time-zone	0.1.65	registry	not-built		n/a			e31bc9ad994ba00e440a8aa5c9ef0ec67d5cb5e5cb0cc7f8b744a35b389cc470
+iana-time-zone-haiku	0.1.2	registry	not-built		n/a			f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f
+icu_collections	2.3.0	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	fa68d21081c4a05d5a901a1c62add574c77048b6a1c67be3b50ce0b60d4ca513
+icu_locale	2.3.1	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	785f595c61ef57169a467eeed7b4b6936a66f6cacbb116a96ee86da983251bf4
+icu_locale_core	2.3.0	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	d56e28588da92eee5c3201a6eff33fabdd49b62269c8938d4ff050ce4d900deb
+icu_locale_data	2.3.0	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	d37d91460e362a5cf58907cd7ce871411775ee6294e49a5cc8e6cec16dfa75ea
+icu_locale_fallback	2.3.0	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	251af8e57c9400e3eb58242fe5b8b1152b2a64fdf4cf632f923c38ccee6f2fa9
+icu_locale_fallback_data	2.3.0	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	decf2a22ec8fa68f1a0c1129a3f8583f8f8bc24e8b9ccbe98ead99f62a4dc3a8
+icu_provider	2.3.1	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	d27bbb9d3abbefac45d55f647c9de1d44aafcd1186eb91879afef17c396c3e73
+ignore	0.4.29	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	d4ffa3a0547a138e59ddd6fa3b7c672ed47e6ad6a3cd177984ff1116aa5ba742
+indexmap	2.14.1	registry	not-built		n/a			07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb
+inout	0.1.4	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01
+inout	0.2.2	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	4250ce6452e92010fdf7268ccc5d14faa80bb12fc741938534c58f16804e03c7
+intl-memoizer	0.5.3	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	ports	310da2e345f5eb861e7a07ee182262e94975051db9e4223e909ba90f392f163f
+intl_pluralrules	7.0.2	registry	linked	Apache-2.0/MIT	MIT	MISSING	ports	078ea7b7c29a2b4df841a7f6ac8775ff6074020c6776d48491ce2268e068f972
+is_terminal_polyfill	1.70.2	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695
+itertools	0.14.0	registry	not-built		n/a			2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285
+itertools	0.15.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc
+itoa	1.0.18	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682
+jobserver	0.1.35	registry	not-built		n/a			1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3
+js-sys	0.3.104	registry	not-built		n/a			0e0c1080212aad755ea003d18543e8768dd432c48819efd73a7bf1e39b7a5a3a
+keccak	0.2.2	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	d8f198d1db720e4940b5a493201d199d9f24f568f8f746bd13706243a2f71598
+kem	0.3.0	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	01737161ba802849cfd486b5bd209d38ba4943494c249a8126005170c7621edd
+lexopt	0.3.2	registry	linked	MIT	MIT	LICENSE	ports	803ec87c9cfb29b9d2633f20cba1f488db3fd53f2158b1024cbefb47ba05d413
+libc	0.2.186	registry	not-built		n/a			68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66
+libc	0.2.189	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	std	3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2
+libm	0.2.16	registry	linked	MIT	MIT	LICENSE.txt	ports	b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981
+libsqlite3-sys	0.34.0	registry	not-built		n/a			91632f3b4fb6bd1d72aa3d78f41ffecfcf2b1a6648d8c241dbe7dbfaf4875e15
+linux-raw-sys	0.12.1	registry	not-built		n/a			32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53
+litemap	0.8.3	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae
+log	0.4.33	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad
+log	0.4.34	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6
+managed	0.8.0	registry	linked	0BSD	0BSD	LICENSE-0BSD.txt	sshd	0ca88d725a0a943b096803bd34e73a4437208b6077654cc4ecb2947a5f91618d
+memchr	2.8.3	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98
+memmap2	0.9.11	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0
+memoffset	0.9.1	registry	not-built		n/a			488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a
+miniz_oxide	0.8.9	registry	not-built		n/a			1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316
+miniz_oxide	0.9.1	registry	not-built		n/a			b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c
+ml-kem	0.3.2	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	5e15f3e5b957493873e396a66914e83e616b6afe335cdef7efe5c6e1216aba66
+module-lattice	0.2.3	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	0c61b87c9683ab7cb1c6871d261ad5479b6b10ceb52c4352aaca3b5d35a8febe
+nix	0.29.0	registry	not-built		n/a			71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46
+nix	0.31.3	registry	not-built		n/a			cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d
+num-bigint	0.4.8	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367
+num-integer	0.1.47	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b
+num-traits	0.2.19	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports,sshd	071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841
+object	0.37.3	registry	not-built		n/a			ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe
+once_cell	1.21.4	registry	not-built		n/a			9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50
+once_cell_polyfill	1.70.2	registry	not-built		n/a			384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe
+os_display	0.1.4	registry	linked	MIT	MIT	LICENSE	ports	ad5fd71b79026fb918650dde6d125000a233764f1c2f1659a1c71118e33ea08f
+outref	0.5.2	registry	linked	MIT	MIT	LICENSE	ports	1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e
+panic_abort	0.0.0	toolchain	linked	MIT OR Apache-2.0	MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+panic_unwind	0.0.0	toolchain	not-built		n/a			rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+pcre2	0.2.11	registry	not-built		n/a			9e970b0fcce0c7ee6ef662744ff711f21ccd6f11b7cf03cd187a80e89797fc67
+pcre2-sys	0.2.10	registry	not-built		n/a			18b9073c1a2549bd409bf4a32c94d903bb1a09bf845bc306ae148897fa0760a4
+pem-rfc7468	1.0.0	registry	not-built		n/a			a6305423e0e7738146434843d1694d621cce767262b2a86910beab705e4493d9
+pin-project-lite	0.2.17	registry	not-built		n/a			a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd
+pkcs8	0.10.2	registry	not-built		n/a			f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7
+pkg-config	0.3.33	registry	not-built		n/a			19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e
+pkg-config	0.3.34	registry	not-built		n/a			f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548
+poly1305	0.9.1	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	6e2d0073b297041425c7c3df6eb4792d598a15323fe63346852b092eca02904c
+polyval	0.7.3	registry	not-built		n/a			f0fa31d631f2b2cb2a544d0aa321ce847a94764d701ca2becc411138b93d49cd
+potential_utf	0.1.6	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	d83eb9bc6d8e5cf568e7a1101d60ee05e81ed50ea106026f3d18deeb046d7661
+ppv-lite86	0.2.21	registry	not-built		n/a			85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9
+proc-macro-crate	3.5.0	registry	not-built		n/a			e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f
+proc-macro2	1.0.106	registry	not-built		n/a			8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934
+proc-macro2	1.0.107	registry	build-only		n/a		ports,sshd	985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9
+proc_macro	0.0.0	toolchain	not-built		n/a			rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+procfs	0.18.0	registry	not-built		n/a			25485360a54d6861439d60facef26de713b1e126bf015ec8f98239467a2b82f7
+procfs-core	0.18.0	registry	not-built		n/a			e6401bf7b6af22f78b563665d15a22e9aef27775b79b149a66ca022468a4e405
+pulse-agent	0.1.0	outside-repository	not-built		n/a			
+pulse-evaluator	0.1.0	outside-repository	not-built		n/a			
+pulse-l3-bridge	0.1.0	outside-repository	not-built		n/a			
+pulse-replay	0.1.0	outside-repository	not-built		n/a			
+pulse-runtime	0.1.0	outside-repository	not-built		n/a			
+pulse-types	0.1.0	outside-repository	not-built		n/a			
+quote	1.0.46	registry	not-built		n/a			dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368
+quote	1.0.47	registry	build-only		n/a		ports,sshd	1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001
+r-efi	5.3.0	registry	not-built		n/a			69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f
+r-efi	6.0.0	registry	not-built		n/a			f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf
+rand	0.9.5	registry	not-built		n/a			b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41
+rand_chacha	0.9.0	registry	not-built		n/a			d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb
+rand_core	0.10.1	registry	linked	MIT OR Apache-2.0	MIT	COPYRIGHT,LICENSE-APACHE,LICENSE-MIT	sshd	63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69
+rand_core	0.6.4	registry	not-built		n/a			ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c
+rand_core	0.9.5	registry	not-built		n/a			76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c
+rand_xorshift	0.4.0	registry	not-built		n/a			513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a
+regex	1.13.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d
+regex-automata	0.4.15	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	1f388202e4b80542a0921078cc23b6333bcf1409c1e3f86404cae4766a6131db
+regex-automata	0.4.18	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2
+regex-lite	0.1.9	registry	not-built		n/a			cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973
+regex-syntax	0.8.11	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT,src/unicode_tables/LICENSE-UNICODE	ports	d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4
+ripgrep	15.2.0	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	
+rusqlite	0.36.0	registry	not-built		n/a			3de23c3319433716cf134eed225fe9986bc24f63bed9be9f20c329029e672dc7
+rustc-demangle	0.1.27	registry	linked	MIT/Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	std	b50b8869d9fc858ce7266cce0194bd74df58b9d0e3f6df3a9fc8eb470d95c09d
+rustc-hash	2.1.3	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	ports	6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d
+rustc-literal-escaper	0.0.5	outside-repository	not-built		n/a			
+rustc-std-workspace-alloc	1.99.0	toolchain	linked	MIT OR Apache-2.0	MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+rustc-std-workspace-core	1.99.0	toolchain	linked	MIT OR Apache-2.0	MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+rustc_version	0.4.1	registry	build-only		n/a		sshd	cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92
+rustix	1.1.4	registry	not-built		n/a			b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190
+rustversion	1.0.23	registry	not-built		n/a			cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f
+ryu-js	0.2.2	registry	not-built		n/a			6518fc26bced4d53678a22d6e423e9d8716377def84545fe328236e3af070e7f
+same-file	1.0.6	registry	linked	Unlicense/MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502
+self_cell	1.3.0	registry	linked	Apache-2.0 OR GPL-2.0-only	Apache-2.0	LICENSE-APACHE,LICENSE-GPLv2	ports	2ab42ca02749e120097e328d91d415325bdf43b1c72c4c8badf37375fe40a813
+semver	1.0.28	registry	build-only		n/a		sshd	8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd
+serde	1.0.228	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e
+serde	1.0.229	registry	not-built		n/a			4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba
+serde_core	1.0.228	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad
+serde_core	1.0.229	registry	not-built		n/a			67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48
+serde_derive	1.0.228	registry	not-built		n/a			d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79
+serde_derive	1.0.229	registry	not-built		n/a			e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348
+serde_jcs	0.2.0	registry	not-built		n/a			d3a60f3fda61525e439ef6d67422118f11e986566997d9021c56867ad814a0aa
+serde_json	1.0.150	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9
+serde_json	1.0.151	registry	not-built		n/a			c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14
+sha2	0.10.9	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands,ports,sshd	a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283
+sha2	0.11.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4
+sha3	0.11.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1
+shlex	2.0.1	registry	build-only		n/a		std	f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba
+signature	2.2.0	registry	not-built		n/a			77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de
+signature	3.0.0	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5
+simd-adler32	0.3.10	registry	not-built		n/a			3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea
+slab	0.4.12	registry	not-built		n/a			0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5
+smallvec	1.15.2	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90
+smallvec	1.16.0	registry	not-built		n/a			b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f
+smoltcp	0.14.0	registry	linked	0BSD	0BSD	LICENSE-0BSD.txt	sshd	b6f8b28ad56c6e35524a37dd492af5d1a47e31e1a4d175cd12f89c075f01980f
+snafu	0.9.2	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	e45cb604038abb7b926b679887b3226d8d0f23874b66623625a0454be425a4b7
+snafu-derive	0.9.2	registry	build-only		n/a		sshd	287f59010008f0d7cf5e3b03196d666c1acc46c8d3e9cf34c28a1a7157601e72
+spki	0.7.3	registry	not-built		n/a			d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d
+ssh-cipher	0.3.0	registry	not-built		n/a			d801accda99469cde6d73da741422610fdf6508a72d9a69d1b55cb241c720597
+ssh-encoding	0.3.0	registry	not-built		n/a			7b54d0ed0498daf3f78d82e00e28c8eec9d75a067c4cfbcc7a0f7d0f4077749e
+ssh-key	0.7.0-rc.11	registry	not-built		n/a			f9a32fae177b74a22aa9c5b01bf7e68b33545be32d9e381e248058d2adc15ce3
+stable_deref_trait	1.2.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports,sshd	6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596
+statrs	0.18.0	registry	not-built		n/a			2a3fe7c28c6512e766b0874335db33c94ad7b8f9054228ae1c2abd47ce7d335e
+std	0.0.0	toolchain	linked	MIT OR Apache-2.0	MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+std_detect	0.1.5	toolchain	linked	MIT OR Apache-2.0	MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+strsim	0.11.1	registry	linked	MIT	MIT	LICENSE	ports	7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f
+subtle	2.6.1	registry	linked	BSD-3-Clause	BSD-3-Clause	LICENSE	sshd	13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292
+sunset	0.6.0	registry	linked	0BSD	0BSD	LICENSE	sshd	
+sunset-sshwire-derive	0.3.0	registry	build-only		n/a		sshd	d40354cdc622342c11b742e91a5c151ebd59cbd3bc507f6146e9e6de6791f75f
+syn	2.0.119	registry	build-only		n/a		sshd	872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297
+syn	3.0.4	registry	build-only		n/a		ports	e6275cddf4610d1775e6d1fe9469b2e77d0f39fd98fb7450901b821e0c53649f
+syn	3.0.5	registry	not-built		n/a			12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9
+syn	3.0.6	registry	not-built		n/a			8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee
+synstructure	0.14.0	registry	build-only		n/a		ports	901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02
+sysroot	0.0.0	toolchain	not-built		n/a			rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+tempfile	3.27.0	vendored	not-built		n/a			vendor/tempfile
+termcolor	1.4.1	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755
+terminal_size	0.4.4	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874
+textwrap	0.16.2	registry	linked	MIT	MIT	LICENSE	ports	c13547615a44dc9c452a8a534638acdf07120d4b6847c8178705da06306a3057
+thiserror	2.0.20	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f
+thiserror	2.0.21	registry	not-built		n/a			09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e
+thiserror-impl	2.0.20	registry	build-only		n/a		ports	bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af
+thiserror-impl	2.0.21	registry	not-built		n/a			fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524
+tikv-jemalloc-sys	0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8	registry	not-built		n/a			1a2825c78386b4ae0314074867860ba9577875de945f05992c38815cbec327f0
+tikv-jemallocator	0.7.0	registry	not-built		n/a			249f09e49ab1609436f34c776e84231bead18d6a955f119f939bdc1d847561bd
+tinystr	0.8.4	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	b1e27c91459209c2986af3dcf603a5a74a4368754ce37414f59acc971167f643
+toml_datetime	1.1.1+spec-1.1.0	registry	not-built		n/a			3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7
+toml_edit	0.25.13+spec-1.1.0	registry	not-built		n/a			6975367e4d2ef766d86af01ffad14b622fecc8d4357a998fbc4deb6e9bacaf9b
+toml_parser	1.1.3+spec-1.1.0	registry	not-built		n/a			1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56
+type-map	0.5.1	registry	linked	MIT/Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	cb30dbbd9036155e74adad6812e9898d03ec374946234fbcebd5dfc7b9187b90
+typenum	1.20.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE,LICENSE-APACHE,LICENSE-MIT	commands,ports,sshd	b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20
+unic-langid	0.9.6	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	a28ba52c9b05311f4f6e62d5d9d46f094bd6e84cb8df7b3ef952748d752a7d05
+unic-langid-impl	0.9.6	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	dce1bf08044d4b7a94028c93786f8566047edc11110595914de93362559bc658
+unicode-ident	1.0.24	registry	build-only		n/a		ports	e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75
+unicode-ident	1.0.26	registry	build-only		n/a		sshd	d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954
+unicode-width	0.2.2	registry	linked	MIT OR Apache-2.0	MIT	COPYRIGHT,LICENSE-APACHE,LICENSE-MIT	ports	b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254
+unit-prefix	0.5.2	registry	linked	MIT	MIT	LICENSE	ports	81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3
+universal-hash	0.6.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	f4987bdc12753382e0bec4a65c50738ffaabc998b9cdd1f952fb5f39b0048a96
+unwind	0.0.0	toolchain	linked	MIT OR Apache-2.0	MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+utf8_iter	1.0.4	registry	linked	Apache-2.0 OR MIT	MIT	COPYRIGHT,LICENSE-APACHE,LICENSE-MIT	ports	b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be
+utf8parse	0.2.2	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	ports	06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821
+uu_base32	0.12.0	registry	linked	MIT	MIT	LICENSE	ports	a4472f433014202b99debd2907cda4650aafbb6881b8a5dca139b255dceed892
+uu_base64	0.12.0	registry	linked	MIT	MIT	LICENSE	ports	
+uu_basename	0.12.0	registry	linked	MIT	MIT	LICENSE	ports	
+uu_cut	0.12.0	registry	linked	MIT	MIT	LICENSE	ports	
+uu_fold	0.12.0	registry	linked	MIT	MIT	LICENSE	ports	
+uu_nl	0.12.0	registry	linked	MIT	MIT	LICENSE	ports	
+uu_seq	0.12.0	registry	linked	MIT	MIT	LICENSE	ports	
+uu_uniq	0.12.0	registry	linked	MIT	MIT	LICENSE	ports	
+uucore	0.12.0	registry	linked	MIT	MIT	LICENSE	ports	f24a5910ebbf2c0baf486a9125705f8e026a8f7741a3ea8cf5eca3c9257c9bdf
+uucore_procs	0.12.0	registry	build-only		n/a		ports	50aa1f3bba55168888ae6f1f2714ce58897d8020d742d21f474f01e86468fedd
+uuid	1.26.1	registry	not-built		n/a			2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce
+vcpkg	0.2.15	registry	not-built		n/a			accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426
+version_check	0.9.5	registry	build-only		n/a		commands,ports,sshd	0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a
+virtue	0.0.17	registry	build-only		n/a		sshd	7302ac74a033bf17b6e609ceec0f891ca9200d502d31f02dc7908d3d98767c9d
+vsimd	0.8.0	registry	linked	MIT	MIT	MISSING	ports	5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64
+walkdir	2.5.0	registry	linked	Unlicense/MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b
+wasi	0.11.1+wasi-snapshot-preview1	registry	not-built		n/a			ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b
+wasip2	1.0.4+wasi-0.2.12	registry	not-built		n/a			b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487
+wasm-bindgen	0.2.127	registry	not-built		n/a			1b70935747edd64d89de3efa29d73789b806c15798f8e7dca4d8ac356b50ce70
+wasm-bindgen-macro	0.2.127	registry	not-built		n/a			77775f8f3f7217702089053b94958f8f54061a3f663417df76e19cbdcca29bc1
+wasm-bindgen-macro-support	0.2.127	registry	not-built		n/a			e11d33f857dc2fb11b8bc75aee111aa9cbeb12cd9f25efd3d4c2a3dd4e235284
+wasm-bindgen-shared	0.2.127	registry	not-built		n/a			7ef64dbcc55df09c7e5a46182d181c2cfa3e925f3da937ea764728b4bbb9dcbf
+wild	2.2.1	registry	not-built		n/a			a3131afc8c575281e1e80f36ed6a092aa502c08b18ed7524e86fbbb12bb410e1
+winapi-util	0.1.11	registry	not-built		n/a			c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22
+windows-core	0.62.2	registry	not-built		n/a			b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb
+windows-implement	0.60.2	registry	not-built		n/a			053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf
+windows-interface	0.59.3	registry	not-built		n/a			3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358
+windows-link	0.0.0	toolchain	not-built		n/a			rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+windows-link	0.2.1	registry	not-built		n/a			f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5
+windows-result	0.4.1	registry	not-built		n/a			7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5
+windows-strings	0.5.1	registry	not-built		n/a			7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091
+windows-sys	0.60.2	registry	not-built		n/a			f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb
+windows-sys	0.61.2	registry	not-built		n/a			ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc
+windows-targets	0.53.5	registry	not-built		n/a			4945f9f551b88e0d65f3db0bc25c33b8acea4d9e41163edf90dcd0b19f9069f3
+windows_aarch64_gnullvm	0.53.1	registry	not-built		n/a			a9d8416fa8b42f5c947f8482c43e7d89e73a173cead56d044f6a56104a6d1b53
+windows_aarch64_msvc	0.53.1	registry	not-built		n/a			b9d782e804c2f632e395708e99a94275910eb9100b2114651e04744e9b125006
+windows_i686_gnu	0.53.1	registry	not-built		n/a			960e6da069d81e09becb0ca57a65220ddff016ff2d6af6a223cf372a506593a3
+windows_i686_gnullvm	0.53.1	registry	not-built		n/a			fa7359d10048f68ab8b09fa71c3daccfb0e9b559aed648a8f95469c27057180c
+windows_i686_msvc	0.53.1	registry	not-built		n/a			1e7ac75179f18232fe9c285163565a57ef8d3c89254a30685b57d83a38d326c2
+windows_x86_64_gnu	0.53.1	registry	not-built		n/a			9c3842cdd74a865a8066ab39c8a7a473c0778a3f29370b5fd6b4b9aa7df4a499
+windows_x86_64_gnullvm	0.53.1	registry	not-built		n/a			0ffa179e2d07eee8ad8f57493436566c7cc30ac536a3379fdf008f47f6bb7ae1
+windows_x86_64_msvc	0.53.1	registry	not-built		n/a			d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650
+winnow	1.0.4	registry	not-built		n/a			23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81
+wit-bindgen	0.57.1	registry	not-built		n/a			1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e
+writeable	0.6.4	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc
+x25519-dalek	3.0.0	registry	linked	BSD-3-Clause	BSD-3-Clause	LICENSE	sshd	e7e8131a03190127fb2263afc72b322ecadae46b6ff8c6f399ff5d02f5559af6
+yansi	1.0.1	registry	not-built		n/a			cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049
+yoke	0.8.3	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	709fe23a0424b6a435d82152b1bd3fdfb0833487d5fa90d05d42762a9891fef5
+yoke-derive	0.8.3	registry	build-only		n/a		ports	33811428bee40dbceb6d545e95754741d17a6aef9a4849f0fd62e2ba4f412a78
+z85	3.0.7	registry	linked	MIT/Apache-2.0	MIT	LICENSE-Apache,LICENSE-MIT	ports	c6e61e59a957b7ccee15d2049f86e8bfd6f66968fcd88f018950662d9b86e675
+zerocopy	0.8.57	registry	not-built		n/a			d35102a9f36d089ccae9e4c6802bc118be4487b80aaffc0ab4e0cf5ce92d2873
+zerocopy-derive	0.8.57	registry	not-built		n/a			146c01f5ab44258da43cf276c74a2763db2ff3969c9c652c3f2de07041d0b2bc
+zerofrom	0.1.8	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	0ec05a11813ea801ff6d75110ad09cd0824ddba17dfe17128ea0d5f68e6c5272
+zerofrom-derive	0.1.8	registry	build-only		n/a		ports	f75b4683f6c7f45248d4d64056a24298c6281e0993356d7d1b4a1a962ef10d4a
+zeroize	1.9.0	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e
+zeroize_derive	1.5.0	registry	build-only		n/a		sshd	3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328
+zerotrie	0.2.5	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	4ea269c3bd32f0a32c321907a2ae912ba6f4649bb0fc764a15627e99a7095a3f
+zerovec	0.11.8	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	bb0464e17806c1d976d5cba29399c7f08e516e279e2ba493f63123b5fca67dd8
+zerovec-derive	0.11.6	registry	build-only		n/a		ports	34df6fc39dbd26ddc9c10e6a2984476e13acce22e64e4487636ef494369225da
+zlib-rs	0.6.7	registry	not-built		n/a			34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12
+zmij	1.0.23	registry	linked	MIT	MIT	LICENSE-MIT	ports	29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b

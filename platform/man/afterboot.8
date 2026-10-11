@@ -1,0 +1,433 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 8, 2026
+.Dt AFTERBOOT 8
+.Os ABSD
+.Sh NAME
+.Nm afterboot
+.Nd building, booting, and checking the operator image
+.Sh DESCRIPTION
+This page is for the operator of an ABSD system: how to get the operator
+image, boot it, check it, and look after it, and what it cannot do yet.
+It describes the qualified system (see
+.Xr intro 1 ,
+.Sx QUALIFICATION ) :
+a served
+.Ql net fsd
+boot under QEMU, whose file server holds the disk and whose SSH server is
+the only way in.
+.Ss Build the image
+The operator image is built on a Linux host from the ABSD platform
+repository and a checkout of the ABSD kernel at the commit the platform's
+.Pa scripts/check-all.sh
+names:
+.Bd -literal -offset indent
+$ ssh-keygen -t ed25519 -f operator-key
+$ ABSD_KERNEL_RUN=/path/to/kernel-checkout \e
+    scripts/build-operator-image.sh \e
+    --authorized-keys operator-key.pub [--etc DIR] OUT
+.Ed
+.Pp
+It builds the platform, then writes
+.Pa OUT/absd-operator.iso
+(GRUB, the kernel, init, the file server, and the SSH server),
+.Pa OUT/absd-operator.img
+(a 64 MiB disk), and
+.Pa OUT/MANIFEST
+(the two commits and the SHA-256 of every file installed).
+The disk holds every command under
+.Pa /bin ,
+this manual under
+.Pa /share/man ,
+.Pa /etc/network.conf
+and
+.Pa /etc/sshd.conf
+(the files in
+.Ar DIR
+in place of the defaults), and the keys under
+.Pa /ssh/authorized_keys ,
+which must be
+.Ql ssh-ed25519
+lines without options.
+Files are written by ABSD itself, in importer boots under QEMU, and the host
+reads every one back before the build succeeds.
+The first boot adds
+.Pa /home/operator ,
+.Pa /tmp ,
+.Pa /var/log ,
+and the host key.
+.Ss Boot
+.Bd -literal -offset indent
+$ scripts/boot-operator.sh OUT 2222
+.Ed
+.Pp
+This runs QEMU in the foreground with RDRAND
+.Pq Ql -cpu max,vendor=GenuineIntel,+rdrand ,
+the ISO, the disk as the primary IDE master
+.Pq Xr ata 4 ,
+one e1000 card on QEMU's user network with 127.0.0.1:2222 forwarded to
+the address and port the disk's
+.Pa /etc
+files name, and the serial console in
+.Pa OUT/console.log .
+It returns when the machine halts
+.Pq status 0
+or the boot fails (QEMU's status, 7 for a failed boot).
+A
+.Xr reboot 8
+boots the same image again within the same run.
+Without RDRAND the SSH server refuses to start
+.Pq Ql sshd: entropy: ...
+and the boot fails.
+.Ss Check the host key
+The SSH server prints its host key's fingerprint on the console at every
+start, in plain text, in the form
+.Ql ssh-keygen -l
+uses, and the public key itself:
+.Bd -literal -offset indent
+$ grep '^sshd: host key' OUT/console.log
+sshd: host key 256 SHA256:3n0X...Q (ED25519)
+sshd: host key ssh-ed25519 AAAAC3Nz...
+.Ed
+.Pp
+Compare the
+.Ql SHA256:
+value with the one
+.Nm ssh
+shows on the first connection
+.Pq Dq ED25519 key fingerprint is SHA256:...
+before accepting it, or put the public key in a known_hosts file yourself
+and keep strict checking on:
+.Bd -literal -offset indent
+$ echo "[127.0.0.1]:2222 ssh-ed25519 AAAAC3Nz..." > known_hosts
+$ ssh -p 2222 -i operator-key -o UserKnownHostsFile=known_hosts \e
+    -o StrictHostKeyChecking=yes operator@127.0.0.1
+absd$
+.Ed
+.Pp
+The same lines are in
+.Pa /var/log/sshd .
+The file server creates the key at the first boot
+.Pq Ql FSD HOST KEY GENERATED
+and loads it after
+.Pq Ql FSD HOST KEY PRESENT .
+It lives at
+.Pa /ssh/host_ed25519_seed
+on the disk; no session can read, list, or reach
+.Pa /ssh ,
+but anyone holding the disk image can read the key.
+.Pp
+Only public keys are accepted.
+A line of
+.Pa /ssh/authorized_keys
+with options or another key type makes the server refuse the whole file.
+There are no passwords and no accounts; the user name is logged and
+otherwise ignored.
+Every key in the file is the same single operator.
+.Ss Look around
+.Bd -literal -offset indent
+absd$ uname -a
+absd$ release
+absd$ date
+absd$ uptime
+absd$ ls /
+absd$ df
+absd$ man intro
+.Ed
+.Pp
+.Ql ls /
+shows the session's view:
+.Pa bin/ ,
+.Pa etc/ ,
+.Pa home/ ,
+.Pa share/ ,
+.Pa tmp/ ,
+.Pa var/ .
+.Nm df
+prints the filesystem's size, the blocks in use and free, the commit
+sequence on the disk, and this session's mounts with their access; every
+session shares one filesystem and there are no quotas.
+.Nm release
+names the release being served: the commands in
+.Pa /bin
+and the manual in
+.Pa /share
+belong to it, and everything else to this machine
+.Pq Xr release 1 .
+.Ss Where things live
+.Bl -tag -width "/tmp/session-N"
+.It Pa /home/operator
+Read-write.
+Kept across sessions and boots; shared by every session.
+Put your files here.
+.It Pa /tmp/session-N
+Read-write, this session only: no other session can see it.
+It is removed when the session ends.
+.It Pa /bin
+The commands.
+Read-only.
+.It Pa /etc
+The configuration,
+.Xr network.conf 5
+and
+.Xr sshd.conf 5 .
+Read-only.
+.It Pa /share
+This manual
+.Pq Pa /share/man .
+Read-only.
+.It Pa /var/log
+The logs.
+Read-only.
+.It Pa /ssh
+The host key and authorized keys.
+Not visible to any session.
+.El
+.Pp
+Read-only means read-only for sessions: those files are placed when the
+image is built or reconfigured, and no session changes them.
+.Ss Configuration
+.Pa /etc/network.conf
+sets the address, netmask, and gateway;
+.Pa /etc/sshd.conf
+sets the port, the number of connections, the login grace time, the idle
+timeout, and the authentication tries.
+The SSH server reads both at start and prints what it uses:
+.Bd -literal -offset indent
+sshd: network 10.0.2.15/24 gateway 10.0.2.2 (/etc/network.conf)
+sshd: port 22, at most 4 connections, login grace 30 s, idle
+timeout 1800 s, 6 authentication tries (/etc/sshd.conf)
+.Ed
+.Pp
+A missing file means the defaults, and the line says so.
+A malformed file is refused: the console says which file, which line, and
+why, the SSH server does not start, and the boot fails.
+Sessions cannot write
+.Pa /etc ,
+so a session can never lock the operator out.
+To change or fix a file, halt the machine and replace the file on the
+image, then boot again:
+.Bd -literal -offset indent
+$ ABSD_KERNEL_RUN=/path/to/kernel-checkout \e
+    scripts/build-operator-image.sh --reconfigure --etc DIR OUT
+.Ed
+.Pp
+Each file of
+.Ar DIR
+replaces its namesake whole, in one commit; everything else on the disk
+is kept.
+.Fl -authorized-keys Ar KEYS
+replaces the keys the same way.
+.Ss Logs
+The file server writes
+.Pa /var/log/fsd
+and the SSH server
+.Pa /var/log/sshd ,
+each itself; there is no log daemon.
+Every line begins with the time, UTC, from the real-time clock:
+.Bd -literal -offset indent
+absd$ tail -n 3 /var/log/sshd
+2026-09-27T05:34:12Z sshd: conn 7: authenticated
+.Ed
+.Pp
+.Pa /var/log/fsd
+begins each boot with
+.Ql fsd: started: boot ID ,
+the identity
+.Xr uptime 1
+prints.
+When a log would grow past 64 KiB it is renamed to
+.Pa NAME.0 ,
+replacing the older one, and started again: each log keeps at most
+128 KiB, the newest lines.
+If the filesystem refuses a write (it is full), the line is lost and the
+next line written says how many were.
+The lines still go to the console as well.
+Init's lines, and every line before the file server starts, are on the
+console only: init has no file server channel.
+Per-command lines of the file server
+.Pq Ql FSD DERIVE
+are on the console only.
+There is no
+.Ql tail -f .
+.Ss Copying files
+There is no
+.Nm scp
+or
+.Nm sftp :
+the SSH server runs no subsystems.
+Use a command with a redirection:
+.Bd -literal -offset indent
+$ ssh -p 2222 operator@127.0.0.1 'cat > /home/operator/f' < f
+$ ssh -p 2222 operator@127.0.0.1 'cat >> /home/operator/f' < more
+$ ssh -p 2222 operator@127.0.0.1 cat /home/operator/f > f
+.Ed
+.Pp
+Under QEMU (TCG) a 1 MiB file took 45 to 60 s up and about 17 s down.
+Both directions are byte-exact for any file, binary included, as long as
+no terminal is requested (no
+.Fl t ;
+a terminal changes line endings and takes control characters as keys).
+A command with a
+.Ql | ,
+.Ql < ,
+.Ql > ,
+.Ql \&; ,
+.Ql & ,
+or
+.Ql \&"
+is run by
+.Xr absd-sh 1
+.Po
+.Ql absd-sh -c
+.Pc ;
+any other command runs directly.
+Paths are absolute, or relative to
+.Pa / ,
+which only reads.
+The upload is committed when
+.Nm cat
+ends; check it with
+.Ql ssh host sha256sum FILE .
+An upload the client breaks off leaves the file cut short (the old
+contents are gone once
+.Ql >
+opens it).
+Nothing of the upload keeps running after the client goes: the shell ends
+.Nm cat
+and exits.
+Nothing is copied that the session could not write itself.
+.Ss What is persistent
+A file written under
+.Pa /home/operator
+is committed to the disk when it is closed, when
+.Nm sync
+is run, when the session ends, and at most about 200 ms after a write that
+was not otherwise committed.
+.Nm sync
+returns once everything the file server has accepted, from every
+session, is on the disk.
+After a commit the file survives the machine stopping abruptly; see
+.Xr filesystem 7 .
+.Ss Time
+.Xr date 1
+reads the real-time clock: UTC, whole seconds, never set or corrected by
+ABSD.
+.Xr uptime 1
+counts kernel ticks since boot and names the boot.
+A file records one time, its modification time
+.Pq Xr filesystem 7 ;
+no command shows or sets it yet.
+.Ss Limits
+.Bl -bullet -compact
+.It
+Four accepted SSH connections at once, the default and the most
+.Xr sshd.conf 5
+admits (what the kernel's 48 pipes serve), counting unauthenticated ones.
+A further completed TCP connection is promptly closed without an SSH
+session slot, file-server binding, or banner. The console records
+.Ql SSH GLOBAL REFUSED ... limit=4 .
+Once a session releases its slot, an authenticated connection can use it.
+.It
+At most two accepted unauthenticated connections from one IPv4 source
+while global slots remain. A further one is closed with
+.Ql SSH PREAUTH REFUSED ... reason=source-limit .
+An authenticated connection still counts toward the global four.
+This source limit applies after TCP accept, not to the SYN/listener backlog.
+.It
+Sixteen processes in the whole system, including init, the file server,
+and the SSH server.
+.It
+Sixty-four handles per process, 32 live cells, and 48 live pipes in the
+whole system. The default, non-served boot suite exercises full-table
+refusal, release, and reuse for process, handle, cell, and pipe tables;
+the served-boot max-four case exercises its SSH limit separately.
+Printed limits and occupancy counts alone do not show that every table
+was exhausted in a served boot.
+.It
+Commands cannot start programs; only a session's shell can
+.Pq Xr absd-sh 1 .
+When a session ends, its shell ends the commands it started.
+If the SSH server has to kill the shell instead
+.Pq Ql SSH SESSION END ... forced=true ,
+those commands can outlive the session, and a
+.Xr shutdown 8
+or
+.Xr reboot 8
+then stops the machine rather than halting or restarting it.
+.It
+Eleven file server channels: one control channel and ten client slots
+shared by sessions and the commands they run; see
+.Xr absd-sh 1 .
+.It
+One CPU for served/user execution, one network card, one disk.
+CPU 1 is reserved for separate kernel-only fixtures; served boot with
+that AP option is refused.
+.El
+.Ss How the boot ends
+The boot runs until the operator asks for
+.Xr shutdown 8
+or
+.Xr reboot 8 ,
+from
+.Ql ssh host shutdown
+or from an interactive shell; every session is told and ends, and the file
+server commits everything before the machine halts or restarts.
+Stopping QEMU otherwise is an abrupt stop: anything not yet committed may
+be lost, and the next boot finds the last commit.
+.Ss What you cannot do yet
+.Bl -bullet -compact
+.It
+Change the configuration from a session, or without a reboot.
+.It
+Follow a log as it grows, or send logs elsewhere.
+.It
+See or stop processes of other sessions
+.Pf ( Xr ps 1
+lists only your own session).
+.It
+Add users; there is one operator.
+.El
+.Sh DIAGNOSTICS
+On the console
+.Pq Pa OUT/console.log :
+.Bl -tag -width Ds
+.It Ql sshd: /etc/FILE: line N: REASON; fix the file ...; sshd is not running
+a malformed configuration file; the boot fails.
+Fix it with
+.Fl -reconfigure .
+.It Ql FSD FAILED mount: ...
+the file server refused the disk (a damaged or foreign filesystem).
+Nothing was changed; the boot fails.
+There is no repair tool; see
+.Xr filesystem 7 .
+.El
+.Pp
+The SSH server's other lines reach the console inside init's hex-framed
+output records
+.Pq Ql EXTERNAL OUTPUT CHUNK ... data=HEX ,
+the qualification format; read them in
+.Pa /var/log/sshd
+instead.
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr date 1 ,
+.Xr intro 1 ,
+.Xr man 1 ,
+.Xr release 1 ,
+.Xr uptime 1 ,
+.Xr ata 4 ,
+.Xr e1000 4 ,
+.Xr network.conf 5 ,
+.Xr sshd.conf 5 ,
+.Xr filesystem 7 ,
+.Xr handles 7 ,
+.Xr process 7 ,
+.Xr reboot 8 ,
+.Xr shutdown 8
+.Sh CAVEATS
+The operator image has run only under QEMU.
+The seed in
+.Pa /ssh
+is an ordinary file to anyone with the image.
+Building needs the platform and kernel sources and their pinned
+toolchains; there is no prebuilt release.

@@ -1,0 +1,17 @@
+[package]
+name = "rustc-literal-escaper"
+version = "0.0.5"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[features]
+rustc-dep-of-std = ["core"]
+
+[dependencies.core]
+path = "../rustc-std-workspace-core"
+optional = true
+package = "rustc-std-workspace-core"
+
+[lib]
+test = false
+doctest = false

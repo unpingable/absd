@@ -1,0 +1,124 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt HANDLES 7
+.Os ABSD
+.Sh NAME
+.Nm handles
+.Nd handles, rights, and the authority of a session
+.Sh DESCRIPTION
+On ABSD a process can do exactly what the handles it holds allow, plus
+starting programs if it holds the spawn right.
+There are no users, no permission bits, and no ambient access to devices
+or files.
+.Ss Handles
+A handle is an opaque value, private to one process, that names one kernel
+object: a pipe, a process, a cell (a small versioned value), the console,
+the block device, or the network card.
+The kernel looks a handle up only in the calling process's own table; a
+stale, guessed, or wrong-kind value is refused
+.Pq error \-9 .
+.Ss Rights
+Each handle carries rights: read, write, wait, and kill.
+An operation that needs a right the handle lacks is refused
+.Pq error \-1 .
+Rights only narrow: a process can make a second handle to the same object
+with fewer rights, never more, and a handle copied into a child at start
+never has more rights than the parent's.
+.Pp
+Handles move only when a process is started, and always as copies.
+There is no passing of handles over pipes, and process handles are never
+given away: only the parent holds one for its child.
+.Pp
+The
+.Em spawn right
+is not a handle right but an attribute of the process.
+A child inherits it unless its parent withholds it, and nothing restores
+it.
+Without it a process cannot start anything.
+.Pp
+Parentage, adoption by init, a PID, or a restart never grants a right.
+.Ss Files are not handles
+A file is not a kernel object.
+A process reaches files through a file server channel, and the server keeps
+that channel's mount list; see
+.Xr filesystem 7 .
+A process may have the server bind a spare channel for a child with its own
+mounts or fewer, never more.
+.Ss The authority of a session
+The SSH server gives a session's first process (the shell, or an
+.Ql ssh host command
+command) exactly:
+.Bl -bullet -compact
+.It
+three pipes: standard input, output, and error;
+.It
+one file server channel bound to
+.Pa /home/operator
+and
+.Pa /tmp/session-N
+read-write and
+.Pa /bin ,
+.Pa /etc ,
+.Pa /share
+read-only, and, for a shell, up to two spare channels for its commands;
+.It
+the working directory
+.Pa /
+and an empty environment;
+.It
+the spawn right, only if it is the shell (the shell's own commands never
+get it);
+.It
+for a shell only, a session control channel: two pipes to the SSH server,
+one on which the server tells the shell of ^C and of the session's end and
+answers it, one on which the shell asks for
+.Xr ps 1 ,
+.Xr shutdown 8 ,
+or
+.Xr reboot 8 .
+The shell never gives it to a command.
+.El
+.Pp
+It gets no console, no network card, no block device handle of any kind,
+no machine handle, and no way to reach
+.Pa /ssh .
+Stopping or restarting the machine takes a machine handle, which only init
+holds; a session asks the SSH server, which ends its sessions and exits,
+and init decides.
+.Pp
+This is the ceiling.
+The shell's authority is derived from it, and a command's from the
+shell's, and each step may only narrow: a command gets the shell's mounts,
+the same read-only
+.Pq Ic ro ,
+or none
+.Pq Ic nofs ;
+see
+.Xr absd-sh 1 .
+A command whose output is redirected to a file holds a pipe, not the file,
+and gains no authority over that file or any other.
+Commands run directly by
+.Ql ssh host command
+cannot start anything.
+.Pp
+When the session ends its channels are released, and anything it left
+running loses its filesystem authority.
+A request already on a channel when it is released is still read, and
+refused; a later binding of the channel discards what predates it.
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr filesystem 7 ,
+.Xr process 7
+.Pp
+In the kernel repository:
+.Pa docs/TERMINOLOGY.md
+(Authority) and
+.Pa docs/PROCESS-STARTUP.md .
+.Sh CAVEATS
+One operator: every session has the same ceiling and shares
+.Pa /home/operator ;
+the only files one session has that another cannot reach are in its
+.Pa /tmp/session-N .
+.Pp
+A process holding a handle with no rights to a pipe can still learn how
+full that pipe is.

@@ -1,0 +1,142 @@
+{
+ "files": {
+  "reference/i-fresh-ag/ag-status.json": {
+   "bytes": 2225,
+   "sha256": "f9a68b65360e41b6390ef72c0fbb1efe411f79ef31837f0f6221ccc1c55fae50"
+  },
+  "reference/i-fresh-ag/ag/config/boundary-command": {
+   "bytes": 17,
+   "sha256": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb"
+  },
+  "reference/i-fresh-ag/ag/config/catalog.json": {
+   "bytes": 339,
+   "sha256": "dcfdab89b142cd3556a1772528398b5a0ee76a3202f309a88254d3f9504bea25"
+  },
+  "reference/i-fresh-ag/ag/config/docket-trust.json": {
+   "bytes": 2,
+   "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  "reference/i-fresh-ag/ag/config/enrollment.json": {
+   "bytes": 1144,
+   "sha256": "09091064de8445e5ad832dc809b89865a01d5b09772699b24b14e988f3c50870"
+  },
+  "reference/i-fresh-ag/ag/config/observation-resolver": {
+   "bytes": 218,
+   "sha256": "5fe062e0964efd7081859c115b362d1e4bb4f6c6ab4c918510393140047f219a"
+  },
+  "reference/i-fresh-ag/ag/config/runtime-profile.json": {
+   "bytes": 1874,
+   "sha256": "1e8ad51c681cd5c87166024b8e418587bc833c2a6d7833fd9f950a69d8306a4f"
+  },
+  "reference/i-fresh-ag/ag/seal-receipt.json": {
+   "bytes": 457,
+   "sha256": "9023cdb67f49294edc4b4a929457b0bda03be46ef77efcabad733df76394ee53"
+  },
+  "reference/i-fresh-ag/ag/secrets/issuer.pk8": {
+   "bytes": 85,
+   "sha256": "4eff7b502f2aa3f22d6769d18298506dccc4b1d6954f6d8bdf25beab59518736"
+  },
+  "reference/i-fresh-ag/ag/secrets/issuer.pub.der": {
+   "bytes": 44,
+   "sha256": "c3d8d11e3977b5a2051c7f9b1e58d32f407bd10952b3b0d4babbfe5e5e2493e6"
+  },
+  "reference/i-fresh-ag/observation-record.json": {
+   "bytes": 35809,
+   "sha256": "f49495d16e285126a32531123897050e98f1ad79b6e491292ddf0409c2ddc9b8"
+  },
+  "reference/i-fresh-ag/resolver/current.answer.json": {
+   "bytes": 952,
+   "sha256": "447705aa186bb083a96916634e35da75445fb5fb990fc6f5c67b03956c33ce44"
+  },
+  "reference/i-fresh-ag/resolver/current.request.json": {
+   "bytes": 397,
+   "sha256": "cc95cf1bc1a98741015e31fd6335dfce00d8b7f76994fc4c69d98a1d46300843"
+  },
+  "reference/i-fresh-ag/resolver/summary.json": {
+   "bytes": 1101,
+   "sha256": "2a817c99da14055fe7e23f476c41587c685345c225621c8485dac95b19b9fc66"
+  },
+  "reference/i-fresh-ag/run.json": {
+   "bytes": 397,
+   "sha256": "bafaaf6be151fa5c50ae50cabef9bd5a4d4ff4f17375f0ad558b025c8663998a"
+  },
+  "reference/i-fresh-ag/state/ag.sqlite": {
+   "bytes": 172032,
+   "sha256": "53c12ef580060c4de3d3a49f06241ddacdb002022689eadc6cb783b76a876300"
+  },
+  "reference/i-fresh-ag/state/nightshift.sqlite": {
+   "bytes": 315392,
+   "sha256": "7d417b182aaaa8ce9aa552abaf6717226e23ffb6db0bdc193b9440d9491124fa"
+  },
+  "reference/i-fresh-ag/stderr.txt": {
+   "bytes": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "reference/i-fresh-ag/stdout.json": {
+   "bytes": 34709,
+   "sha256": "a39f1db21d78684a21c16b52281c7ac8e1ec5d766dc0d57031535350177d2682"
+  }
+ },
+ "issuer_key": {
+  "public_key_sha256": "f343565680d785393860dea3c21ec36c72cf81d5c40c2a0ab826bd391497cfe9",
+  "seed": "SHA-256 of the ASCII string 'ABSD test fixture key, not a credential'"
+ },
+ "linux_binaries": {
+  "bin/ag-loopctl": {
+   "bytes": 8194120,
+   "sha256": "70a88dbb7e5a60abb1288ae049838309e090705deed4c0e24ac60e10dacc1ff8"
+  },
+  "bin/nightshift-observation-resolver": {
+   "bytes": 8150080,
+   "sha256": "3799eb3aaad0bb4bbca1329aa5ba1325e871e99233fc0f0baa10041576b9f763"
+  }
+ },
+ "pinned_wall_unix_ms": 1791675812000,
+ "produced_with": {
+  "bin/ag-loopctl": {
+   "bytes": 8194120,
+   "sha256": "70a88dbb7e5a60abb1288ae049838309e090705deed4c0e24ac60e10dacc1ff8"
+  },
+  "bin/nightshift": {
+   "bytes": 12914848,
+   "sha256": "c591a946b87d2559f3d1188abeebd0c336f71ba5ecfb8e5088805ba2fc74bfb4"
+  },
+  "bin/nightshift-observation-resolver": {
+   "bytes": 8150080,
+   "sha256": "3799eb3aaad0bb4bbca1329aa5ba1325e871e99233fc0f0baa10041576b9f763"
+  },
+  "bin/nq": {
+   "bytes": 137684608,
+   "sha256": "31b68f327041bcaabe30d92ef13d906814a4f0a480477dec6d16c3d00f77a9f9"
+  },
+  "bin/pulse-nq-load-support": {
+   "bytes": 1250200,
+   "sha256": "a7a24484f75b521729bd6808a31c87d9ac2ffea270c501b0f51016e8e429ed99"
+  }
+ },
+ "reference_root": "/tmp/absd-reference/runs/i-fresh-ag",
+ "schema": "absd.ag-native-fixture/v2",
+ "source": "scripts/make-reference-fixture.sh, run i-fresh-ag",
+ "sources": {
+  "ag": {
+   "build": "cargo +1.94.0 build --release --locked --offline -p ag-app --bin ag-loopctl",
+   "commit": "21c8da079f2465a2466c54431cc315699fc57cbe",
+   "tree": "3c44f564e2be9add17224954f6e5bb45ccdec84c"
+  },
+  "nightshift": {
+   "build": "cargo build --release --locked --offline -p nightshiftd --bin nightshift --bin nightshift-observation-resolver (rustc 1.98.0)",
+   "commit": "e2675dd854dbfe633bf14456595d722e88bf92bc",
+   "tree": "bd7afe042251fc4f007413871589a01d26e0583f"
+  },
+  "nq-ng": {
+   "build": "cargo build --locked --offline -p nq-app --bin nq (debug; rust-toolchain 1.94.0)",
+   "commit": "80574417f0188afd37992db7ac764a6f0f72ff62",
+   "tree": "13c0b6b36ec26b941adc586088275df248360492"
+  },
+  "pulse": {
+   "build": "cargo build --release --locked --offline -p pulse-nq-load-support (rustc 1.98.0)",
+   "commit": "81c2354674990679f43be4f207349ff1b2429bc7",
+   "tree": "b3f746c4e16b5303d0fd7bf98b327bfa14382951"
+  }
+ }
+}

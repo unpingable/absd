@@ -1,0 +1,37 @@
+EXEC PROBE mounted formatted=false
+FS EXEC echo stdout=hello from /bin/echo status=0
+FS EXEC inherited stdout line
+FS EXEC refusals missing=NotFound directory=IsADirectory bare=InvalidInput text=InvalidData truncated=InvalidData
+FS EXEC raw malformed=-8 truncated=-8 entry=-8 window=-8 interp=-8 oversize=-22 pointer=-14
+FS EXEC after-refusals=ok
+FS EXEC checks passed
+ARGV ENV REPORT name=/bin/exec-probe args=two words|ünïcode| cwd=/ env=EMPTY=,GREETING=hello
+ARGV ENV printenv=A=1,B=x=y
+ARGV ENV empty-key=InvalidInput
+ARGV ENV echo-n="no newline"
+ARGV ENV checks passed
+CWD parent=/ default=/ given=/etc relative=/bin
+CWD refusals missing=NotFound file=NotADirectory
+CWD after-chdir=/bin child=/bin relative-program-cat=Welcome to ABSD. status=0 own-read-equal=true ls-etc=motd,written-by-parent
+CWD chdir-refusals file=NotADirectory missing=NotFound
+CWD back=/
+CWD checks passed
+SPAWN nested cwd=/etc LEVEL=1
+SPAWN nested echo=nested a b
+SPAWN nested pwd=/etc
+SPAWN nested inherited-env=EXTRA=2,LEVEL=1
+SPAWN nested cleared-env=ONLY=1
+SPAWN nested cat-relative=Welcome to ABSD.
+SPAWN nested cat-missing status=1 stderr=cat: /missing: ABSD path not found
+SPAWN nested done
+FS SPAWN child status=7
+FS SPAWN checks passed
+EXEC OTHER kill try_wait=None status=killed code=None
+EXEC OTHER cat-stdin=through a pipe status=exit status: 0
+EXEC OTHER uname=ABSD dev x86_64 x86_64-unknown-absd pid-match=true
+EXEC OTHER ls-root=bin/,etc/
+EXEC OTHER WRITE file=ReadOnlyFilesystem mkdir=ReadOnlyFilesystem raw-block=-1
+EXEC OTHER DENIED kind=PermissionDenied
+EXEC OTHER checks passed
+EXEC PROBE child view before-sync="" after-sync="committed before the child started\n"
+EXEC PROBE done

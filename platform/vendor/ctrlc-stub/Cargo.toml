@@ -1,0 +1,8 @@
+[package]
+name = "ctrlc"
+version = "3.5.2"
+edition = "2021"
+description = "ABSD build substitute for ctrlc: no signals exist, so installing a handler is refused"
+
+[lib]
+path = "src/lib.rs"

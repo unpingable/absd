@@ -1,0 +1,6 @@
+args=1 bytes=11 words=2 boxed=11:2 upper=HELLO ABSD
+ABSD STD STDERR OK
+ABSD STD HEAP OK bytes=98304 reuse=ok
+ABSD STD UNSUPPORTED OK thread fs=ledger-only net random=panic
+ABSD STD PROCESS OK bare=refused unmounted=not-found cwd=/
+ABSD STD PROBE OK

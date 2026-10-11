@@ -1,0 +1,39 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt UPTIME 1
+.Os ABSD
+.Sh NAME
+.Nm uptime
+.Nd how long this boot has run, and which boot it is
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+.Nm
+prints one line:
+.Bd -literal -offset indent
+up 0 days 00:12:34, 754434 ticks since boot, boot 3f2a...
+.Ed
+.Pp
+The time is counted by the kernel's boot tick counter: timer interrupts
+since the kernel started, about 1000.15 a second
+.Pq PIT channel 0 .
+It restarts at zero every boot and never goes back within one.
+It counts interrupts delivered, so under emulation it can run slower than
+real time; it is not the real-time clock
+.Pq Xr date 1 .
+.Pp
+The boot is the kernel's boot identity: 16 bytes, shown in hexadecimal,
+drawn once when the kernel starts and never the same for two boots.
+The file server writes it into
+.Pa /var/log/fsd
+when it starts, so a log line can be matched to its boot.
+.Pp
+There is no load average and no count of users or sessions; see
+.Xr ps 1
+for this session's processes.
+.Sh EXIT STATUS
+0, or 2 when given any argument.
+.Sh SEE ALSO
+.Xr date 1 ,
+.Xr ps 1 ,
+.Xr afterboot 8

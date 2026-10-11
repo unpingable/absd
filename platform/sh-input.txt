@@ -1,0 +1,32 @@
+pwd
+cd /bin
+pwd
+ls
+cat /etc/motd
+echo hi
+/bin/echo "quoted  words"
+nosuch
+cat /nosuch
+status
+echo hello | cat
+cat /etc/motd | cat | cat
+sh-probe flood 65536 | sh-probe count
+cat < /etc/big | sh-probe count
+sh-probe count < /etc/big
+sh-probe flood 65536 | sh-probe head 8
+status
+nosuch | cat
+status
+echo "a | b" "<" ">"
+cat < /etc/nosuch
+echo x > /etc/out
+status
+ls >> /etc/out
+cat /etc/motd 2> /etc/err
+cat /etc/motd | echo x
+| cat
+cat 2>&1
+cd ../etc
+cat motd
+exit 3
+echo unreachable

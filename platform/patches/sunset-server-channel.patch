@@ -1,0 +1,120 @@
+diff --git a/src/channel.rs b/src/channel.rs
+index a136e97..f3e6a4f 100644
+--- a/src/channel.rs
++++ b/src/channel.rs
+@@ -228,6 +228,51 @@ impl Channels {
+         self.get(num).is_ok_and(|c| c.valid_send(dt))
+     }
+ 
++    /// Sends `SSH_MSG_CHANNEL_EOF` once. No channel data may follow it.
++    pub(crate) fn send_eof(&mut self, num: ChanNum, s: &mut TrafSend) -> Result<()> {
++        let ch = self.get_mut(num)?;
++        if ch.sent_eof || ch.sent_close {
++            return Ok(());
++        }
++        s.send(packets::ChannelEof { num: ch.send_num()? })?;
++        ch.sent_eof = true;
++        Ok(())
++    }
++
++    /// Sends an `exit-status` request on a session channel.
++    ///
++    /// Fails with a recoverable `BusySend` while output is congested.
++    pub(crate) fn send_exit_status(
++        &self,
++        num: ChanNum,
++        status: u32,
++        s: &mut TrafSend,
++    ) -> Result<()> {
++        let ch = self.get(num)?;
++        if !matches!(ch.ty, ChanType::Session) {
++            return error::BadChannelData.fail();
++        }
++        if ch.sent_close {
++            return error::ChannelEOF.fail();
++        }
++        s.send(ChannelRequest {
++            num: ch.send_num()?,
++            want_reply: false,
++            req: ChannelReqType::ExitStatus(packets::ExitStatus { status }),
++        })
++    }
++
++    /// Sends `SSH_MSG_CHANNEL_CLOSE` once.
++    pub(crate) fn send_close(&mut self, num: ChanNum, s: &mut TrafSend) -> Result<()> {
++        let ch = self.get_mut(num)?;
++        if ch.sent_close {
++            return Ok(());
++        }
++        s.send(packets::ChannelClose { num: ch.send_num()? })?;
++        ch.sent_close = true;
++        Ok(())
++    }
++
+     pub fn progress(&mut self, s: &mut TrafSend) -> DispatchEvent {
+         for ch in self.ch.iter_mut().filter_map(|c| c.as_mut()) {
+             ch.check_send_window_adjust(s);
+@@ -986,7 +1031,9 @@ impl Channel {
+ 
+     fn handle_eof(&mut self, s: &mut TrafSend, is_client: bool) -> Result<()> {
+         //TODO: check existing state?
+-        if !self.sent_eof {
++        // EOF is a half-close (RFC 4254 5.3): a server keeps sending until
++        // its own output ends, then calls `Runner::send_eof()`.
++        if is_client && !self.sent_eof {
+             s.send(packets::ChannelEof { num: self.send_num()? })?;
+             self.sent_eof = true;
+         }
+@@ -1034,6 +1081,9 @@ impl Channel {
+ 
+     // None on close
+     fn send_allowed(&self) -> Option<usize> {
++        if self.sent_eof || self.sent_close {
++            return None;
++        }
+         let r = self.send.as_ref().map(|s| usize::min(s.window, s.max_packet));
+         trace!("send_allowed {r:?}");
+         r
+diff --git a/src/runner.rs b/src/runner.rs
+index 8f5568e..ce5d6f7 100644
+--- a/src/runner.rs
++++ b/src/runner.rs
+@@ -191,6 +191,38 @@ impl<'a> Runner<'a, server::Server> {
+         Self::new(inbuf, outbuf)
+     }
+ 
++    /// Sends channel EOF: this side will send no more data on `chan`.
++    ///
++    /// Sent once; later calls do nothing.
++    pub fn send_eof(&mut self, chan: &ChanHandle) -> Result<()> {
++        let mut s = self.traf_out.sender(&mut self.keys);
++        self.conn.channels.send_eof(chan.0, &mut s)?;
++        self.wake();
++        Ok(())
++    }
++
++    /// Sends an `exit-status` request for a session channel.
++    ///
++    /// Returns a `BusySend` error when output is congested; call again
++    /// after output has been consumed.
++    pub fn send_exit_status(&mut self, chan: &ChanHandle, status: u32) -> Result<()> {
++        let mut s = self.traf_out.sender(&mut self.keys);
++        self.conn.channels.send_exit_status(chan.0, status, &mut s)?;
++        self.wake();
++        Ok(())
++    }
++
++    /// Sends channel close. Sent once; later calls do nothing.
++    ///
++    /// The application still calls `channel_done()` when it has finished
++    /// with the channel.
++    pub fn close_channel(&mut self, chan: &ChanHandle) -> Result<()> {
++        let mut s = self.traf_out.sender(&mut self.keys);
++        self.conn.channels.send_close(chan.0, &mut s)?;
++        self.wake();
++        Ok(())
++    }
++
+     pub(crate) fn resume_servhostkeys(&mut self, keys: &[&SignKey]) -> Result<()> {
+         let (payload, _seq) = self.traf_in.payload().trap()?;
+         let mut s = self.traf_out.sender(&mut self.keys);

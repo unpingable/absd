@@ -1,0 +1,7 @@
+# Init's workflow policy for the brokered std matrix (scripts/run-broker.sh):
+# the requester is the durable worker with four slots and may start only
+# `broker-echo` (owner-1, built from src/bin/broker_echo.rs) with exactly two
+# free arguments. The child gets one policy-given environment variable.
+slots worker 4
+allow worker broker-echo owner-1 none 2
+env owner-1 BROKER_ECHO=hello=world

@@ -1,0 +1,2361 @@
+diff --git a/library/proc_macro/Cargo.toml b/library/proc_macro/Cargo.toml
+index 1e5046c..b239930 100644
+--- a/library/proc_macro/Cargo.toml
++++ b/library/proc_macro/Cargo.toml
+@@ -9,7 +9,7 @@ std = { path = "../std" }
+ # `core` when resolving doc links. Without this line a different `core` will be
+ # loaded from sysroot causing duplicate lang items and other similar errors.
+ core = { path = "../core" }
+-rustc-literal-escaper = { version = "0.0.7", features = ["rustc-dep-of-std"] }
++rustc-literal-escaper = { path = "../rustc-literal-escaper", features = ["rustc-dep-of-std"] }
+ 
+ [features]
+ default = ["rustc-dep-of-std"]
+diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
+index 1b7a41d..8ab20cc 100644
+--- a/library/std/Cargo.toml
++++ b/library/std/Cargo.toml
+@@ -62,46 +62,6 @@ path = "../windows_link"
+ rand = { version = "0.9.0", default-features = false, features = ["alloc"] }
+ rand_xorshift = "0.4.0"
+ 
+-[target.'cfg(any(all(target_family = "wasm", target_os = "unknown"), target_os = "xous", target_os = "vexos", all(target_vendor = "fortanix", target_env = "sgx")))'.dependencies]
+-dlmalloc = { version = "0.2.10", features = ['rustc-dep-of-std'] }
+-
+-[target.x86_64-fortanix-unknown-sgx.dependencies]
+-fortanix-sgx-abi = { version = "0.6.1", features = [
+-    'rustc-dep-of-std',
+-], public = true }
+-
+-[target.'cfg(target_os = "motor")'.dependencies]
+-moto-rt = { version = "0.16", features = ['rustc-dep-of-std'], public = true }
+-
+-[target.'cfg(target_os = "hermit")'.dependencies]
+-hermit-abi = { version = "0.5.0", features = [
+-    'rustc-dep-of-std',
+-], public = true }
+-
+-[target.'cfg(all(target_os = "wasi", target_env = "p1"))'.dependencies]
+-wasi = { version = "0.11.0", features = [
+-    'rustc-dep-of-std',
+-], default-features = false }
+-
+-[target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
+-wasip2 = { version = '0.14.4', features = [
+-    'rustc-dep-of-std',
+-], default-features = false, package = 'wasi' }
+-
+-[target.'cfg(all(target_os = "wasi", target_env = "p3"))'.dependencies]
+-wasip2 = { version = '0.14.4', features = [
+-    'rustc-dep-of-std',
+-], default-features = false, package = 'wasi' }
+-
+-[target.'cfg(target_os = "uefi")'.dependencies]
+-r-efi = { version = "5.2.0", features = ['rustc-dep-of-std'] }
+-r-efi-alloc = { version = "2.0.0", features = ['rustc-dep-of-std'] }
+-
+-[target.'cfg(target_os = "vexos")'.dependencies]
+-vex-sdk = { version = "0.27.0", features = [
+-    'rustc-dep-of-std',
+-], default-features = false }
+-
+ [features]
+ backtrace = [
+     'addr2line/rustc-dep-of-std',
+diff --git a/library/std/src/os/absd/fs.rs b/library/std/src/os/absd/fs.rs
+new file mode 100644
+index 0000000..1c58e73
+--- /dev/null
++++ b/library/std/src/os/absd/fs.rs
+@@ -0,0 +1,52 @@
++//! ABSD filesystem identity and the one rename variant the platform adds.
++
++#![unstable(feature = "absd_fs_ext", issue = "none")]
++
++use crate::fs;
++use crate::io;
++use crate::path::Path;
++use crate::sys::{AsInner, FromInner};
++
++/// ABSD-specific extensions to [`fs::Metadata`].
++pub trait MetadataExt {
++    /// The filesystem instance, chosen at format.
++    fn filesystem_id(&self) -> u64;
++    /// The object's serial: allocated from a persisted counter and never
++    /// reused, so `(filesystem_id, object_serial)` names one object for the
++    /// life of the filesystem.
++    fn object_serial(&self) -> u64;
++    /// 1 while the object has a name, 0 once unlinked but still open.
++    fn links(&self) -> u64;
++}
++
++impl MetadataExt for fs::Metadata {
++    fn filesystem_id(&self) -> u64 {
++        self.as_inner().filesystem_id()
++    }
++    fn object_serial(&self) -> u64 {
++        self.as_inner().object_serial()
++    }
++    fn links(&self) -> u64 {
++        self.as_inner().links()
++    }
++}
++
++/// ABSD-specific extensions to [`fs::Permissions`]. An ABSD object has one
++/// permission: whether it is read-only.
++pub trait PermissionsExt {
++    /// Permissions that are read-only or not.
++    fn from_readonly(readonly: bool) -> Self;
++}
++
++impl PermissionsExt for fs::Permissions {
++    fn from_readonly(readonly: bool) -> Self {
++        fs::Permissions::from_inner(crate::sys::fs::FilePermissions::from_readonly(readonly))
++    }
++}
++
++/// Renames `from` to `to` only when `to` does not exist; otherwise fails
++/// with [`io::ErrorKind::AlreadyExists`]. The existence check and the move
++/// are one durable metadata commit.
++pub fn rename_noreplace<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<()> {
++    crate::sys::fs::rename_noreplace(from.as_ref(), to.as_ref())
++}
+diff --git a/library/std/src/os/absd/mod.rs b/library/std/src/os/absd/mod.rs
+new file mode 100644
+index 0000000..95a4dcf
+--- /dev/null
++++ b/library/std/src/os/absd/mod.rs
+@@ -0,0 +1,9 @@
++//! ABSD-specific extensions to primitives in the [`std`] crate.
++//!
++//! ABSD is not Unix: there are no file descriptors, owners, or modes. What a
++//! stored object does have is named here directly.
++
++#![unstable(feature = "absd_fs_ext", issue = "none")]
++
++pub mod fs;
++pub mod process;
+diff --git a/library/std/src/os/absd/process.rs b/library/std/src/os/absd/process.rs
+new file mode 100644
+index 0000000..34bb4af
+--- /dev/null
++++ b/library/std/src/os/absd/process.rs
+@@ -0,0 +1,37 @@
++//! The kernel handles of a child's piped standard streams.
++//!
++//! A single-threaded program that multiplexes several children (a server
++//! bridging each to a connection) needs to wait on a pipe with a bound; the
++//! kernel's `transfer` does that on the handle. The handle stays owned by
++//! the `ChildStdin`/`ChildStdout`/`ChildStderr` and is closed with it.
++
++#![unstable(feature = "absd_fs_ext", issue = "none")]
++
++use crate::process::{ChildStderr, ChildStdin, ChildStdout};
++use crate::sys::AsInner;
++
++/// A kernel handle number.
++pub type RawHandle = u64;
++
++/// Borrows the kernel handle of a pipe end.
++pub trait AsRawHandle {
++    fn as_raw_handle(&self) -> RawHandle;
++}
++
++impl AsRawHandle for ChildStdin {
++    fn as_raw_handle(&self) -> RawHandle {
++        self.as_inner().handle()
++    }
++}
++
++impl AsRawHandle for ChildStdout {
++    fn as_raw_handle(&self) -> RawHandle {
++        self.as_inner().handle()
++    }
++}
++
++impl AsRawHandle for ChildStderr {
++    fn as_raw_handle(&self) -> RawHandle {
++        self.as_inner().handle()
++    }
++}
+diff --git a/library/std/src/os/mod.rs b/library/std/src/os/mod.rs
+index 7637440..d0a29f7 100644
+--- a/library/std/src/os/mod.rs
++++ b/library/std/src/os/mod.rs
+@@ -121,6 +121,8 @@ pub mod wasip2;
+ pub mod windows;
+ 
+ // Others.
++#[cfg(target_os = "absd")]
++pub mod absd;
+ #[cfg(target_os = "aix")]
+ pub mod aix;
+ #[cfg(target_os = "android")]
+diff --git a/library/std/src/sys/alloc/absd.rs b/library/std/src/sys/alloc/absd.rs
+new file mode 100644
+index 0000000..52db272
+--- /dev/null
++++ b/library/std/src/sys/alloc/absd.rs
+@@ -0,0 +1,25 @@
++use crate::alloc::{GlobalAlloc, Layout, System};
++
++unsafe extern "C" {
++    fn __absd_std_alloc(size: usize, align: usize) -> *mut u8;
++    fn __absd_std_dealloc(ptr: *mut u8, size: usize, align: usize);
++    fn __absd_std_realloc(ptr: *mut u8, old_size: usize, align: usize, new_size: usize) -> *mut u8;
++}
++
++#[stable(feature = "alloc_system_type", since = "1.28.0")]
++unsafe impl GlobalAlloc for System {
++    #[inline]
++    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
++        unsafe { __absd_std_alloc(layout.size(), layout.align()) }
++    }
++
++    #[inline]
++    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
++        unsafe { __absd_std_dealloc(ptr, layout.size(), layout.align()) }
++    }
++
++    #[inline]
++    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
++        unsafe { __absd_std_realloc(ptr, layout.size(), layout.align(), new_size) }
++    }
++}
+diff --git a/library/std/src/sys/alloc/mod.rs b/library/std/src/sys/alloc/mod.rs
+index f2f1d1c..83d1917 100644
+--- a/library/std/src/sys/alloc/mod.rs
++++ b/library/std/src/sys/alloc/mod.rs
+@@ -107,4 +107,7 @@ cfg_select! {
+     target_os = "zkvm" => {
+         mod zkvm;
+     }
++    target_os = "absd" => {
++        mod absd;
++    }
+ }
+diff --git a/library/std/src/sys/args/absd.rs b/library/std/src/sys/args/absd.rs
+new file mode 100644
+index 0000000..3532b17
+--- /dev/null
++++ b/library/std/src/sys/args/absd.rs
+@@ -0,0 +1,35 @@
++pub use super::common::Args;
++
++use crate::ffi::OsString;
++use crate::sync::atomic::{AtomicIsize, AtomicPtr, Ordering};
++
++static ARGC: AtomicIsize = AtomicIsize::new(0);
++static ARGV: AtomicPtr<*const u8> = AtomicPtr::new(crate::ptr::null_mut());
++
++pub unsafe fn init(argc: isize, argv: *const *const u8) {
++    ARGV.store(argv.cast_mut(), Ordering::Relaxed);
++    ARGC.store(argc, Ordering::Release);
++}
++
++pub fn args() -> Args {
++    let argc = ARGC.load(Ordering::Acquire).max(0) as usize;
++    let argv = ARGV.load(Ordering::Relaxed);
++    let mut values = Vec::with_capacity(argc);
++    if argv.is_null() {
++        return Args::new(values);
++    }
++    for index in 0..argc {
++        let pointer = unsafe { *argv.add(index) };
++        if pointer.is_null() {
++            break;
++        }
++        let mut length = 0usize;
++        while unsafe { *pointer.add(length) } != 0 {
++            let Some(next) = length.checked_add(1) else { break };
++            length = next;
++        }
++        let bytes = unsafe { crate::slice::from_raw_parts(pointer, length) };
++        values.push(OsString::from(crate::string::String::from_utf8_lossy(bytes).into_owned()));
++    }
++    Args::new(values)
++}
+diff --git a/library/std/src/sys/args/mod.rs b/library/std/src/sys/args/mod.rs
+index 5424d40..7cc2bd9 100644
+--- a/library/std/src/sys/args/mod.rs
++++ b/library/std/src/sys/args/mod.rs
+@@ -10,6 +10,7 @@
+     target_os = "uefi",
+     target_os = "wasi",
+     target_os = "xous",
++    target_os = "absd",
+ ))]
+ mod common;
+ 
+@@ -53,6 +54,10 @@ cfg_select! {
+         mod zkvm;
+         pub use zkvm::*;
+     }
++    target_os = "absd" => {
++        mod absd;
++        pub use absd::*;
++    }
+     _ => {
+         mod unsupported;
+         pub use unsupported::*;
+diff --git a/library/std/src/sys/env/absd.rs b/library/std/src/sys/env/absd.rs
+new file mode 100644
+index 0000000..16614dd
+--- /dev/null
++++ b/library/std/src/sys/env/absd.rs
+@@ -0,0 +1,48 @@
++//! ABSD: a read-only environment. A program's variables come only from
++//! init's policy, carried in its startup record; nothing is inherited, and
++//! a running program cannot change them.
++
++pub use super::common::Env;
++use crate::ffi::{OsStr, OsString};
++use crate::io;
++
++unsafe extern "C" {
++    fn __absd_std_environ(count: *mut usize) -> *const [usize; 2];
++}
++
++/// `(key, value)` byte pairs; the runtime validated every entry (a
++/// non-empty unique key before the first `=`, no NUL) and never frees them.
++fn entries() -> impl Iterator<Item = (&'static [u8], &'static [u8])> {
++    let mut count = 0usize;
++    let table = unsafe { __absd_std_environ(&mut count) };
++    let table: &'static [[usize; 2]] =
++        if table.is_null() { &[] } else { unsafe { crate::slice::from_raw_parts(table, count) } };
++    table.iter().map(|&[pointer, length]| {
++        let entry: &'static [u8] =
++            unsafe { crate::slice::from_raw_parts(pointer as *const u8, length) };
++        let at = entry.iter().position(|&byte| byte == b'=').unwrap_or(entry.len());
++        (&entry[..at], entry.get(at + 1..).unwrap_or(&[]))
++    })
++}
++
++fn os(bytes: &[u8]) -> OsString {
++    // SAFETY: ABSD's `OsStr` is bytes; any byte sequence is valid.
++    unsafe { OsString::from_encoded_bytes_unchecked(bytes.to_vec()) }
++}
++
++pub fn env() -> Env {
++    Env::new(entries().map(|(key, value)| (os(key), os(value))).collect())
++}
++
++pub fn getenv(key: &OsStr) -> Option<OsString> {
++    let key = key.as_encoded_bytes();
++    entries().find(|(name, _)| *name == key).map(|(_, value)| os(value))
++}
++
++pub unsafe fn setenv(_: &OsStr, _: &OsStr) -> io::Result<()> {
++    Err(io::const_error!(io::ErrorKind::Unsupported, "ABSD's environment is read-only"))
++}
++
++pub unsafe fn unsetenv(_: &OsStr) -> io::Result<()> {
++    Err(io::const_error!(io::ErrorKind::Unsupported, "ABSD's environment is read-only"))
++}
+diff --git a/library/std/src/sys/env/mod.rs b/library/std/src/sys/env/mod.rs
+index 8985651..c2986d5 100644
+--- a/library/std/src/sys/env/mod.rs
++++ b/library/std/src/sys/env/mod.rs
+@@ -11,6 +11,7 @@
+     target_os = "uefi",
+     target_os = "wasi",
+     target_os = "xous",
++    target_os = "absd",
+ ))]
+ mod common;
+ 
+@@ -55,6 +56,10 @@ cfg_select! {
+         mod zkvm;
+         pub use zkvm::*;
+     }
++    target_os = "absd" => {
++        mod absd;
++        pub use absd::*;
++    }
+     _ => {
+         mod unsupported;
+         pub use unsupported::*;
+diff --git a/library/std/src/sys/exit.rs b/library/std/src/sys/exit.rs
+index 53fb92b..a38479e 100644
+--- a/library/std/src/sys/exit.rs
++++ b/library/std/src/sys/exit.rs
+@@ -135,6 +135,12 @@ pub fn exit(code: i32) -> ! {
+         target_os = "xous" => {
+             crate::os::xous::ffi::exit(code as u32)
+         }
++        target_os = "absd" => {
++            unsafe extern "C" {
++                fn __absd_std_exit(code: i32) -> !;
++            }
++            unsafe { __absd_std_exit(code) }
++        }
+         _ => {
+             let _ = code;
+             crate::intrinsics::abort()
+diff --git a/library/std/src/sys/fs/absd.rs b/library/std/src/sys/fs/absd.rs
+new file mode 100644
+index 0000000..e4d8946
+--- /dev/null
++++ b/library/std/src/sys/fs/absd.rs
+@@ -0,0 +1,639 @@
++//! ABSD: `std::fs` forwarded to the process's storage runtime.
++//!
++//! The runtime owns the block device and whatever it holds: either the
++//! mounted ABSD filesystem (absolute `/`-rooted paths, files, directories,
++//! read-only flag, rename and no-clobber rename, advisory locks) or, when
++//! nothing is mounted, the one-name `ledger` append region. This file only
++//! translates between `std` types and the runtime's hooks; every semantic
++//! lives behind them. There are no symlinks, hard links, owners, modes,
++//! timestamps, or file descriptors.
++
++use crate::sync::atomic::{AtomicU64, Ordering};
++use crate::ffi::OsString;
++use crate::fmt;
++use crate::fs::TryLockError;
++use crate::hash::{Hash, Hasher};
++use crate::io::{self, BorrowedCursor, IoSlice, IoSliceMut, SeekFrom};
++use crate::path::{Path, PathBuf};
++pub use crate::sys::fs::common::Dir;
++use crate::sys::time::SystemTime;
++use crate::sys::unsupported;
++
++#[repr(C)]
++#[derive(Clone, Copy, Default)]
++struct RawAttr {
++    kind: u32,
++    readonly: u32,
++    size: u64,
++    filesystem: u64,
++    serial: u64,
++    links: u64,
++}
++
++unsafe extern "C" {
++    fn __absd_std_fs_open(path: *const u8, length: usize, flags: u32) -> i64;
++    fn __absd_std_fs_close(handle: u64) -> i64;
++    fn __absd_std_fs_read_at(handle: u64, offset: u64, bytes: *mut u8, length: usize) -> isize;
++    fn __absd_std_fs_write_at(handle: u64, offset: u64, bytes: *const u8, length: usize) -> isize;
++    fn __absd_std_fs_set_len(handle: u64, length: u64) -> i64;
++    fn __absd_std_fs_sync(handle: u64) -> i64;
++    fn __absd_std_fs_fstat(handle: u64, attr: *mut RawAttr) -> i64;
++    fn __absd_std_fs_stat(path: *const u8, length: usize, attr: *mut RawAttr) -> i64;
++    fn __absd_std_fs_set_readonly(handle: u64, readonly: u32) -> i64;
++    fn __absd_std_fs_set_readonly_path(path: *const u8, length: usize, readonly: u32) -> i64;
++    fn __absd_std_fs_mkdir(path: *const u8, length: usize) -> i64;
++    fn __absd_std_fs_rmdir(path: *const u8, length: usize) -> i64;
++    fn __absd_std_fs_unlink(path: *const u8, length: usize) -> i64;
++    fn __absd_std_fs_rename(
++        from: *const u8,
++        from_length: usize,
++        to: *const u8,
++        to_length: usize,
++        noreplace: u32,
++    ) -> i64;
++    fn __absd_std_fs_readdir(
++        path: *const u8,
++        length: usize,
++        index: u64,
++        name: *mut u8,
++        capacity: usize,
++        attr: *mut RawAttr,
++    ) -> isize;
++    fn __absd_std_fs_canonical(path: *const u8, length: usize, out: *mut u8, capacity: usize) -> isize;
++    fn __absd_std_fs_lock(handle: u64, mode: u32) -> i64;
++}
++
++const OPEN_READ: u32 = 1;
++const OPEN_WRITE: u32 = 2;
++const OPEN_CREATE: u32 = 8;
++const OPEN_CREATE_NEW: u32 = 16;
++const OPEN_TRUNCATE: u32 = 32;
++const KIND_DIR: u32 = 2;
++const NAME_CAPACITY: usize = 256;
++const PATH_CAPACITY: usize = 4096;
++
++fn error(result: i64) -> io::Error {
++    let (kind, detail) = match result {
++        -1 => (io::ErrorKind::PermissionDenied, "ABSD storage handle lacks the right"),
++        -2 => (io::ErrorKind::NotFound, "ABSD path not found"),
++        -5 => (io::ErrorKind::Other, "ABSD block device failed"),
++        -9 => (io::ErrorKind::InvalidInput, "ABSD file handle is not open"),
++        -11 => (io::ErrorKind::WouldBlock, "ABSD lock is held"),
++        -13 => (io::ErrorKind::PermissionDenied, "ABSD object is read-only or not opened for this"),
++        -17 => (io::ErrorKind::AlreadyExists, "ABSD path already exists"),
++        -20 => (io::ErrorKind::NotADirectory, "ABSD path component is not a directory"),
++        -21 => (io::ErrorKind::IsADirectory, "ABSD path is a directory"),
++        -22 => (io::ErrorKind::InvalidInput, "ABSD storage request is invalid"),
++        -28 => (io::ErrorKind::StorageFull, "ABSD storage is full"),
++        -30 => (io::ErrorKind::ReadOnlyFilesystem, "ABSD filesystem is mounted read-only"),
++        -39 => (io::ErrorKind::DirectoryNotEmpty, "ABSD directory is not empty"),
++        -74 => (io::ErrorKind::InvalidData, "ABSD filesystem refused corrupt metadata"),
++        -95 => (io::ErrorKind::Unsupported, "ABSD storage does not support this"),
++        -116 => (io::ErrorKind::Other, "ABSD filesystem stopped after a device failure"),
++        _ => (io::ErrorKind::Other, "ABSD storage hook failed"),
++    };
++    io::Error::new(kind, detail)
++}
++
++fn checked(result: i64) -> io::Result<u64> {
++    if result < 0 { Err(error(result)) } else { Ok(result as u64) }
++}
++
++fn bytes(path: &Path) -> &[u8] {
++    path.as_os_str().as_encoded_bytes()
++}
++
++pub struct File {
++    handle: u64,
++    append: bool,
++    position: AtomicU64,
++}
++
++#[derive(Clone, Debug)]
++pub struct FileAttr {
++    raw: RawAttrCopy,
++}
++
++#[derive(Clone, Copy, Debug)]
++struct RawAttrCopy {
++    directory: bool,
++    readonly: bool,
++    size: u64,
++    filesystem: u64,
++    serial: u64,
++    links: u64,
++}
++
++impl From<RawAttr> for FileAttr {
++    fn from(raw: RawAttr) -> Self {
++        FileAttr {
++            raw: RawAttrCopy {
++                directory: raw.kind == KIND_DIR,
++                readonly: raw.readonly != 0,
++                size: raw.size,
++                filesystem: raw.filesystem,
++                serial: raw.serial,
++                links: raw.links,
++            },
++        }
++    }
++}
++
++pub struct ReadDir {
++    root: PathBuf,
++    entries: crate::vec::IntoIter<(OsString, FileAttr)>,
++}
++
++pub struct DirEntry {
++    root: PathBuf,
++    name: OsString,
++    attr: FileAttr,
++}
++
++#[derive(Clone, Debug)]
++pub struct OpenOptions {
++    read: bool,
++    write: bool,
++    append: bool,
++    truncate: bool,
++    create: bool,
++    create_new: bool,
++}
++
++#[derive(Copy, Clone, Debug, Default)]
++pub struct FileTimes {}
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct FilePermissions {
++    readonly: bool,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
++pub struct FileType {
++    directory: bool,
++}
++
++#[derive(Debug)]
++pub struct DirBuilder {}
++
++impl FileAttr {
++    pub fn size(&self) -> u64 {
++        self.raw.size
++    }
++
++    pub fn perm(&self) -> FilePermissions {
++        FilePermissions { readonly: self.raw.readonly }
++    }
++
++    pub fn file_type(&self) -> FileType {
++        FileType { directory: self.raw.directory }
++    }
++
++    pub fn modified(&self) -> io::Result<SystemTime> {
++        unsupported()
++    }
++
++    pub fn accessed(&self) -> io::Result<SystemTime> {
++        unsupported()
++    }
++
++    pub fn created(&self) -> io::Result<SystemTime> {
++        unsupported()
++    }
++
++    /// The mounted filesystem instance, chosen at format.
++    pub fn filesystem_id(&self) -> u64 {
++        self.raw.filesystem
++    }
++
++    /// The object's serial within its filesystem; never reused.
++    pub fn object_serial(&self) -> u64 {
++        self.raw.serial
++    }
++
++    /// 1 while the object has a name, 0 once unlinked but still open.
++    pub fn links(&self) -> u64 {
++        self.raw.links
++    }
++}
++
++impl FilePermissions {
++    pub fn from_readonly(readonly: bool) -> FilePermissions {
++        FilePermissions { readonly }
++    }
++
++    pub fn readonly(&self) -> bool {
++        self.readonly
++    }
++
++    pub fn set_readonly(&mut self, readonly: bool) {
++        self.readonly = readonly;
++    }
++}
++
++impl FileTimes {
++    pub fn set_accessed(&mut self, _t: SystemTime) {}
++    pub fn set_modified(&mut self, _t: SystemTime) {}
++}
++
++impl FileType {
++    pub fn is_dir(&self) -> bool {
++        self.directory
++    }
++
++    pub fn is_file(&self) -> bool {
++        !self.directory
++    }
++
++    pub fn is_symlink(&self) -> bool {
++        false
++    }
++}
++
++impl fmt::Debug for ReadDir {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("ReadDir").field("root", &self.root).finish_non_exhaustive()
++    }
++}
++
++impl Iterator for ReadDir {
++    type Item = io::Result<DirEntry>;
++
++    fn next(&mut self) -> Option<io::Result<DirEntry>> {
++        let (name, attr) = self.entries.next()?;
++        Some(Ok(DirEntry { root: self.root.clone(), name, attr }))
++    }
++}
++
++impl DirEntry {
++    pub fn path(&self) -> PathBuf {
++        self.root.join(&self.name)
++    }
++
++    pub fn file_name(&self) -> OsString {
++        self.name.clone()
++    }
++
++    pub fn metadata(&self) -> io::Result<FileAttr> {
++        Ok(self.attr.clone())
++    }
++
++    pub fn file_type(&self) -> io::Result<FileType> {
++        Ok(self.attr.file_type())
++    }
++}
++
++impl OpenOptions {
++    pub fn new() -> OpenOptions {
++        OpenOptions {
++            read: false,
++            write: false,
++            append: false,
++            truncate: false,
++            create: false,
++            create_new: false,
++        }
++    }
++
++    pub fn read(&mut self, read: bool) {
++        self.read = read;
++    }
++    pub fn write(&mut self, write: bool) {
++        self.write = write;
++    }
++    pub fn append(&mut self, append: bool) {
++        self.append = append;
++    }
++    pub fn truncate(&mut self, truncate: bool) {
++        self.truncate = truncate;
++    }
++    pub fn create(&mut self, create: bool) {
++        self.create = create;
++    }
++    pub fn create_new(&mut self, create_new: bool) {
++        self.create_new = create_new;
++    }
++}
++
++impl File {
++    pub fn open(path: &Path, opts: &OpenOptions) -> io::Result<File> {
++        let writes = opts.write || opts.append;
++        if (opts.truncate || opts.create || opts.create_new) && !writes {
++            return Err(error(-22));
++        }
++        if opts.truncate && opts.append {
++            return Err(error(-22));
++        }
++        let mut flags = 0;
++        if opts.read {
++            flags |= OPEN_READ;
++        }
++        if writes {
++            flags |= OPEN_WRITE;
++        }
++        if opts.create {
++            flags |= OPEN_CREATE;
++        }
++        if opts.create_new {
++            flags |= OPEN_CREATE_NEW;
++        }
++        if opts.truncate {
++            flags |= OPEN_TRUNCATE;
++        }
++        let path = bytes(path);
++        let handle = checked(unsafe { __absd_std_fs_open(path.as_ptr(), path.len(), flags) })?;
++        Ok(File { handle, append: opts.append, position: AtomicU64::new(0) })
++    }
++
++    pub fn file_attr(&self) -> io::Result<FileAttr> {
++        let mut raw = RawAttr::default();
++        checked(unsafe { __absd_std_fs_fstat(self.handle, &mut raw) })?;
++        Ok(raw.into())
++    }
++
++    fn len(&self) -> io::Result<u64> {
++        self.file_attr().map(|attr| attr.size())
++    }
++
++    pub fn fsync(&self) -> io::Result<()> {
++        checked(unsafe { __absd_std_fs_sync(self.handle) }).map(|_| ())
++    }
++
++    pub fn datasync(&self) -> io::Result<()> {
++        self.fsync()
++    }
++
++    /// There is no waiting: in a single-threaded process a held lock would
++    /// block forever, so contention is reported instead.
++    pub fn lock(&self) -> io::Result<()> {
++        checked(unsafe { __absd_std_fs_lock(self.handle, 2) }).map(|_| ())
++    }
++
++    pub fn lock_shared(&self) -> io::Result<()> {
++        checked(unsafe { __absd_std_fs_lock(self.handle, 1) }).map(|_| ())
++    }
++
++    pub fn try_lock(&self) -> Result<(), TryLockError> {
++        match checked(unsafe { __absd_std_fs_lock(self.handle, 2) }) {
++            Ok(_) => Ok(()),
++            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(TryLockError::WouldBlock),
++            Err(error) => Err(TryLockError::Error(error)),
++        }
++    }
++
++    pub fn try_lock_shared(&self) -> Result<(), TryLockError> {
++        match checked(unsafe { __absd_std_fs_lock(self.handle, 1) }) {
++            Ok(_) => Ok(()),
++            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(TryLockError::WouldBlock),
++            Err(error) => Err(TryLockError::Error(error)),
++        }
++    }
++
++    pub fn unlock(&self) -> io::Result<()> {
++        checked(unsafe { __absd_std_fs_lock(self.handle, 0) }).map(|_| ())
++    }
++
++    pub fn truncate(&self, size: u64) -> io::Result<()> {
++        checked(unsafe { __absd_std_fs_set_len(self.handle, size) }).map(|_| ())
++    }
++
++    pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
++        let position = self.position.load(Ordering::Relaxed);
++        let count = self.read_at(buf, position)?;
++        self.position.store(position + count as u64, Ordering::Relaxed);
++        Ok(count)
++    }
++
++    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
++        if buf.is_empty() {
++            return Ok(0);
++        }
++        let result =
++            unsafe { __absd_std_fs_read_at(self.handle, offset, buf.as_mut_ptr(), buf.len()) };
++        checked(result as i64).map(|count| count as usize)
++    }
++
++    pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
++        match bufs.iter_mut().find(|buf| !buf.is_empty()) {
++            Some(buf) => self.read(buf),
++            None => Ok(0),
++        }
++    }
++
++    pub fn is_read_vectored(&self) -> bool {
++        false
++    }
++
++    pub fn read_buf(&self, cursor: BorrowedCursor<'_>) -> io::Result<()> {
++        io::default_read_buf(|buf| self.read(buf), cursor)
++    }
++
++    pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
++        if buf.is_empty() {
++            return Ok(0);
++        }
++        let position = if self.append { self.len()? } else { self.position.load(Ordering::Relaxed) };
++        let result =
++            unsafe { __absd_std_fs_write_at(self.handle, position, buf.as_ptr(), buf.len()) };
++        let count = checked(result as i64)?;
++        self.position.store(position + count, Ordering::Relaxed);
++        Ok(count as usize)
++    }
++
++    pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
++        match bufs.iter().find(|buf| !buf.is_empty()) {
++            Some(buf) => self.write(buf),
++            None => Ok(0),
++        }
++    }
++
++    pub fn is_write_vectored(&self) -> bool {
++        false
++    }
++
++    pub fn flush(&self) -> io::Result<()> {
++        // Writes reach the device before `write` returns; only `fsync` and
++        // `datasync` make them durable.
++        Ok(())
++    }
++
++    pub fn seek(&self, pos: SeekFrom) -> io::Result<u64> {
++        let target = match pos {
++            SeekFrom::Start(offset) => Some(offset),
++            SeekFrom::End(delta) => self.len()?.checked_add_signed(delta),
++            SeekFrom::Current(delta) => self.position.load(Ordering::Relaxed).checked_add_signed(delta),
++        };
++        let target = target.ok_or_else(|| error(-22))?;
++        self.position.store(target, Ordering::Relaxed);
++        Ok(target)
++    }
++
++    pub fn size(&self) -> Option<io::Result<u64>> {
++        Some(self.len().map(|length| length.saturating_sub(self.position.load(Ordering::Relaxed))))
++    }
++
++    pub fn tell(&self) -> io::Result<u64> {
++        Ok(self.position.load(Ordering::Relaxed))
++    }
++
++    pub fn duplicate(&self) -> io::Result<File> {
++        unsupported()
++    }
++
++    pub fn set_permissions(&self, perm: FilePermissions) -> io::Result<()> {
++        checked(unsafe { __absd_std_fs_set_readonly(self.handle, u32::from(perm.readonly)) })
++            .map(|_| ())
++    }
++
++    pub fn set_times(&self, _times: FileTimes) -> io::Result<()> {
++        unsupported()
++    }
++}
++
++impl Drop for File {
++    fn drop(&mut self) {
++        let _ = unsafe { __absd_std_fs_close(self.handle) };
++    }
++}
++
++impl DirBuilder {
++    pub fn new() -> DirBuilder {
++        DirBuilder {}
++    }
++
++    pub fn mkdir(&self, p: &Path) -> io::Result<()> {
++        let path = bytes(p);
++        checked(unsafe { __absd_std_fs_mkdir(path.as_ptr(), path.len()) }).map(|_| ())
++    }
++}
++
++impl fmt::Debug for File {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("File")
++            .field("handle", &self.handle)
++            .field("position", &self.position.load(Ordering::Relaxed))
++            .finish()
++    }
++}
++
++pub fn readdir(p: &Path) -> io::Result<ReadDir> {
++    let path = bytes(p);
++    let mut entries = crate::vec::Vec::new();
++    loop {
++        let mut name = [0u8; NAME_CAPACITY];
++        let mut raw = RawAttr::default();
++        let result = unsafe {
++            __absd_std_fs_readdir(
++                path.as_ptr(),
++                path.len(),
++                entries.len() as u64,
++                name.as_mut_ptr(),
++                name.len(),
++                &mut raw,
++            )
++        };
++        let length = checked(result as i64)? as usize;
++        if length == 0 {
++            break;
++        }
++        let name = OsString::from(crate::str::from_utf8(&name[..length]).map_err(|_| error(-74))?);
++        entries.push((name, FileAttr::from(raw)));
++    }
++    Ok(ReadDir { root: p.to_path_buf(), entries: entries.into_iter() })
++}
++
++pub fn unlink(p: &Path) -> io::Result<()> {
++    let path = bytes(p);
++    checked(unsafe { __absd_std_fs_unlink(path.as_ptr(), path.len()) }).map(|_| ())
++}
++
++fn rename_with(old: &Path, new: &Path, noreplace: bool) -> io::Result<()> {
++    let (old, new) = (bytes(old), bytes(new));
++    checked(unsafe {
++        __absd_std_fs_rename(old.as_ptr(), old.len(), new.as_ptr(), new.len(), u32::from(noreplace))
++    })
++    .map(|_| ())
++}
++
++pub fn rename(old: &Path, new: &Path) -> io::Result<()> {
++    rename_with(old, new, false)
++}
++
++/// Renames only if `new` does not exist; the check and the move are one
++/// durable metadata commit.
++pub fn rename_noreplace(old: &Path, new: &Path) -> io::Result<()> {
++    rename_with(old, new, true)
++}
++
++pub fn set_perm(p: &Path, perm: FilePermissions) -> io::Result<()> {
++    let path = bytes(p);
++    checked(unsafe {
++        __absd_std_fs_set_readonly_path(path.as_ptr(), path.len(), u32::from(perm.readonly))
++    })
++    .map(|_| ())
++}
++
++pub fn set_times(_p: &Path, _times: FileTimes) -> io::Result<()> {
++    unsupported()
++}
++
++pub fn set_times_nofollow(_p: &Path, _times: FileTimes) -> io::Result<()> {
++    unsupported()
++}
++
++pub fn rmdir(p: &Path) -> io::Result<()> {
++    let path = bytes(p);
++    checked(unsafe { __absd_std_fs_rmdir(path.as_ptr(), path.len()) }).map(|_| ())
++}
++
++pub fn remove_dir_all(path: &Path) -> io::Result<()> {
++    crate::sys::fs::common::remove_dir_all(path)
++}
++
++pub fn exists(path: &Path) -> io::Result<bool> {
++    crate::sys::fs::common::exists(path)
++}
++
++pub fn readlink(_p: &Path) -> io::Result<PathBuf> {
++    unsupported()
++}
++
++pub fn symlink(_original: &Path, _link: &Path) -> io::Result<()> {
++    unsupported()
++}
++
++pub fn link(_src: &Path, _dst: &Path) -> io::Result<()> {
++    unsupported()
++}
++
++pub fn stat(p: &Path) -> io::Result<FileAttr> {
++    let path = bytes(p);
++    let mut raw = RawAttr::default();
++    checked(unsafe { __absd_std_fs_stat(path.as_ptr(), path.len(), &mut raw) })?;
++    Ok(raw.into())
++}
++
++pub fn lstat(p: &Path) -> io::Result<FileAttr> {
++    stat(p)
++}
++
++pub fn canonicalize(p: &Path) -> io::Result<PathBuf> {
++    let path = bytes(p);
++    let mut out = vec![0u8; PATH_CAPACITY];
++    let result =
++        unsafe { __absd_std_fs_canonical(path.as_ptr(), path.len(), out.as_mut_ptr(), out.len()) };
++    let length = checked(result as i64)? as usize;
++    out.truncate(length);
++    let text = crate::string::String::from_utf8(out).map_err(|_| error(-74))?;
++    Ok(PathBuf::from(text))
++}
++
++pub fn copy(from: &Path, to: &Path) -> io::Result<u64> {
++    crate::sys::fs::common::copy(from, to)
++}
++
++impl Hash for FilePermissions {
++    fn hash<H: Hasher>(&self, state: &mut H) {
++        self.readonly.hash(state);
++    }
++}
+diff --git a/library/std/src/sys/fs/mod.rs b/library/std/src/sys/fs/mod.rs
+index 0c297c5..d664b6d 100644
+--- a/library/std/src/sys/fs/mod.rs
++++ b/library/std/src/sys/fs/mod.rs
+@@ -45,6 +45,11 @@ cfg_select! {
+         mod vexos;
+         use vexos as imp;
+     }
++    target_os = "absd" => {
++        mod absd;
++        use absd as imp;
++        pub use absd::rename_noreplace;
++    }
+     _ => {
+         mod unsupported;
+         use unsupported as imp;
+diff --git a/library/std/src/sys/io/error/mod.rs b/library/std/src/sys/io/error/mod.rs
+index d7a0b9b..6fbb63c 100644
+--- a/library/std/src/sys/io/error/mod.rs
++++ b/library/std/src/sys/io/error/mod.rs
+@@ -43,6 +43,7 @@ cfg_select! {
+         target_os = "vexos",
+         target_family = "wasm",
+         target_os = "zkvm",
++        target_os = "absd",
+     ) => {
+         mod generic;
+         pub use generic::*;
+diff --git a/library/std/src/sys/pal/absd/mod.rs b/library/std/src/sys/pal/absd/mod.rs
+new file mode 100644
+index 0000000..19cb152
+--- /dev/null
++++ b/library/std/src/sys/pal/absd/mod.rs
+@@ -0,0 +1,27 @@
++#![deny(unsafe_op_in_unsafe_fn)]
++
++pub mod os;
++
++use crate::io as std_io;
++
++pub unsafe fn init(argc: isize, argv: *const *const u8, _sigpipe: u8) {
++    unsafe { crate::sys::args::init(argc, argv) };
++}
++
++pub unsafe fn cleanup() {}
++
++pub fn unsupported<T>() -> std_io::Result<T> {
++    Err(unsupported_err())
++}
++
++pub fn unsupported_err() -> std_io::Error {
++    std_io::Error::UNSUPPORTED_PLATFORM
++}
++
++unsafe extern "C" {
++    fn __absd_std_exit(code: i32) -> !;
++}
++
++pub fn abort_internal() -> ! {
++    unsafe { __absd_std_exit(101) }
++}
+diff --git a/library/std/src/sys/pal/absd/os.rs b/library/std/src/sys/pal/absd/os.rs
+new file mode 100644
+index 0000000..227ab98
+--- /dev/null
++++ b/library/std/src/sys/pal/absd/os.rs
+@@ -0,0 +1,86 @@
++//! ABSD: the working directory lives in the runtime (process memory, set
++//! from the startup record and by `chdir`); the kernel has none. The PID is
++//! the kernel's. Everything else is upstream's unsupported implementation.
++
++use super::unsupported;
++use crate::ffi::{OsStr, OsString};
++use crate::marker::PhantomData;
++use crate::path::{self, PathBuf};
++use crate::{fmt, io};
++
++unsafe extern "C" {
++    fn __absd_std_getcwd(out: *mut u8, capacity: usize) -> isize;
++    fn __absd_std_chdir(path: *const u8, length: usize) -> i64;
++    fn __absd_std_getpid() -> u32;
++}
++
++pub fn getcwd() -> io::Result<PathBuf> {
++    // The runtime bounds a working directory to 1024 bytes.
++    let mut bytes = [0u8; 1024];
++    let length = unsafe { __absd_std_getcwd(bytes.as_mut_ptr(), bytes.len()) };
++    if length < 0 {
++        return Err(io::const_error!(io::ErrorKind::Other, "working directory unavailable"));
++    }
++    let path = crate::str::from_utf8(&bytes[..length as usize])
++        .map_err(|_| io::const_error!(io::ErrorKind::InvalidData, "working directory is not UTF-8"))?;
++    Ok(PathBuf::from(path))
++}
++
++pub fn chdir(path: &path::Path) -> io::Result<()> {
++    let bytes = path.as_os_str().as_encoded_bytes();
++    match unsafe { __absd_std_chdir(bytes.as_ptr(), bytes.len()) } {
++        0 => Ok(()),
++        -2 => Err(io::const_error!(io::ErrorKind::NotFound, "no such directory")),
++        -20 => Err(io::const_error!(io::ErrorKind::NotADirectory, "not a directory")),
++        -22 => Err(io::const_error!(io::ErrorKind::InvalidInput, "invalid working directory")),
++        _ => Err(io::const_error!(io::ErrorKind::Other, "cannot change working directory")),
++    }
++}
++
++pub struct SplitPaths<'a>(!, PhantomData<&'a ()>);
++
++pub fn split_paths(_unparsed: &OsStr) -> SplitPaths<'_> {
++    panic!("unsupported")
++}
++
++impl<'a> Iterator for SplitPaths<'a> {
++    type Item = PathBuf;
++    fn next(&mut self) -> Option<PathBuf> {
++        self.0
++    }
++}
++
++#[derive(Debug)]
++pub struct JoinPathsError;
++
++pub fn join_paths<I, T>(_paths: I) -> Result<OsString, JoinPathsError>
++where
++    I: Iterator<Item = T>,
++    T: AsRef<OsStr>,
++{
++    Err(JoinPathsError)
++}
++
++impl fmt::Display for JoinPathsError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        "not supported on this platform yet".fmt(f)
++    }
++}
++
++impl crate::error::Error for JoinPathsError {}
++
++pub fn current_exe() -> io::Result<PathBuf> {
++    unsupported()
++}
++
++pub fn temp_dir() -> PathBuf {
++    panic!("no filesystem on this platform")
++}
++
++pub fn home_dir() -> Option<PathBuf> {
++    None
++}
++
++pub fn getpid() -> u32 {
++    unsafe { __absd_std_getpid() }
++}
+diff --git a/library/std/src/sys/pal/mod.rs b/library/std/src/sys/pal/mod.rs
+index 88d9d42..0baf9bc 100644
+--- a/library/std/src/sys/pal/mod.rs
++++ b/library/std/src/sys/pal/mod.rs
+@@ -60,6 +60,10 @@ cfg_select! {
+         mod zkvm;
+         pub use self::zkvm::*;
+     }
++    target_os = "absd" => {
++        mod absd;
++        pub use self::absd::*;
++    }
+     _ => {
+         mod unsupported;
+         pub use self::unsupported::*;
+diff --git a/library/std/src/sys/path/unix.rs b/library/std/src/sys/path/unix.rs
+index 611d250..ca1d816 100644
+--- a/library/std/src/sys/path/unix.rs
++++ b/library/std/src/sys/path/unix.rs
+@@ -63,7 +63,7 @@ pub(crate) fn absolute(path: &Path) -> io::Result<PathBuf> {
+ }
+ 
+ pub(crate) fn is_absolute(path: &Path) -> bool {
+-    if cfg!(any(unix, target_os = "hermit", target_os = "wasi", target_os = "motor")) {
++    if cfg!(any(unix, target_os = "hermit", target_os = "wasi", target_os = "motor", target_os = "absd")) {
+         path.has_root()
+     } else {
+         path.has_root() && path.prefix().is_some()
+diff --git a/library/std/src/sys/process/absd.rs b/library/std/src/sys/process/absd.rs
+new file mode 100644
+index 0000000..cee455d
+--- /dev/null
++++ b/library/std/src/sys/process/absd.rs
+@@ -0,0 +1,859 @@
++//! ABSD: `std::process` two ways (the kernel's `docs/PROCESS-STARTUP.md`).
++//!
++//! **From a file.** A process that holds the kernel's spawn right and no
++//! broker channel starts programs itself: the runtime reads the file at
++//! the program path (absolute, or relative to the working directory; a bare
++//! name is refused, there is no PATH search) from the mounted filesystem
++//! and starts it with the kernel's `spawn_image`. The child gets argv, the
++//! environment (ours with the `Command`'s changes), the working directory
++//! (ours, or the `Command`'s), its three streams, and a read-only view of
++//! the filesystem. `inherit` passes our own stdin/stdout/stderr handle;
++//! `null` and `piped` are pipes (null output is drained and discarded while
++//! we wait). A pipe end this process holds (`ChildStdout`, `ChildStdin`,
++//! `ChildStderr` converted with `Stdio::from`) may be given as a stream:
++//! the child gets a copy with only the right that stream needs (read for
++//! stdin, write for stdout and stderr; the kernel refuses a right the end
++//! does not carry), and on success the spawn consumes it, closing this
++//! process's copy at once so that end-of-file and broken pipe depend on the
++//! child alone. A `Command` whose handle was consumed refuses to spawn
++//! again (`InvalidInput`). `kill` ends the child through the kernel.
++//!
++//! **Through init's broker** (the kernel's `docs/BROKER.md`), unchanged,
++//! when init started this process as a brokered worker: its runtime holds a
++//! request/reply channel to init and a fixed number of slots, each three
++//! pipes made in advance. `spawn` spends the next unspent slot on one
++//! request naming the program path exactly as given to `Command::new` and
++//! its arguments; init decides against its fixed policy and starts the
++//! child or refuses. There, setting an environment variable or a working
++//! directory, and killing, are `Unsupported`. A refusal spends nothing.
++//! Standard streams on this path:
++//!
++//! * `piped` is the slot's pipe end;
++//! * `null` stdin closes the writer at spawn, so the child reads EOF;
++//! * `null` stdout/stderr keeps the reader and discards whatever arrives
++//!   while this process waits (`wait`, `try_wait`, `output`). The reader is
++//!   not closed at spawn: the child's writes would then fail with a broken
++//!   pipe instead of disappearing;
++//! * `inherit` (and `io::stdout()`/`io::stderr()`) for stdout/stderr copies
++//!   what arrives, while this process waits, to this process's own stream;
++//!   `inherit` stdin is `Unsupported`: the child never shares our input.
++//!
++//! Because nothing runs while this process is not waiting, a child whose
++//! discarded or copied output fills its pipe blocks until the parent waits.
++
++use super::env::{CommandEnv, CommandEnvs};
++pub use crate::ffi::OsString as EnvKey;
++use crate::ffi::{OsStr, OsString};
++use crate::io::{self, BorrowedCursor, IoSlice, IoSliceMut};
++use crate::num::NonZero;
++use crate::path::Path;
++use crate::process::StdioPipes;
++use crate::sys::fs::File;
++use crate::fmt;
++
++unsafe extern "C" {
++    fn __absd_std_process_spawn(
++        path: *const u8,
++        path_length: usize,
++        args: *const [usize; 2],
++        argc: usize,
++        out: *mut [u64; 5],
++    ) -> i64;
++    fn __absd_std_process_wait(slot: u64, nonblocking: u64, value: *mut i64) -> i64;
++    fn __absd_std_process_brokered() -> u64;
++    fn __absd_std_process_spawn_image(request: *const RawSpawn, out: *mut [u64; 5]) -> i64;
++    fn __absd_std_process_kill(token: u64) -> i64;
++    fn __absd_std_handle_read(handle: u64, bytes: *mut u8, length: usize, timeout: u64) -> isize;
++    fn __absd_std_handle_write(handle: u64, bytes: *const u8, length: usize) -> isize;
++    fn __absd_std_handle_close(handle: u64) -> i64;
++    fn __absd_std_write(bytes: *const u8, length: usize) -> isize;
++    fn __absd_std_stderr_write(bytes: *const u8, length: usize) -> isize;
++}
++
++/// Kernel errors and the runtime's broker results (`runtime/src/broker.rs`).
++fn error(code: i64) -> io::Error {
++    use io::ErrorKind::*;
++    let (kind, message) = match code {
++        -2000 => (Unsupported, "process spawning needs init's broker handles"),
++        -2001 => (QuotaExceeded, "every broker slot is spent"),
++        -2002 => (InvalidInput, "empty program path, or a NUL byte in the path or an argument"),
++        -2003 => (ArgumentListTooLong, "spawn request exceeds 4096 bytes or 32 arguments"),
++        -2005 => (InvalidData, "init's broker replies broke the protocol"),
++        -2006 => (BrokenPipe, "init closed the broker channel"),
++        -2010 => (InvalidInput, "ABSD has no PATH search: name the program by its path"),
++        -2011 => (InvalidInput, "environment entries must be KEY=VALUE with a non-empty KEY"),
++        -2012 => (IsADirectory, "the program path is not a regular file"),
++        -2013 => (FileTooLarge, "the program image exceeds 32 MiB"),
++        -2014 => (NotADirectory, "the working directory is not a directory"),
++        -2101 => (PermissionDenied, "init refused the spawn: not permitted"),
++        -2102 => (ResourceBusy, "init refused the spawn: slot unavailable"),
++        -2103 => (InvalidInput, "init refused the spawn: malformed request"),
++        -2104 => (QuotaExceeded, "init refused the spawn: no resources"),
++        code if code <= -2100 => (Other, "init refused the spawn"),
++        -1 => (PermissionDenied, "ABSD I/O syscall failed"),
++        -2 => (NotFound, "ABSD I/O syscall failed"),
++        -8 => (InvalidData, "not a static ELF64 image the ABSD loader accepts"),
++        -9 => (InvalidInput, "ABSD I/O syscall failed: bad handle"),
++        -11 => (WouldBlock, "ABSD I/O syscall failed"),
++        -12 => (OutOfMemory, "ABSD I/O syscall failed"),
++        -14 | -22 => (InvalidInput, "ABSD I/O syscall failed"),
++        -24 => (QuotaExceeded, "ABSD I/O syscall failed"),
++        -32 => (BrokenPipe, "ABSD I/O syscall failed"),
++        -20 => (NotADirectory, "ABSD filesystem: not a directory"),
++        -21 => (IsADirectory, "ABSD filesystem: is a directory"),
++        -38 => (Unsupported, "ABSD I/O syscall failed"),
++        -74 => (InvalidData, "ABSD filesystem: corrupt"),
++        -110 => (TimedOut, "ABSD I/O syscall timed out"),
++        _ => (Other, "ABSD I/O syscall failed"),
++    };
++    io::Error::new(kind, message)
++}
++
++/// What `__absd_std_process_spawn_image` reads (runtime `process.rs`).
++#[repr(C)]
++struct RawSpawn {
++    path: *const u8,
++    path_length: usize,
++    args: *const [usize; 2],
++    argc: usize,
++    env: *const [usize; 2],
++    envc: usize,
++    cwd: *const u8,
++    cwd_length: usize,
++    stdio: [u32; 3],
++    /// For a `STDIO_HANDLE` stream, the pipe end the child gets.
++    handles: [u64; 3],
++}
++
++/// Stream sources for `RawSpawn::stdio`.
++const STDIO_NULL: u32 = 0;
++const STDIO_PIPE: u32 = 1;
++const STDIO_INHERIT: u32 = 2;
++const STDIO_PARENT_STDOUT: u32 = 3;
++const STDIO_PARENT_STDERR: u32 = 4;
++const STDIO_HANDLE: u32 = 5;
++/// Set in a `Process::slot` that is an image child's process handle.
++const IMAGE_CHILD: u64 = 1 << 63;
++
++fn unsupported(message: &'static str) -> io::Error {
++    io::Error::new(io::ErrorKind::Unsupported, message)
++}
++
++fn consumed() -> io::Error {
++    io::Error::new(
++        io::ErrorKind::InvalidInput,
++        "the pipe end given as this command's stream was consumed by an earlier spawn",
++    )
++}
++
++////////////////////////////////////////////////////////////////////////////////
++// Command
++////////////////////////////////////////////////////////////////////////////////
++
++pub struct Command {
++    program: OsString,
++    args: Vec<OsString>,
++    env: CommandEnv,
++
++    cwd: Option<OsString>,
++    stdin: Option<Stdio>,
++    stdout: Option<Stdio>,
++    stderr: Option<Stdio>,
++}
++
++#[derive(Debug)]
++pub enum Stdio {
++    Inherit,
++    Null,
++    MakePipe,
++    ParentStdout,
++    ParentStderr,
++    #[allow(dead_code)] // This variant exists only for the Debug impl
++    InheritFile(File),
++    Handle(ChildPipe),
++    /// A `Handle` an earlier successful spawn consumed.
++    Consumed,
++}
++
++/// What happens to a child's stdout or stderr that the caller does not hold.
++#[derive(Clone, Copy)]
++enum Sink {
++    Discard,
++    Stdout,
++    Stderr,
++}
++
++enum Output {
++    Pipe,
++    Drain(Sink),
++}
++
++fn output_mode(stdio: &Stdio, inherit: Sink) -> io::Result<Output> {
++    match stdio {
++        Stdio::MakePipe => Ok(Output::Pipe),
++        Stdio::Null => Ok(Output::Drain(Sink::Discard)),
++        Stdio::Inherit => Ok(Output::Drain(inherit)),
++        Stdio::ParentStdout => Ok(Output::Drain(Sink::Stdout)),
++        Stdio::ParentStderr => Ok(Output::Drain(Sink::Stderr)),
++        Stdio::InheritFile(_) | Stdio::Handle(_) | Stdio::Consumed => {
++            Err(unsupported("ABSD child output can only be piped, null, or this process's own"))
++        }
++    }
++}
++
++impl Command {
++    pub fn new(program: &OsStr) -> Command {
++        Command {
++            program: program.to_owned(),
++            args: vec![program.to_owned()],
++            env: Default::default(),
++            cwd: None,
++            stdin: None,
++            stdout: None,
++            stderr: None,
++        }
++    }
++
++    pub fn arg(&mut self, arg: &OsStr) {
++        self.args.push(arg.to_owned());
++    }
++
++    pub fn env_mut(&mut self) -> &mut CommandEnv {
++        &mut self.env
++    }
++
++    pub fn cwd(&mut self, dir: &OsStr) {
++        self.cwd = Some(dir.to_owned());
++    }
++
++    pub fn stdin(&mut self, stdin: Stdio) {
++        self.stdin = Some(stdin);
++    }
++
++    pub fn stdout(&mut self, stdout: Stdio) {
++        self.stdout = Some(stdout);
++    }
++
++    pub fn stderr(&mut self, stderr: Stdio) {
++        self.stderr = Some(stderr);
++    }
++
++    pub fn get_program(&self) -> &OsStr {
++        &self.program
++    }
++
++    pub fn get_args(&self) -> CommandArgs<'_> {
++        let mut iter = self.args.iter();
++        iter.next();
++        CommandArgs { iter }
++    }
++
++    pub fn get_envs(&self) -> CommandEnvs<'_> {
++        self.env.iter()
++    }
++
++    pub fn get_env_clear(&self) -> bool {
++        self.env.does_clear()
++    }
++
++    pub fn get_current_dir(&self) -> Option<&Path> {
++        self.cwd.as_ref().map(|cs| Path::new(cs))
++    }
++
++    pub fn spawn(
++        &mut self,
++        default: Stdio,
++        needs_stdin: bool,
++    ) -> io::Result<(Process, StdioPipes)> {
++        if unsafe { __absd_std_process_brokered() } != 0 {
++            self.spawn_brokered(default, needs_stdin)
++        } else {
++            self.spawn_image(default, needs_stdin)
++        }
++    }
++
++    fn spawn_image(
++        &mut self,
++        default: Stdio,
++        needs_stdin: bool,
++    ) -> io::Result<(Process, StdioPipes)> {
++        let null = Stdio::Null;
++        let stdin = self.stdin.as_ref().unwrap_or(if needs_stdin { &default } else { &null });
++        let mut handles = [0u64; 3];
++        let stdin_mode = match stdin {
++            Stdio::MakePipe => STDIO_PIPE,
++            Stdio::Null => STDIO_NULL,
++            Stdio::Inherit => STDIO_INHERIT,
++            Stdio::Handle(pipe) => {
++                handles[0] = pipe.handle;
++                STDIO_HANDLE
++            }
++            Stdio::Consumed => return Err(consumed()),
++            _ => {
++                return Err(unsupported(
++                    "ABSD child stdin can only be piped, null, inherited, or a pipe end",
++                ));
++            }
++        };
++        let output_source = |stdio: &Stdio, slot: &mut u64| match stdio {
++            Stdio::MakePipe => Ok(STDIO_PIPE),
++            Stdio::Null => Ok(STDIO_NULL),
++            Stdio::Inherit => Ok(STDIO_INHERIT),
++            Stdio::ParentStdout => Ok(STDIO_PARENT_STDOUT),
++            Stdio::ParentStderr => Ok(STDIO_PARENT_STDERR),
++            Stdio::Handle(pipe) => {
++                *slot = pipe.handle;
++                Ok(STDIO_HANDLE)
++            }
++            Stdio::Consumed => Err(consumed()),
++            Stdio::InheritFile(_) => Err(unsupported(
++                "ABSD child output can only be piped, null, this process's own, or a pipe end",
++            )),
++        };
++        let stdout_mode =
++            output_source(self.stdout.as_ref().unwrap_or(&default), &mut handles[1])?;
++        let stderr_mode =
++            output_source(self.stderr.as_ref().unwrap_or(&default), &mut handles[2])?;
++
++        let path = self.program.as_encoded_bytes();
++        let args: Vec<[usize; 2]> = self.args[1..]
++            .iter()
++            .map(|arg| {
++                let bytes = arg.as_encoded_bytes();
++                [bytes.as_ptr() as usize, bytes.len()]
++            })
++            .collect();
++        // The child's whole environment: ours with this command's changes.
++        let mut entries: Vec<Vec<u8>> = Vec::new();
++        for (key, value) in self.env.capture() {
++            let key = key.as_encoded_bytes();
++            if key.is_empty() || key.contains(&b'=') {
++                return Err(error(-2011));
++            }
++            let mut entry = key.to_vec();
++            entry.push(b'=');
++            entry.extend_from_slice(value.as_encoded_bytes());
++            entries.push(entry);
++        }
++        let env: Vec<[usize; 2]> =
++            entries.iter().map(|entry| [entry.as_ptr() as usize, entry.len()]).collect();
++        let cwd = self.cwd.as_ref().map_or(&[][..], |cwd| cwd.as_encoded_bytes());
++        let request = RawSpawn {
++            path: path.as_ptr(),
++            path_length: path.len(),
++            args: args.as_ptr(),
++            argc: args.len(),
++            env: env.as_ptr(),
++            envc: env.len(),
++            cwd: cwd.as_ptr(),
++            cwd_length: cwd.len(),
++            stdio: [stdin_mode, stdout_mode, stderr_mode],
++            handles,
++        };
++        let mut out = [0u64; 5];
++        let result = unsafe { __absd_std_process_spawn_image(&request, &mut out) };
++        if result < 0 {
++            // A refused spawn consumes nothing: the pipe ends stay ours.
++            return Err(error(result));
++        }
++        // The child holds its own copies of any pipe ends we gave it; ours
++        // close now (dropping each `ChildPipe`), not when the `Command` is
++        // dropped, so a reader sees EOF and a writer a broken pipe exactly
++        // when the children that hold the other end are done.
++        for slot in [&mut self.stdin, &mut self.stdout, &mut self.stderr] {
++            if matches!(slot, Some(Stdio::Handle(_))) {
++                *slot = Some(Stdio::Consumed);
++            }
++        }
++        let [token, pid, stdin_handle, stdout_handle, stderr_handle] = out;
++        let mut pipes = StdioPipes { stdin: None, stdout: None, stderr: None };
++        let mut drains = [None, None];
++        if stdin_handle != 0 {
++            pipes.stdin = Some(ChildPipe { handle: stdin_handle });
++        }
++        // A pipe end this process holds but the caller did not ask for is
++        // drained while it waits: discarded for null, else copied.
++        for (index, (handle, mode, inherit)) in
++            [(stdout_handle, stdout_mode, Sink::Stdout), (stderr_handle, stderr_mode, Sink::Stderr)]
++                .into_iter()
++                .enumerate()
++        {
++            if handle == 0 {
++                continue;
++            }
++            let pipe = ChildPipe { handle };
++            match mode {
++                STDIO_PIPE if index == 0 => pipes.stdout = Some(pipe),
++                STDIO_PIPE => pipes.stderr = Some(pipe),
++                STDIO_NULL => drains[index] = Some((pipe, Sink::Discard)),
++                STDIO_PARENT_STDOUT => drains[index] = Some((pipe, Sink::Stdout)),
++                STDIO_PARENT_STDERR => drains[index] = Some((pipe, Sink::Stderr)),
++                _ => drains[index] = Some((pipe, inherit)),
++            }
++        }
++        Ok((Process { slot: token, pid, status: None, drains }, pipes))
++    }
++
++    fn spawn_brokered(
++        &mut self,
++        default: Stdio,
++        needs_stdin: bool,
++    ) -> io::Result<(Process, StdioPipes)> {
++        // Everything refusable is refused before a request spends a slot.
++        // An ABSD process has no environment to inherit, so clearing it or
++        // removing from it is already true; giving a child one is not.
++        if self.env.iter().any(|(_, value)| value.is_some()) {
++            return Err(unsupported("ABSD programs have no environment"));
++        }
++        if self.cwd.is_some() {
++            return Err(unsupported("ABSD programs have no working directory"));
++        }
++        let null = Stdio::Null;
++        let stdin = self.stdin.as_ref().unwrap_or(if needs_stdin { &default } else { &null });
++        let stdin_piped = match stdin {
++            Stdio::MakePipe => true,
++            Stdio::Null => false,
++            Stdio::Consumed => return Err(consumed()),
++            _ => return Err(unsupported("ABSD child stdin can only be piped or null")),
++        };
++        let stdout = output_mode(self.stdout.as_ref().unwrap_or(&default), Sink::Stdout)?;
++        let stderr = output_mode(self.stderr.as_ref().unwrap_or(&default), Sink::Stderr)?;
++
++        let path = self.program.as_encoded_bytes();
++        let args: Vec<[usize; 2]> = self.args[1..]
++            .iter()
++            .map(|arg| {
++                let bytes = arg.as_encoded_bytes();
++                [bytes.as_ptr() as usize, bytes.len()]
++            })
++            .collect();
++        let mut out = [0u64; 5];
++        let result = unsafe {
++            __absd_std_process_spawn(path.as_ptr(), path.len(), args.as_ptr(), args.len(), &mut out)
++        };
++        if result < 0 {
++            return Err(error(result));
++        }
++        let [slot, pid, stdin_handle, stdout_handle, stderr_handle] = out;
++        let (stdin_pipe, stdout_pipe, stderr_pipe) = (
++            ChildPipe { handle: stdin_handle },
++            ChildPipe { handle: stdout_handle },
++            ChildPipe { handle: stderr_handle },
++        );
++        let mut pipes = StdioPipes { stdin: None, stdout: None, stderr: None };
++        let mut drains = [None, None];
++        // Null stdin: dropping the only writer gives the child EOF.
++        if stdin_piped {
++            pipes.stdin = Some(stdin_pipe);
++        } else {
++            drop(stdin_pipe);
++        }
++        match stdout {
++            Output::Pipe => pipes.stdout = Some(stdout_pipe),
++            Output::Drain(sink) => drains[0] = Some((stdout_pipe, sink)),
++        }
++        match stderr {
++            Output::Pipe => pipes.stderr = Some(stderr_pipe),
++            Output::Drain(sink) => drains[1] = Some((stderr_pipe, sink)),
++        }
++        Ok((Process { slot, pid, status: None, drains }, pipes))
++    }
++}
++
++pub fn output(cmd: &mut Command) -> io::Result<(ExitStatus, Vec<u8>, Vec<u8>)> {
++    let (mut process, mut pipes) = cmd.spawn(Stdio::MakePipe, false)?;
++    drop(pipes.stdin.take());
++    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
++    match (pipes.stdout.take(), pipes.stderr.take()) {
++        (None, None) => {}
++        (Some(out), None) => {
++            out.read_to_end(&mut stdout)?;
++        }
++        (None, Some(err)) => {
++            err.read_to_end(&mut stderr)?;
++        }
++        (Some(out), Some(err)) => read_output(out, &mut stdout, err, &mut stderr)?,
++    }
++    let status = process.wait()?;
++    Ok((status, stdout, stderr))
++}
++
++impl From<ChildPipe> for Stdio {
++    fn from(pipe: ChildPipe) -> Stdio {
++        Stdio::Handle(pipe)
++    }
++}
++
++impl From<crate::sys::pipe::Pipe> for Stdio {
++    fn from(pipe: crate::sys::pipe::Pipe) -> Stdio {
++        pipe.diverge()
++    }
++}
++
++impl From<io::Stdout> for Stdio {
++    fn from(_: io::Stdout) -> Stdio {
++        Stdio::ParentStdout
++    }
++}
++
++impl From<io::Stderr> for Stdio {
++    fn from(_: io::Stderr) -> Stdio {
++        Stdio::ParentStderr
++    }
++}
++
++impl From<File> for Stdio {
++    fn from(file: File) -> Stdio {
++        Stdio::InheritFile(file)
++    }
++}
++
++impl fmt::Debug for Command {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        if f.alternate() {
++            let mut debug_command = f.debug_struct("Command");
++            debug_command.field("program", &self.program).field("args", &self.args);
++            if !self.env.is_unchanged() {
++                debug_command.field("env", &self.env);
++            }
++            if self.cwd.is_some() {
++                debug_command.field("cwd", &self.cwd);
++            }
++            if self.stdin.is_some() {
++                debug_command.field("stdin", &self.stdin);
++            }
++            if self.stdout.is_some() {
++                debug_command.field("stdout", &self.stdout);
++            }
++            if self.stderr.is_some() {
++                debug_command.field("stderr", &self.stderr);
++            }
++            debug_command.finish()
++        } else {
++            if self.program != self.args[0] {
++                write!(f, "[{:?}] ", self.program)?;
++            }
++            write!(f, "{:?}", self.args[0])?;
++            for arg in &self.args[1..] {
++                write!(f, " {:?}", arg)?;
++            }
++            Ok(())
++        }
++    }
++}
++
++////////////////////////////////////////////////////////////////////////////////
++// Exit status
++////////////////////////////////////////////////////////////////////////////////
++
++/// Init's EXITED value: the exit status; a fault is `-1000 - vector`;
++/// killed is `-1`.
++#[derive(PartialEq, Eq, Clone, Copy, Debug, Default)]
++pub struct ExitStatus(i64);
++
++impl ExitStatus {
++    pub fn exit_ok(&self) -> Result<(), ExitStatusError> {
++        match NonZero::new(self.0) {
++            None => Ok(()),
++            Some(value) => Err(ExitStatusError(value)),
++        }
++    }
++
++    /// The exit status when the child exited with a non-negative one;
++    /// `None` when it faulted or was killed (and for negative statuses,
++    /// which the outcome encoding cannot tell apart from those).
++    pub fn code(&self) -> Option<i32> {
++        if (0..=i32::MAX as i64).contains(&self.0) { Some(self.0 as i32) } else { None }
++    }
++}
++
++impl fmt::Display for ExitStatus {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match self.0 {
++            value if value >= 0 => write!(f, "exit status: {value}"),
++            -1 => write!(f, "killed"),
++            value if value <= -1000 => write!(f, "fault: vector {}", -1000 - value),
++            value => write!(f, "exit value: {value}"),
++        }
++    }
++}
++
++#[derive(PartialEq, Eq, Clone, Copy, Debug)]
++pub struct ExitStatusError(NonZero<i64>);
++
++impl Into<ExitStatus> for ExitStatusError {
++    fn into(self) -> ExitStatus {
++        ExitStatus(self.0.get())
++    }
++}
++
++impl ExitStatusError {
++    pub fn code(self) -> Option<NonZero<i32>> {
++        ExitStatus(self.0.get()).code().and_then(NonZero::new)
++    }
++}
++
++#[derive(PartialEq, Eq, Clone, Copy, Debug)]
++pub struct ExitCode(u8);
++
++impl ExitCode {
++    pub const SUCCESS: ExitCode = ExitCode(0);
++    pub const FAILURE: ExitCode = ExitCode(1);
++
++    pub fn as_i32(&self) -> i32 {
++        self.0 as i32
++    }
++}
++
++impl From<u8> for ExitCode {
++    fn from(code: u8) -> Self {
++        Self(code)
++    }
++}
++
++////////////////////////////////////////////////////////////////////////////////
++// Process
++////////////////////////////////////////////////////////////////////////////////
++
++pub struct Process {
++    /// A broker slot number, or `IMAGE_CHILD` plus the child's process
++    /// handle (the runtime's `wait` and `kill` tell them apart).
++    slot: u64,
++    pid: u64,
++    status: Option<ExitStatus>,
++    /// Child stdout and stderr the caller does not hold, drained on waits.
++    drains: [Option<(ChildPipe, Sink)>; 2],
++}
++
++fn deliver(sink: Sink, mut bytes: &[u8]) {
++    let write: unsafe extern "C" fn(*const u8, usize) -> isize = match sink {
++        Sink::Discard => return,
++        Sink::Stdout => __absd_std_write,
++        Sink::Stderr => __absd_std_stderr_write,
++    };
++    while !bytes.is_empty() {
++        let written = unsafe { write(bytes.as_ptr(), bytes.len()) };
++        if written <= 0 {
++            return;
++        }
++        bytes = &bytes[written as usize..];
++    }
++}
++
++impl Process {
++    pub fn id(&self) -> u32 {
++        self.pid as u32
++    }
++
++    pub fn kill(&mut self) -> io::Result<()> {
++        if self.slot & IMAGE_CHILD == 0 {
++            return Err(unsupported("ABSD's broker has no kill request"));
++        }
++        if self.status.is_some() {
++            return Ok(());
++        }
++        match unsafe { __absd_std_process_kill(self.slot) } {
++            0 => Ok(()),
++            code => Err(error(code)),
++        }
++    }
++
++    fn open_drains(&self) -> usize {
++        self.drains.iter().filter(|drain| drain.is_some()).count()
++    }
++
++    /// One read from each drained stream, each bounded by `timeout` ticks
++    /// (zero: until data or EOF). A stream is dropped at EOF.
++    fn pump(&mut self, timeout: u64) -> io::Result<()> {
++        let mut bytes = [0u8; 256];
++        for drain in &mut self.drains {
++            let Some((pipe, sink)) = drain else { continue };
++            match pipe.read_timeout(&mut bytes, timeout) {
++                Ok(0) => *drain = None,
++                Ok(count) => deliver(*sink, &bytes[..count]),
++                Err(error) if error.kind() == io::ErrorKind::TimedOut => {}
++                Err(error) => return Err(error),
++            }
++        }
++        Ok(())
++    }
++
++    /// Drains until every drained stream has ended; with two, alternates
++    /// with one-tick bounds so neither can stall the other.
++    fn drain_to_end(&mut self) -> io::Result<()> {
++        loop {
++            match self.open_drains() {
++                0 => return Ok(()),
++                1 => self.pump(0)?,
++                _ => self.pump(1)?,
++            }
++        }
++    }
++
++    pub fn wait(&mut self) -> io::Result<ExitStatus> {
++        if let Some(status) = self.status {
++            return Ok(status);
++        }
++        // The child is the only writer left on a drained stream, so these
++        // end when it exits (or closes them).
++        self.drain_to_end()?;
++        let mut value = 0i64;
++        let result = unsafe { __absd_std_process_wait(self.slot, 0, &mut value) };
++        if result < 0 {
++            return Err(error(result));
++        }
++        let status = ExitStatus(value);
++        self.status = Some(status);
++        Ok(status)
++    }
++
++    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
++        if let Some(status) = self.status {
++            return Ok(Some(status));
++        }
++        self.pump(1)?;
++        let mut value = 0i64;
++        let result = unsafe { __absd_std_process_wait(self.slot, 1, &mut value) };
++        if result < 0 {
++            return Err(error(result));
++        }
++        if result == 0 {
++            return Ok(None);
++        }
++        // Exited: nothing more can be written, so the rest is finite.
++        self.drain_to_end()?;
++        let status = ExitStatus(value);
++        self.status = Some(status);
++        Ok(Some(status))
++    }
++}
++
++pub struct CommandArgs<'a> {
++    iter: crate::slice::Iter<'a, OsString>,
++}
++
++impl<'a> Iterator for CommandArgs<'a> {
++    type Item = &'a OsStr;
++    fn next(&mut self) -> Option<&'a OsStr> {
++        self.iter.next().map(|os| &**os)
++    }
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        self.iter.size_hint()
++    }
++}
++
++impl<'a> ExactSizeIterator for CommandArgs<'a> {
++    fn len(&self) -> usize {
++        self.iter.len()
++    }
++    fn is_empty(&self) -> bool {
++        self.iter.is_empty()
++    }
++}
++
++impl<'a> fmt::Debug for CommandArgs<'a> {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_list().entries(self.iter.clone()).finish()
++    }
++}
++
++////////////////////////////////////////////////////////////////////////////////
++// Slot pipes
++////////////////////////////////////////////////////////////////////////////////
++
++/// One worker-side end of a slot pipe; closed on drop.
++pub struct ChildPipe {
++    handle: u64,
++}
++
++impl ChildPipe {
++    /// The kernel handle of this pipe end (`std::os::absd::process`).
++    pub fn handle(&self) -> u64 {
++        self.handle
++    }
++
++    fn read_timeout(&self, buf: &mut [u8], timeout: u64) -> io::Result<usize> {
++        let result = unsafe { __absd_std_handle_read(self.handle, buf.as_mut_ptr(), buf.len(), timeout) };
++        if result < 0 { Err(error(result as i64)) } else { Ok(result as usize) }
++    }
++
++    pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
++        self.read_timeout(buf, 0)
++    }
++
++    pub fn read_buf(&self, cursor: BorrowedCursor<'_>) -> io::Result<()> {
++        io::default_read_buf(|buf| self.read(buf), cursor)
++    }
++
++    pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
++        io::default_read_vectored(|buf| self.read(buf), bufs)
++    }
++
++    pub fn is_read_vectored(&self) -> bool {
++        false
++    }
++
++    pub fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
++        let start = buf.len();
++        let mut bytes = [0u8; 256];
++        loop {
++            match self.read(&mut bytes)? {
++                0 => return Ok(buf.len() - start),
++                count => buf.extend_from_slice(&bytes[..count]),
++            }
++        }
++    }
++
++    pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
++        let result = unsafe { __absd_std_handle_write(self.handle, buf.as_ptr(), buf.len()) };
++        if result < 0 { Err(error(result as i64)) } else { Ok(result as usize) }
++    }
++
++    pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
++        io::default_write_vectored(|buf| self.write(buf), bufs)
++    }
++
++    pub fn is_write_vectored(&self) -> bool {
++        false
++    }
++}
++
++impl Drop for ChildPipe {
++    fn drop(&mut self) {
++        unsafe { __absd_std_handle_close(self.handle) };
++    }
++}
++
++impl fmt::Debug for ChildPipe {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("ChildPipe").field("handle", &self.handle).finish()
++    }
++}
++
++/// Reads a child's stdout and stderr to their ends without letting either
++/// stall the other: while both are open, each read is bounded to one tick.
++pub fn read_output(
++    out: ChildPipe,
++    stdout: &mut Vec<u8>,
++    err: ChildPipe,
++    stderr: &mut Vec<u8>,
++) -> io::Result<()> {
++    let mut streams = [(Some(out), stdout), (Some(err), stderr)];
++    let mut bytes = [0u8; 256];
++    loop {
++        let open = streams.iter().filter(|(pipe, _)| pipe.is_some()).count();
++        if open == 0 {
++            return Ok(());
++        }
++        let timeout = if open == 1 { 0 } else { 1 };
++        for (pipe, sink) in &mut streams {
++            let Some(reader) = pipe else { continue };
++            match reader.read_timeout(&mut bytes, timeout) {
++                Ok(0) => *pipe = None,
++                Ok(count) => sink.extend_from_slice(&bytes[..count]),
++                Err(error) if error.kind() == io::ErrorKind::TimedOut => {}
++                Err(error) => return Err(error),
++            }
++        }
++    }
++}
+diff --git a/library/std/src/sys/process/mod.rs b/library/std/src/sys/process/mod.rs
+index 121d3bc..b8ac5d5 100644
+--- a/library/std/src/sys/process/mod.rs
++++ b/library/std/src/sys/process/mod.rs
+@@ -15,6 +15,10 @@ cfg_select! {
+         mod motor;
+         use motor as imp;
+     }
++    target_os = "absd" => {
++        mod absd;
++        use absd as imp;
++    }
+     _ => {
+         mod unsupported;
+         use unsupported as imp;
+diff --git a/library/std/src/sys/random/mod.rs b/library/std/src/sys/random/mod.rs
+index 91f72d0..fd2c609 100644
+--- a/library/std/src/sys/random/mod.rs
++++ b/library/std/src/sys/random/mod.rs
+@@ -106,6 +106,7 @@ cfg_select! {
+         all(target_family = "wasm", target_os = "unknown"),
+         target_os = "xous",
+         target_os = "vexos",
++        target_os = "absd",
+     ) => {
+         // FIXME: finally remove std support for wasm32-unknown-unknown
+         // FIXME: add random data generation to xous
+@@ -122,6 +123,7 @@ cfg_select! {
+     all(target_os = "wasi", not(target_env = "p1")),
+     target_os = "xous",
+     target_os = "vexos",
++    target_os = "absd",
+ )))]
+ pub fn hashmap_random_keys() -> (u64, u64) {
+     let mut buf = [0; 16];
+diff --git a/library/std/src/sys/stdio/absd.rs b/library/std/src/sys/stdio/absd.rs
+new file mode 100644
+index 0000000..4356861
+--- /dev/null
++++ b/library/std/src/sys/stdio/absd.rs
+@@ -0,0 +1,84 @@
++use crate::io::{self, IoSlice, IoSliceMut};
++
++unsafe extern "C" {
++    fn __absd_std_read(bytes: *mut u8, length: usize) -> isize;
++    fn __absd_std_write(bytes: *const u8, length: usize) -> isize;
++    fn __absd_std_stderr_write(bytes: *const u8, length: usize) -> isize;
++}
++
++pub struct Stdin;
++pub struct Stdout;
++pub struct Stderr;
++
++impl Stdin { pub const fn new() -> Self { Self } }
++impl Stdout { pub const fn new() -> Self { Self } }
++impl Stderr { pub const fn new() -> Self { Self } }
++
++fn error(result: isize) -> io::Error {
++    let kind = match result {
++        -1 => io::ErrorKind::PermissionDenied,
++        -2 => io::ErrorKind::NotFound,
++        -11 => io::ErrorKind::WouldBlock,
++        -12 => io::ErrorKind::OutOfMemory,
++        -14 | -22 => io::ErrorKind::InvalidInput,
++        -24 => io::ErrorKind::QuotaExceeded,
++        -32 => io::ErrorKind::BrokenPipe,
++        -38 => io::ErrorKind::Unsupported,
++        -110 => io::ErrorKind::TimedOut,
++        _ => io::ErrorKind::Other,
++    };
++    io::Error::new(kind, "ABSD I/O syscall failed")
++}
++
++impl io::Read for Stdin {
++    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
++        let result = unsafe { __absd_std_read(buf.as_mut_ptr(), buf.len()) };
++        if result < 0 { Err(error(result)) } else { Ok(result as usize) }
++    }
++
++    fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
++        match bufs.iter_mut().find(|buf| !buf.is_empty()) {
++            Some(buf) => self.read(buf),
++            None => Ok(0),
++        }
++    }
++}
++
++fn write(buf: &[u8]) -> io::Result<usize> {
++    let result = unsafe { __absd_std_write(buf.as_ptr(), buf.len()) };
++    if result < 0 { Err(error(result)) } else { Ok(result as usize) }
++}
++
++/// The startup record's stderr handle when it names one, else the console.
++fn write_stderr(buf: &[u8]) -> io::Result<usize> {
++    let result = unsafe { __absd_std_stderr_write(buf.as_ptr(), buf.len()) };
++    if result < 0 { Err(error(result)) } else { Ok(result as usize) }
++}
++
++impl io::Write for Stdout {
++    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { write(buf) }
++    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
++        match bufs.iter().find(|buf| !buf.is_empty()) {
++            Some(buf) => write(buf),
++            None => Ok(0),
++        }
++    }
++    fn flush(&mut self) -> io::Result<()> { Ok(()) }
++}
++
++impl io::Write for Stderr {
++    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { write_stderr(buf) }
++    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
++        match bufs.iter().find(|buf| !buf.is_empty()) {
++            Some(buf) => write_stderr(buf),
++            None => Ok(0),
++        }
++    }
++    fn flush(&mut self) -> io::Result<()> { Ok(()) }
++}
++
++pub const STDIN_BUF_SIZE: usize = 256;
++
++pub fn is_ebadf(_err: &io::Error) -> bool { false }
++
++pub fn panic_output() -> Option<Stderr> { Some(Stderr::new()) }
+diff --git a/library/std/src/sys/stdio/mod.rs b/library/std/src/sys/stdio/mod.rs
+index 86d0f3f..5fead46 100644
+--- a/library/std/src/sys/stdio/mod.rs
++++ b/library/std/src/sys/stdio/mod.rs
+@@ -45,6 +45,10 @@ cfg_select! {
+         mod zkvm;
+         pub use zkvm::*;
+     }
++    target_os = "absd" => {
++        mod absd;
++        pub use absd::*;
++    }
+     _ => {
+         mod unsupported;
+         pub use unsupported::*;
+diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
+index e88011a..63d0fe1 100644
+--- a/library/std/src/sys/thread_local/mod.rs
++++ b/library/std/src/sys/thread_local/mod.rs
+@@ -30,6 +30,7 @@ cfg_select! {
+         target_os = "zkvm",
+         target_os = "trusty",
+         target_os = "vexos",
++        target_os = "absd",
+     ) => {
+         mod no_threads;
+         pub use no_threads::{EagerStorage, LazyStorage, thread_local_inner};
+@@ -100,6 +101,7 @@ pub(crate) mod guard {
+             target_os = "zkvm",
+             target_os = "trusty",
+             target_os = "vexos",
++            target_os = "absd",
+         ) => {
+             pub(crate) fn enable() {
+                 // FIXME: Right now there is no concept of "thread exit" on
+diff --git a/library/std/src/sys/time/absd.rs b/library/std/src/sys/time/absd.rs
+new file mode 100644
+index 0000000..e964198
+--- /dev/null
++++ b/library/std/src/sys/time/absd.rs
+@@ -0,0 +1,64 @@
++//! ABSD: the kernel's PIT tick counter (about 1 kHz since boot) is the
++//! monotonic clock. The wall clock is the kernel's CMOS RTC reading: whole
++//! seconds since the Unix epoch, the RTC declared to hold UTC, uncorrected.
++
++use crate::time::Duration;
++
++unsafe extern "C" {
++    fn __absd_std_ticks() -> u64;
++    fn __absd_std_wall_clock_seconds() -> i64;
++}
++
++#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
++pub struct Instant(Duration);
++
++#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
++pub struct SystemTime(Duration);
++
++pub const UNIX_EPOCH: SystemTime = SystemTime(Duration::from_secs(0));
++
++impl Instant {
++    pub fn now() -> Instant {
++        Instant(Duration::from_millis(unsafe { __absd_std_ticks() }))
++    }
++
++    pub fn checked_sub_instant(&self, other: &Instant) -> Option<Duration> {
++        self.0.checked_sub(other.0)
++    }
++
++    pub fn checked_add_duration(&self, other: &Duration) -> Option<Instant> {
++        Some(Instant(self.0.checked_add(*other)?))
++    }
++
++    pub fn checked_sub_duration(&self, other: &Duration) -> Option<Instant> {
++        Some(Instant(self.0.checked_sub(*other)?))
++    }
++}
++
++impl SystemTime {
++    pub const MAX: SystemTime = SystemTime(Duration::MAX);
++
++    pub const MIN: SystemTime = SystemTime(Duration::ZERO);
++
++    /// The RTC's reading, to the second (sub-second part zero). A refused
++    /// reading panics: no time is ever substituted.
++    pub fn now() -> SystemTime {
++        let seconds = unsafe { __absd_std_wall_clock_seconds() };
++        if seconds < 0 {
++            panic!("ABSD wall clock unavailable (kernel refused: {seconds})")
++        }
++        SystemTime(Duration::from_secs(seconds as u64))
++    }
++
++    pub fn sub_time(&self, other: &SystemTime) -> Result<Duration, Duration> {
++        self.0.checked_sub(other.0).ok_or_else(|| other.0 - self.0)
++    }
++
++    pub fn checked_add_duration(&self, other: &Duration) -> Option<SystemTime> {
++        Some(SystemTime(self.0.checked_add(*other)?))
++    }
++
++    pub fn checked_sub_duration(&self, other: &Duration) -> Option<SystemTime> {
++        Some(SystemTime(self.0.checked_sub(*other)?))
++    }
++}
+diff --git a/library/std/src/sys/time/mod.rs b/library/std/src/sys/time/mod.rs
+index 6cd1850..8ed0d30 100644
+--- a/library/std/src/sys/time/mod.rs
++++ b/library/std/src/sys/time/mod.rs
+@@ -44,6 +44,10 @@ cfg_select! {
+         mod xous;
+         use xous as imp;
+     }
++    target_os = "absd" => {
++        mod absd;
++        use absd as imp;
++    }
+     _ => {
+         mod unsupported;
+         use unsupported as imp;
+diff --git a/library/sysroot/Cargo.toml b/library/sysroot/Cargo.toml
+index b2069ef..46a5b59 100644
+--- a/library/sysroot/Cargo.toml
++++ b/library/sysroot/Cargo.toml
+@@ -16,11 +16,10 @@ doc = false
+ proc_macro = { path = "../proc_macro", public = true }
+ profiler_builtins = { path = "../profiler_builtins", optional = true }
+ std = { path = "../std", public = true }
+-test = { path = "../test", public = true }
+ 
+ # Forward features to the `std` crate as necessary
+ [features]
+-default = ["panic-unwind"]
++default = []
+ backtrace = ["std/backtrace"]
+ backtrace-trace-only = ["std/backtrace-trace-only"]
+ compiler-builtins-c = ["std/compiler-builtins-c"]
+diff --git a/library/unwind/Cargo.toml b/library/unwind/Cargo.toml
+index f02744a..fc164c4 100644
+--- a/library/unwind/Cargo.toml
++++ b/library/unwind/Cargo.toml
+@@ -19,9 +19,6 @@ core = { path = "../rustc-std-workspace-core", package = "rustc-std-workspace-co
+ [target.'cfg(not(all(windows, target_env = "msvc")))'.dependencies]
+ libc = { version = "0.2.140", features = ['rustc-dep-of-std'], default-features = false }
+ 
+-[target.'cfg(target_os = "xous")'.dependencies]
+-unwinding = { version = "0.2.7", features = ['rustc-dep-of-std', 'unwinder', 'fde-custom'], default-features = false }
+-
+ [features]
+ 
+ # Only applies for Linux and Fuchsia targets

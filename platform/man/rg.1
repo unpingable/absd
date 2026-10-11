@@ -1,0 +1,138 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 8, 2026
+.Dt RG 1
+.Os ABSD
+.Sh NAME
+.Nm rg
+.Nd search files for a pattern (ripgrep)
+.Sh SYNOPSIS
+.Nm
+.Op Ar options
+.Ar pattern
+.Op Ar path ...
+.Nm
+.Op Ar options
+.Ar pattern
+.Fl
+.Sh DESCRIPTION
+.Nm
+is ripgrep 15.2.0, built unmodified from its published source.
+It searches the named files, or the named directories recursively, for
+lines matching a regular expression and prints them.
+There is no
+.Nm grep
+on ABSD;
+.Nm
+is the search tool.
+.Pp
+What has been qualified on ABSD (the matrix in
+.Pa scripts/cmds-matrix.py ) :
+.Bl -bullet
+.It
+one file, several files in the order given, and a directory tree
+.Pq with Fl -sort Ar path
+with the usual flags
+.Fl n , Fl c , Fl l , Fl i , Fl o , Fl a ,
+and
+.Fl e ;
+.It
+standard input, when the path is written as
+.Ql - ;
+.It
+the exit status: 0 when a line matched, 1 when none did, 2 for an error
+(a missing path, a bad flag, no pattern), which the shell reports as
+.Ql absd-sh: rg: exit status Ar n ;
+.It
+a binary file (one holding a NUL byte) named on the command line is reported
+as
+.Ql binary file matches
+and skipped silently in a tree walk;
+.Fl a
+searches it as text.
+.El
+.Pp
+Everything else ripgrep can do is upstream behaviour that has merely not
+been exercised here; it is not refused, but it is not qualified either.
+.Sh DIFFERENCES FROM LINUX
+.Bl -bullet
+.It
+Standard input is searched only when named as
+.Ql - .
+Without a path,
+.Nm
+cannot tell on ABSD that its standard input is a pipe (ripgrep's test for
+that exists only for Unix and Windows) and searches the working directory
+instead.
+So write
+.Ql cat f | rg pattern - ,
+never
+.Ql cat f | rg pattern .
+.It
+There are no threads.
+.Nm
+notices and uses one; with an explicit
+.Fl j
+greater than one on a directory it stops with
+.Ql rg: unsupported platform ,
+status 2.
+.It
+Standard output is never a terminal, so there is no colour, no grouping of
+matches under a file name, and no paging; the output is the
+.Ql file:line
+form, as under a pipe on Linux.
+.It
+The text after an I/O error is the ABSD message
+.Pq Ql ABSD path not found ,
+not
+.Ql \&No such file or directory .
+.It
+Files are not memory-mapped (there is no such mechanism); every file is
+read through the file server, so a large tree takes time.
+.It
+.Nm
+is about 2.3 MB and, like every program, is read whole through the file
+server before it starts: it starts more slowly than the native commands
+(1 to 3 s under QEMU TCG, where a native command takes 0.1 s); see
+.Xr intro 1 .
+.El
+.Sh EXAMPLES
+Lines of a file:
+.Bd -literal -offset indent
+absd$ rg -n "line 1[0-9]" /etc/lines.txt
+10:line 10
+11:line 11
+.Ed
+.Pp
+A log under
+.Pa /var/log
+.Pq Xr afterboot 8 :
+.Bd -literal -offset indent
+absd$ rg -c "session" /var/log/sshd
+absd$ rg -n "RECOVERY|ESCALATED" /var/log
+.Ed
+.Pp
+Which files under a directory mention something, in path order:
+.Bd -literal -offset indent
+absd$ rg -l --sort path operator /home/operator
+.Ed
+.Pp
+Standard input, in a pipeline:
+.Bd -literal -offset indent
+absd$ cat /etc/network.conf | rg -i address -
+absd$ rg -o "row 000[0-9][0-9]" /etc/big.txt | wc -l
+.Ed
+.Pp
+From the host, in one command, with the exit status as ripgrep's:
+.Bd -literal -offset indent
+$ ssh -p 2222 operator@127.0.0.1 rg -c started /var/log/fsd
+.Ed
+.Sh EXIT STATUS
+0 when at least one line matched, 1 when none did, 2 on an error.
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr intro 1 ,
+.Xr filesystem 7
+.Pp
+The upstream manual,
+.Ql rg --help ,
+describes every flag; only what this page lists has been exercised on ABSD.

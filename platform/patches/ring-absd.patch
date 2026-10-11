@@ -1,0 +1,18 @@
+diff --git a/build.rs b/build.rs
+index 9843ad8..a983a72 100644
+--- a/build.rs
++++ b/build.rs
+@@ -195,6 +195,13 @@ const ASM_TARGETS: &[AsmTarget] = &[
+         arch: ARM,
+         perlasm_format: "linux32",
+     },
++    // ABSD: static ELF64 executables with the System V x86_64 calling
++    // convention, so the pregenerated ELF assembly is the right code.
++    AsmTarget {
++        oss: &["absd"],
++        arch: X86_64,
++        perlasm_format: "elf",
++    },
+     AsmTarget {
+         oss: APPLE_ABI,
+         arch: AARCH64,

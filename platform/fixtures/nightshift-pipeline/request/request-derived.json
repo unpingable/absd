@@ -1,0 +1,32 @@
+{
+  "ag_subject_digest": "sha256:fe1b76a742122a28492ad6431b464323682c053c6ba45b9843aa1b2780c8bf3c",
+  "artifact_ids": [
+    "sha256:bddd0a9e1e29fad5c066ab0fb3cfd6c32408e6f1ad8d3f38ec79235a5a83bbd3"
+  ],
+  "campaign": "sha256:70856fb0c47c639c1a74208a2aa39efa4561279a39767e833f243dfe5ad8db93",
+  "diagnostic_inputs_id": "sha256:d92a3a2174538ea83a214038c4453555c697792c0add4039f753ce211e2fd530",
+  "evaluated_at": "2026-10-10T23:16:28Z",
+  "evaluated_at_unix_ms": 1791674188000,
+  "expected_state": "explicitly_absent",
+  "nq_source_id": "nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f",
+  "observation": "sha256:7520d161729d747faacceefa721354374fa04136ed7d3158bec9ed4efeb273ea",
+  "occurrence": "4c2a1f0e-9d3b-4e7a-8b6c-5d4e3f2a1b0c",
+  "policy_id": "sha256:5f5ab8b2d51f7d68f75bbdf39a64e50e0527459cb1f2a8ebd506a17acb24cf2c",
+  "posture_without_support": {
+    "assessment_reason": "a verdict-relevant NQ or dependency clock is unqualified (absolute_clock_quality_unqualified): the local Linux wall clock has no qualified finite UTC-error bound",
+    "assessment_standing": "clock_unqualified",
+    "current": false,
+    "headline": "incomplete",
+    "recurrence_reason": "the exact completed current slot remains within its standing window",
+    "recurrence_standing": "current"
+  },
+  "request_id": "sha256:0bedde89f818a7aca4510df83b400d3080a340c6e778e18657d46032e0ae8c10",
+  "request_sha256": "sha256:614648fdab7ba50e754e1dbde187e9bc4fa3268f801528e5b186de6b9a41475b",
+  "schema": "laned.request-derived/v1",
+  "scope_id": "sha256:63018d3e968fd57925529baf0dcd668ad7f83994bdf912afd1c88a9a1d206908",
+  "slot_id": "sha256:99ee6e495ad0409140d5b02ab6b771762c3aa4e21ebba7088f4f45c45a4e2603",
+  "slot_latest_admissible": "2026-10-10T23:21:20Z",
+  "slot_nominal_due_at": "2026-10-10T23:16:20Z",
+  "subject_id": "host:local",
+  "vantage_id": "nq.vantage.local.nq-store-genesis:26373050-17aa-4ed9-8a41-cc27f3bcfb1f.host-local"
+}

@@ -1,0 +1,187 @@
+# Known obligations, decisions and limits. Each stays here until resolved, so
+# a release starts from this list and not from a fresh investigation.
+#
+# status:     open | resolved | latent (applies once its condition appears)
+# kind:       mechanical | owner-decision | counsel | note
+# applies_to: source (publishing this repository), binary (distributing an
+#             image), site (wording on absd.dev that depends on a fact here)
+# detect:     optional. exists/missing {path}; grep/grep-absent {files,
+#             pattern, max}; inventory {column, values, max}; private-names.
+#             "max" is the accepted count: growth past it fails the check.
+# origin:     the review that raised it.
+
+[[obligation]]
+id = "LIC-FIRST-PARTY"
+title = "No licence has been chosen for ABSD's own code; the repository has no LICENSE file"
+kind = "owner-decision"
+applies_to = ["source", "binary"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10: owner decision, Apache-2.0 only for first-party source; recorded in provenance.toml, REUSE.toml, LICENSE and docs/SOURCE-LICENSING.md. The copyright line is not decided and files carry no header."
+detect = { kind = "spdx", category = "unknown-licensing" }
+note = "provenance.toml records first-party files as license = \"pending\"; scripts/spdx-check.py --mode release fails on them until the owner decides. Not selected by tooling."
+
+[[obligation]]
+id = "LIC-AI-AUTHORSHIP"
+title = "Copyright status of AI-generated code, and what a licence over it conveys, is unresolved"
+kind = "counsel"
+applies_to = ["source", "binary"]
+origin = "audit-20261010"
+status = "open"
+
+[[obligation]]
+id = "README-CLEAN-ROOM"
+title = "The README called ABSD a clean-room system; no separation procedure was ever followed"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, commit 590233e: the README now describes the method as it was"
+detect = { kind = "grep", files = ["README.md", "AGENTS.md", "HANDOFF.md"], pattern = "(?i)clean[- ]room" }
+
+[[obligation]]
+id = "AGENT-SOURCE-POLICY"
+title = "Agents have a written rule for consulting and incorporating existing source"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10, this lane: docs/PROVENANCE.md states the rule and AGENTS.md points to it"
+detect = { kind = "grep-absent", files = ["AGENTS.md"], pattern = "docs/PROVENANCE\\.md" }
+
+[[obligation]]
+id = "TOOLCHAIN-PIN"
+title = "provenance/config.toml names the Rust 1.98.0 notice set; it must change with rust-toolchain.toml"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "baseline-20261010"
+status = "resolved"
+resolved = "2026-10-10: config.toml and rust-toolchain.toml both name 1.98.0"
+detect = { kind = "grep-absent", files = ["rust-toolchain.toml"], pattern = "1\\.98\\.0" }
+
+# ------------------------------------------------------------ unmerged work
+
+[[obligation]]
+id = "I219-ON-MERGE"
+title = "The I219 driver adapts Intel's BSD-3-Clause code from FreeBSD (kept, with Intel's attribution: owner decision 2026-10-10): on merge, add LICENSES/BSD-3-Clause.txt, confirm the provenance.toml rule for src/i219.rs matches, carry Intel's notice in the image notices, and have absd.dev's sentence \"not derived from BSD source\" revised. The three sibling files are first-party by derivation"
+kind = "mechanical"
+applies_to = ["source", "binary", "site"]
+origin = "audit-20261010"
+status = "latent"
+detect = { kind = "exists", path = "src/i219.rs" }
+
+[[obligation]]
+id = "XHCI-LEGACY-MASKS-ON-MERGE"
+title = "The xHCI legacy-handoff masks are structured like a Linux (GPL-2.0) header though the text differs and the fields are the specification's: on merge, cite the specification's USBLEGCTLSTS field table beside them"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "latent"
+detect = { kind = "exists", path = "src/xhci_legacy.rs" }
+
+# ------------------------------------------------------------ binaries
+
+[[obligation]]
+id = "NOTICE-IMAGE"
+title = "Built images carry no third-party notices: the Rust library notice set applies to the kernel and every user program"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+
+[[obligation]]
+id = "GRUB-SOURCE"
+title = "Every x86 ISO carries GRUB binaries (GPL-3.0-or-later): corresponding source for the exact host build must be available, or GRUB left out"
+kind = "owner-decision"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+note = "grub-mkrescue --fonts= --locales= --install-modules= reduces what is carried without removing the obligation. Whether GRUB beside ABSD on one ISO is mere aggregation is a question for counsel."
+
+[[obligation]]
+id = "UNIFONT"
+title = "Every x86 ISO carries GNU Unifont (unicode.pf2) with no licence text collected"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+detect = { kind = "inventory", column = "texts", values = ["MISSING"], max = 1 }
+
+[[obligation]]
+id = "REPRODUCIBLE-ISO"
+title = "grub-mkrescue output is not byte-reproducible and the host GRUB version is not pinned, so an ISO's exact third-party content is not fixed by a commit"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+
+[[obligation]]
+id = "REUSE-COMPLIANCE"
+title = "The repository is not REUSE-compliant and makes no such claim: first-party files carry no copyright line"
+kind = "note"
+applies_to = ["source"]
+origin = "spdx-20261010"
+status = "open"
+
+[[obligation]]
+id = "EMBEDDED-PLATFORM"
+title = "A served image embeds platform programs: the platform repository's inventory and notices apply to it as well"
+kind = "note"
+applies_to = ["binary"]
+origin = "audit-20261010"
+status = "open"
+
+# ------------------------------------------------------------ disclosure
+
+[[obligation]]
+id = "DISCLOSE-PATHS"
+title = "Tracked files, almost all documents and receipts, contain development-machine paths (a disclosure matter, harmless while private)"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "open"
+detect = { kind = "grep", files = ["*"], exclude = ["provenance/*", "scripts/provenance.py", "scripts/test_provenance.py", "docs/PROVENANCE.md"], pattern = "(/home/[a-z_][a-z0-9_-]*/|/data/git/)" }
+
+[[obligation]]
+id = "DISCLOSE-BUILD-PATHS"
+title = "No build input names a development-machine path (keep it so)"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "resolved"
+resolved = "2026-10-10: none present at the baseline (audit and the hygiene pass)"
+detect = { kind = "grep", files = ["Cargo.toml", "*/Cargo.toml", "Makefile", "build.rs", "rust-toolchain.toml"], pattern = "(/home/[a-z_][a-z0-9_-]*/|/Users/|/data/git/)" }
+
+[[obligation]]
+id = "DISCLOSE-PRIVATE-NAMES"
+title = "Tracked files contain the development host's name and other private names"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "open"
+detect = { kind = "private-names", exclude = ["provenance/*"] }
+
+[[obligation]]
+id = "DISCLOSE-LAN-AND-LINKS"
+title = "Documents contain private LAN addresses and links to a private project board"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "baseline-20261010"
+status = "open"
+detect = { kind = "grep", files = ["*"], exclude = ["provenance/*"], pattern = "192\\.168\\.[0-9]+\\.[0-9]+|github\\.com/(users|orgs)/[^ )]*/projects" }
+
+[[obligation]]
+id = "DISCLOSE-HISTORY"
+title = "History and lane branches hold private paths, host names, receipts of the host's state and 47 built ISO/ELF images (with GRUB inside): publish a curated snapshot, not the history"
+kind = "owner-decision"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "open"
+
+[[obligation]]
+id = "AUTHORSHIP-RECORD"
+title = "29 early commits carry an AI co-author trailer and the rest do not, so the commit log is not a record of authorship: a source release needs a project-level statement"
+kind = "owner-decision"
+applies_to = ["source"]
+origin = "audit-20261010"
+status = "open"

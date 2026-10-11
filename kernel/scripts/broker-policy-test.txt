@@ -1,0 +1,12 @@
+# Workflow policy of the broker matrix (scripts/broker-test.sh).
+slots worker 4
+slots owner-3 1
+allow worker /owners/echo owner-1 read 1 echo
+allow worker /owners/fault owner-2 none 0 fault
+allow worker /owners/exit owner-2 none 1 exit
+allow worker /owners/sleep owner-2 none 1 sleep
+allow worker /owners/nest owner-3 none 0 nest
+allow worker /owners/nest-hold owner-3 none 0 nest-hold
+allow worker /owners/legacy owner-4 none 0
+allow owner-3 /owners/echo owner-1 read 1 echo
+allow owner-3 /owners/sleep owner-2 none 1 sleep

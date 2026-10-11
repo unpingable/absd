@@ -1,0 +1,47 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt DATE 1
+.Os ABSD
+.Sh NAME
+.Nm date
+.Nd print the date and time
+.Sh SYNOPSIS
+.Nm
+.Op Fl u
+.Op Cm +%s
+.Sh DESCRIPTION
+.Nm
+prints the time now, as the kernel reads it from the machine's real-time
+clock, in the form
+.Bd -literal -offset indent
+Sun Sep 27 05:34:12 UTC 2026
+.Ed
+.Pp
+The time is always UTC and always whole seconds: ABSD declares the
+real-time clock to hold UTC, has no time zones, and the clock has no
+finer resolution.
+.Fl u
+is accepted and changes nothing.
+.Cm +%s
+prints the seconds since 1970-01-01 00:00:00 UTC instead.
+.Pp
+Nothing on ABSD sets or corrects the clock.
+Under QEMU it starts from the host's UTC time
+.Pq Ql -rtc base=utc ,
+the default.
+A physical machine's clock may hold local time, or drift;
+.Nm
+cannot tell.
+.Pp
+The same clock stamps the lines of the logs under
+.Pa /var/log
+.Pq Xr afterboot 8 .
+Files carry no times at all; see
+.Xr filesystem 7 .
+.Sh EXIT STATUS
+0 on success, 1 when the kernel refuses a reading (the clock gave no
+stable, valid value: no time is made up), 2 for any other argument.
+Setting the clock and other formats are not supported.
+.Sh SEE ALSO
+.Xr uptime 1 ,
+.Xr filesystem 7

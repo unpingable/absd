@@ -1,0 +1,30 @@
+# Compatibility probe cases (scripts/compat-matrix.py). One case per line,
+# tab-separated: STDIN PROGRAM ARG... STDIN is - for a null stdin, else a
+# file under /data piped to the child. Every case runs in /data, on ABSD
+# and against the Linux reference build, with an empty environment.
+# divergences.txt lists the cases whose ABSD result differs from Linux.
+-	/bin/basename	/data/tree/sub/b.txt	.txt
+-	/bin/basename	-a	x/y	z/w/
+-	/bin/seq	3
+-	/bin/seq	-s	,	-w	8	11
+-	/bin/seq	1.5	0.25	2.5
+-	/bin/cut	-d	:	-f	1,3	passwd.txt
+-	/bin/cut	-c	2-4	words.txt
+-	/bin/cut	-f1	missing.txt
+-	/bin/fold	-w	12	prose.txt
+-	/bin/nl	-ba	words.txt
+words.txt	/bin/uniq	-c
+-	/bin/uniq	-d	words.txt
+prose.txt	/bin/base64
+-	/bin/base64	-d	prose.b64
+-	/bin/b3sum	prose.txt	blob.bin
+blob.bin	/bin/b3sum
+-	/bin/b3sum	--no-mmap	--length	16	blob.bin
+-	/bin/jsonxf	-i	sample.json
+sample.json	/bin/jsonxf	-m
+-	/bin/rg	-n	--sort	path	needle	tree
+-	/bin/rg	--files	--sort	path	tree
+-	/bin/rg	-c	-i	NEEDLE	prose.txt
+-	/bin/rg	-o	[^\x00-\x7f]+	prose.txt
+-	/bin/rg	-j2	needle	tree
+prose.txt	/bin/rg	-c	needle

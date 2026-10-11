@@ -1,0 +1,236 @@
+# Release-readiness configuration for the ABSD platform (docs/PROVENANCE.md).
+# Read by scripts/provenance.py. Edit by hand; keep it small.
+#
+# Not here: which licence each tracked file is under. That is provenance.toml
+# at the repository root, checked by scripts/spdx-check.py
+# (docs/SOURCE-LICENSING.md). This file holds the reviewed baseline, the
+# policy for third-party dependency licences, and what each artifact contains.
+
+repository = "absd-rust-std"
+main = "main"
+
+# The reviewed baseline: the tree the 2026-10-10 audit assessed. "Unchanged
+# since the baseline" means unchanged since this commit, at the coverage
+# stated below, and nothing stronger.
+[baseline]
+audit = "audit-20261010"
+commit = "b49897b9322156ee8ef82f7daf23409b89e51a7b"
+tree = "86a1b90a66b9fe33d1b228f884580b4b4a11fd8a"
+limits = [
+  "The audit was performed by AI model sessions and challenged by one further AI session. It is not a legal review or an independent human source audit.",
+  "Upstream comparison covered kernel driver files against Linux and FreeBSD only; no platform first-party file was compared with any upstream.",
+  "Absence of markers or of textual overlap is not evidence of independent creation.",
+  "The copyright status of AI-generated code is an open legal question the audit did not resolve.",
+]
+
+[[baseline.coverage]]
+level = "inventoried"
+paths = ["Cargo.lock", "*/Cargo.lock", "pins/*", "vendor/*", "patches/*", "compat/programs.tsv"]
+note = "dependency, vendored and patched material read and attributed to an upstream"
+
+[[baseline.coverage]]
+level = "outlined"
+paths = ["sqlite/*", "ssh/*", "net/*", "scripts/operator_image.py", "scripts/build-*.sh", "scripts/release*.py", "PATCH_AUDIT.md"]
+note = "structure, headers and searches inspected to establish what third-party code is used and what is shipped; not read line by line"
+
+[[baseline.coverage]]
+level = "keyword-sweep"
+paths = ["*"]
+note = "searched for licence, copyright and upstream markers only; not read line by line, not compared with any upstream"
+
+# The target the shipped programs are built for (targets/x86_64-unknown-absd.json
+# and .cargo/config.toml): used to decide which target-specific dependencies apply.
+[target]
+triple = "x86_64-unknown-absd"
+names = []
+
+[target.values]
+target_os = "absd"
+target_arch = "x86_64"
+target_pointer_width = "64"
+target_endian = "little"
+target_env = ""
+target_vendor = "unknown"
+target_feature = ["sse", "sse2"]
+target_has_atomic = ["8", "16", "32", "64", "ptr"]
+panic = "abort"
+getrandom_backend = "rdrand"
+
+# Licences that may be taken without a further decision, in order of
+# preference when upstream offers a choice. A component whose terms offer no
+# alternative from this list needs an entry under [policy.decisions].
+# This list concerns third-party components only. It does not choose a
+# licence for ABSD's own code; that decision is open (obligations.toml).
+[policy]
+prefer = [
+  "MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "0BSD", "Zlib",
+  "Unicode-3.0", "Unicode-DFS-2016", "Unlicense", "CC0-1.0", "BSL-1.0",
+  "Apache-2.0 WITH LLVM-exception",
+]
+
+# Path dependencies outside this repository that are the owner's own projects
+# (not third-party). Any other outside path is reported as unknown.
+owner_projects = ["ag-*", "pulse-*", "nq-*", "nightshift*", "absd-*"]
+
+[policy.decisions]
+# component = "licence taken", for anything the preference order cannot settle.
+
+[scan]
+# Directories whose binary files the project generates itself (fixtures,
+# recorded outputs, test data). New binaries elsewhere need a declaration.
+binary_ok = ["fixtures/*", "fs/testdata/*", "compat/data/*", "docs/*"]
+# Build manifests known to name absolute development paths (obligation
+# PORT-ABSOLUTE-PATHS tracks them; new ones elsewhere fail the check).
+path_ok = ["Cargo.toml", ".cargo/config.toml"]
+
+# ---------------------------------------------------------------- artifacts
+# What a distributed operator image contains (scripts/operator_image.py,
+# scripts/build-operator-image.sh): the boot ISO and the disk image.
+
+[[artifact]]
+name = "operator-image"
+
+  # /bin commands built from the root package. Only the dependencies each
+  # installed binary's sources name are counted (the package also carries
+  # test programs that pull in SQLite, AG and Pulse; those are not installed).
+  [[artifact.unit]]
+  name = "commands"
+  lock = "Cargo.lock"
+  package = "absd-std-probe"
+  evidence = "target/x86_64-unknown-absd/release/deps"
+  bins_from = "scripts/operator_image.py:NATIVE"
+  bins = ["absd_sh"]
+
+  # /bin ports: unmodified crates.io programs, one pinned lock each.
+  [[artifact.unit]]
+  name = "ports"
+  ports = "scripts/operator_image.py:PORTS"
+  table = "compat/programs.tsv"
+  lock = "pins/compat/{crate}-{version}.Cargo.lock"
+  # Staging adds the ABSD runtime to each port as a target dependency; the
+  # pinned lock carries it, the registry manifest does not.
+  roots = ["absd-runtime"]
+  evidence = "../absd-std-staged-compat/target-ports/x86_64-unknown-absd/release/deps"
+  evidence_exact = true
+
+  # sshd and the file server, embedded in the boot ISO.
+  [[artifact.unit]]
+  name = "sshd"
+  lock = "ssh/Cargo.lock"
+  package = "absd-sshd"
+  manifest_dir = "ssh"
+  evidence = "ssh/target/x86_64-unknown-absd/release/deps"
+  evidence_exact = true
+
+  # The Rust standard library as built for the target (-Z build-std with
+  # build-std-features = optimize_for_size; the std patch removes the default
+  # panic-unwind feature). Sources are the pinned toolchain's rust-src.
+  [[artifact.unit]]
+  name = "std"
+  lock = "pins/library.Cargo.lock"
+  package = "std"
+  features = ["optimize_for_size"]
+  roots = ["panic_abort"]
+  sources = "~/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library"
+  manifest_dir = "std"
+  source_id = "rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch"
+  notice_files = [
+    "~/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/share/doc/rust/COPYRIGHT-library.html",
+    "~/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/share/doc/rust/licenses",
+  ]
+
+  # Not Rust dependencies: placed on the ISO by the host's grub-mkrescue.
+  [[artifact.component]]
+  name = "GRUB"
+  version = "host package grub-common"
+  origin = "host-package"
+  license = "GPL-3.0-or-later"
+  use = "included"
+  source = "boot images, modules and locale catalogues copied by grub-mkrescue"
+  notice_files = ["/usr/share/doc/grub-common/copyright", "/usr/share/common-licenses/GPL-3"]
+  actions = [
+    "GPL-3.0: distributing the ISO distributes GRUB binaries; corresponding source for the exact host package build must be offered or accompany it. A notice bundle does not do this.",
+    "Record the host package version (dpkg-query -W grub-common grub-pc-bin grub-efi-amd64-bin) with the release; it is not pinned by this repository.",
+  ]
+
+  [[artifact.component]]
+  name = "GNU Unifont"
+  version = "as shipped in host package grub-common (unicode.pf2)"
+  origin = "host-package"
+  license = "not recorded by the host package (upstream: GPL-2.0-or-later with a font embedding exception; verify for the shipped version)"
+  use = "included"
+  source = "/usr/share/grub/unicode.pf2 copied by grub-mkrescue"
+  notice_files = []
+  actions = [
+    "Separately licensed font carried on the ISO. The host package's copyright file does not mention it, so no licence text is collected: obtain the text for the shipped version, or build the ISO without the font (grub-mkrescue --fonts=).",
+  ]
+
+  [[artifact.component]]
+  name = "ABSD kernel and init"
+  version = "kernel repository, pinned commit"
+  origin = "first-party"
+  license = ""
+  use = "included"
+  source = "see the kernel repository's provenance/inventory/kernel-image.tsv for its third-party content (Rust core/alloc, console font)"
+  notice_files = []
+
+# Programs built only for the test matrices (NQ, AG, Pulse, Nightshift and
+# their probes). Not distributed and not inventoried crate by crate; listed
+# so that the notices their sources carry are not lost if one ever ships.
+# The in-tree material that goes into them is in provenance.toml
+# (in-artifacts = ["workload-images"]).
+[[artifact]]
+name = "workload-images"
+inventoried = false
+
+  # The extended integration programs (integration/): test programs that run
+  # Pulse and AG code on ABSD. Never installed on an operator image; like
+  # the rest of this artifact, not inventoried crate by crate.
+  [[artifact.unit]]
+  name = "integration-programs"
+  lock = "integration/Cargo.lock"
+  listed = false
+  note = "resolving it needs the Pulse and AG sources, which a checkout of this repository alone does not have; the programs are test programs and are never distributed"
+
+  [[artifact.component]]
+  name = "Pulse (constellation-monitor)"
+  version = "public cut at 81c2354"
+  origin = "owner-project"
+  license = "Apache-2.0"
+  use = "included"
+  source = "the owner's project, published under Apache-2.0 with a NOTICE file; built with patches/pulse-*.patch"
+  notice_files = ["provenance/upstream-notices/pulse.NOTICE", "LICENSES/Apache-2.0.txt"]
+  actions = ["Apache-2.0 section 4(d): carry the NOTICE text and the licence with any image or source tree that includes the Pulse programs."]
+
+  [[artifact.component]]
+  name = "Nightshift"
+  version = "e2675dd"
+  origin = "owner-project"
+  license = "Apache-2.0"
+  use = "included"
+  source = "the owner's project, Apache-2.0 with a NOTICE file; built with patches/nightshiftd-absd.patch"
+  notice_files = ["provenance/upstream-notices/nightshift.NOTICE", "LICENSES/Apache-2.0.txt"]
+  actions = ["Apache-2.0 section 4(d): carry the NOTICE text and the licence with any image or source tree that includes the Nightshift programs."]
+
+  [[artifact.component]]
+  name = "AG"
+  version = "21c8da0"
+  origin = "owner-project"
+  license = "Apache-2.0"
+  use = "included"
+  source = "the owner's project, Apache-2.0, no NOTICE file; built with patches/ag-*.patch"
+  notice_files = ["LICENSES/Apache-2.0.txt"]
+
+  [[artifact.component]]
+  name = "NQ"
+  version = "8057441"
+  origin = "owner-project"
+  license = "Apache-2.0"
+  use = "included"
+  source = "the owner's project, Apache-2.0, no NOTICE file; built with patches/nq-absd.patch"
+  notice_files = ["LICENSES/Apache-2.0.txt"]
+
+# The published website is described by its own audit baseline. Its
+# deployment is not coupled to these checks.
+[website]
+statement = "absd.dev was audited at main 52290eb / gh-pages 4cd4e67 (audit-20261010): no blocking finding. It describes ABSD and distributes none of it, so OS licensing decisions do not gate it. Site wording that depends on OS facts is listed below."

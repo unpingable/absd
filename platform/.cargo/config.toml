@@ -1,0 +1,13 @@
+[unstable]
+build-std = ["core", "alloc", "std", "panic_abort"]
+build-std-features = ["optimize_for_size"]
+
+[build]
+target = "x86_64-unknown-absd"
+
+[target.x86_64-unknown-absd]
+rustflags = [
+  "-C", "link-arg=-Tuser-linker.ld",
+  "-C", "link-arg=--gc-sections",
+  "--cfg", "getrandom_backend=\"rdrand\"",
+]

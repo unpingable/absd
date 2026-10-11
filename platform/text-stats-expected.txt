@@ -1,0 +1,5 @@
+bytes=34 lines=1 words=6 unique=3
+alpha=3
+beta=2
+gamma=1
+ABSD RUST TEXT STATS OK

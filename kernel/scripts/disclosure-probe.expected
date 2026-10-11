@@ -1,0 +1,29 @@
+DISCLOSE map-address ok user-heap=true
+DISCLOSE info-self ok bytes=32 unwritten=0 guards=true
+DISCLOSE info-child ok bytes=32 unwritten=0 guards=true
+DISCLOSE cell-read ok bytes=16 unwritten=0 guards=true
+DISCLOSE pipe-info ok bytes=32 unwritten=0 guards=true
+DISCLOSE frame-stats ok bytes=32 unwritten=0 guards=true
+DISCLOSE resource-census ok bytes=40 unwritten=0 guards=true
+DISCLOSE boot-id ok unsupported=-38 untouched=true
+DISCLOSE wait-exited ok bytes=32 unwritten=0 guards=true
+DISCLOSE wait-faulted ok bytes=32 unwritten=0 guards=true
+DISCLOSE info-refused ok straddle=-14 kept=true readonly=-14
+DISCLOSE cell-read-refused ok straddle=-14 kept=true readonly=-14
+DISCLOSE pipe-info-refused ok straddle=-14 kept=true readonly=-14
+DISCLOSE frame-stats-refused ok straddle=-14 kept=true readonly=-14
+DISCLOSE census-refused ok straddle=-14 kept=true readonly=-14
+DISCLOSE wait-refused ok straddle=-14 kept=true readonly=-14
+DISCLOSE wait-refused-keeps-child ok info-after=0
+DISCLOSE pipe-read-refused ok straddle=-14 kept=true readonly=-14
+DISCLOSE pipe-read-refused-consumes-nothing ok available=16
+DISCLOSE process-handle-not-inherited ok spawn=-9
+DISCLOSE stale-process-handle ok info=-9 wait=-9 successor-info=0
+DISCLOSE stale-cell-handle ok stale=-9 successor=(0,7)
+DISCLOSE stale-pipe-handle ok stale=-9 successor-available=0
+DISCLOSE child-entry-registers ok spawn=1 exit=42
+DISCLOSE fault-identity-map ok vector=14 address=0x100000 error=0x5
+DISCLOSE fault-user-gap ok vector=14 address=0x8100000000 error=0x4
+DISCLOSE fault-kernel-half ok vector=14 address=0xffff800000000000 error=0x4
+DISCLOSE fault-noncanonical ok vector=14 address=0x8000000000000000 error=0x5
+DISCLOSE OK

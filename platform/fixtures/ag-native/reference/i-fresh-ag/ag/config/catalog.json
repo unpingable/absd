@@ -1,0 +1,1 @@
+{"entries":{"example.exact-work/v1":{"precondition":{"forbidden":[],"required":[]},"scope":"sha256:63018d3e968fd57925529baf0dcd668ad7f83994bdf912afd1c88a9a1d206908","subject":"sha256:fe1b76a742122a28492ad6431b464323682c053c6ba45b9843aa1b2780c8bf3c","work_schema":"example.exact-work/v1"}},"schema":"ag.governed-loop.exact-work-catalog/v1"}

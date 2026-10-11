@@ -1,0 +1,46 @@
+version = 1
+
+# REUSE annotations for files whose licensing is established and which cannot
+# carry a header of their own. Convention: docs/SOURCE-LICENSING.md.
+#
+# Upstream's own statements, and one annotation for first-party ABSD files.
+# First-party files carry no copyright line, so this repository does not
+# pass `reuse lint` and does not claim REUSE compliance.
+
+# First-party ABSD source: Apache-2.0 (owner decision 2026-10-10,
+# docs/SOURCE-LICENSING.md). Files carry no header; this annotation and
+# provenance.toml are the record. Later, more specific annotations win.
+[[annotations]]
+path = "**"
+SPDX-License-Identifier = "Apache-2.0"
+
+# tempfile 3.27.0. The copyright line is the one in upstream's LICENSE-MIT;
+# two files also keep their own "The Rust Project Developers" notices.
+# src/file/imp/absd.rs is an ABSD addition and is deliberately not listed.
+[[annotations]]
+path = [
+    "vendor/tempfile/*",
+    "vendor/tempfile/src/*.rs",
+    "vendor/tempfile/src/dir/**",
+    "vendor/tempfile/src/file/mod.rs",
+    "vendor/tempfile/src/file/imp/mod.rs",
+    "vendor/tempfile/src/file/imp/other.rs",
+    "vendor/tempfile/src/file/imp/unix.rs",
+    "vendor/tempfile/src/file/imp/windows.rs",
+    "vendor/tempfile/tests/**",
+]
+SPDX-FileCopyrightText = "2015 Steven Allen"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# rust-lang/literal-escaper v0.0.5 by way of proc-macro2 1.0.106. Neither
+# upstream states a copyright line (both LICENSE-MIT files begin at the
+# permission notice), so none is given here.
+[[annotations]]
+path = "vendor/rustc-literal-escaper/**"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# The owner's Apache-2.0 projects' NOTICE files, carried verbatim.
+[[annotations]]
+path = "provenance/upstream-notices/*.NOTICE"
+SPDX-FileCopyrightText = "2026 James Beck"
+SPDX-License-Identifier = "Apache-2.0"

@@ -1,0 +1,81 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt NETWORK.CONF 5
+.Os ABSD
+.Sh NAME
+.Nm network.conf
+.Nd the machine's IPv4 address
+.Sh SYNOPSIS
+.Pa /etc/network.conf
+.Sh DESCRIPTION
+The SSH server,
+.Nm sshd ,
+owns the machine's one network card
+.Pq Xr e1000 4
+and its IPv4 stack.
+It reads
+.Nm
+once, when it starts, through the file server; changing the file takes
+effect at the next boot.
+.Pp
+Each line is a keyword and one value, separated by spaces or tabs.
+Blank lines and lines whose first word begins with
+.Ql #
+are ignored.
+Each keyword may appear once:
+.Bl -tag -width "netmask mask"
+.It Cm address Ar a.b.c.d
+The machine's address.
+Required.
+It must be a host address of its network (not the network or broadcast
+address, not 0, 127, or multicast).
+.It Cm netmask Ar a.b.c.d
+The network's mask, contiguous, 1 to 30 bits
+.Pq for example Li 255.255.255.0 .
+Required.
+.It Cm gateway Ar a.b.c.d
+The router for every other destination: another host of the same network.
+Optional; without it only the local network is reachable.
+.El
+.Pp
+Addresses are dotted decimal, four parts, no leading zeros.
+There is one interface, one address, and no DHCP, DNS, IPv6, or routes
+beyond the one gateway.
+.Pp
+Without the file
+.Nm sshd
+uses QEMU's user network: address 10.0.2.15, netmask 255.255.255.0,
+gateway 10.0.2.2, and says so on the console.
+The operator image installs the file with these same values.
+.Sh DIAGNOSTICS
+At every start
+.Nm sshd
+prints on the console, and writes to
+.Pa /var/log/sshd ,
+what it uses and where from:
+.Bd -literal -offset indent
+sshd: network 10.0.2.15/24 gateway 10.0.2.2 (/etc/network.conf)
+.Ed
+.Pp
+A file that breaks any rule above is refused: an unknown keyword, a
+keyword twice, a missing or extra value, a value that is not an address of
+the right kind, a gateway outside the network, a byte that is not
+printable ASCII (a carriage return included), or more than 4096 bytes.
+.Nm sshd
+then does not start, the boot fails, and the console says why:
+.Bd -literal -offset indent
+sshd: /etc/network.conf: line 3: gateway 10.0.3.1 is not another
+host of 10.0.2.20/24; fix the file (network.conf(5), sshd.conf(5),
+afterboot(8)); sshd is not running
+.Ed
+.Pp
+No default replaces a value the operator wrote.
+Sessions cannot write
+.Pa /etc ;
+fix the file on the halted machine's image with
+.Ql build-operator-image.sh --reconfigure
+.Pq Xr afterboot 8 .
+.Sh SEE ALSO
+.Xr e1000 4 ,
+.Xr sshd.conf 5 ,
+.Xr afterboot 8

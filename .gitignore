@@ -1,0 +1,7 @@
+# The platform build stages patched trees and disposable kernel copies
+# beside platform/, and both builds write inside their own directories.
+/absd-std-staged-*/
+/absd-kernel-std-run*/
+/out/
+target/
+build/

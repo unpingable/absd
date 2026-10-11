@@ -1,0 +1,7 @@
+COMPOSE denied-write status=Rights target-version=0 value=42 unchanged=true
+COMPOSE stale-version status=Stale target=unchanged
+COMPOSE partial-grant status=Rights source-rights=unchanged census=equal
+COMPOSE stale-token same-slot=true replacement-value=77 unchanged=true census=equal
+COMPOSE handle-limit repeated=TooManyHandles target=unchanged reclaimed=exact
+COMPOSE effects verified=true final-census=equal
+COMPOSE OK

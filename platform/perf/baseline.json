@@ -1,0 +1,12 @@
+{
+ "image.bytes": 1534144,
+ "image.ms": 25689,
+ "pipe.ms": 5.32,
+ "read.kbps": 65.606,
+ "source": "kernel integrate/usability f8c781c (dev profile, unoptimized), platform integrate/usability e7d5735 + fsd-probe modes; QEMU TCG, run-perf-matrix.sh with ABSD_PERF_RECORD, median of 3",
+ "start.basename": 7.743,
+ "start.native": 2.921,
+ "start.nl": 21.821,
+ "start.port": 21.821,
+ "stat.ms": 10.02
+}

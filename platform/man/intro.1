@@ -1,0 +1,250 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 8, 2026
+.Dt INTRO 1
+.Os ABSD
+.Sh NAME
+.Nm intro
+.Nd introduction to ABSD and its commands
+.Sh DESCRIPTION
+You are in a session on ABSD, a small x86-64 operating system.
+The session is an SSH connection to
+.Nm sshd ,
+the SSH server, which started
+.Xr absd-sh 1
+for you (or, for
+.Ql ssh host command ,
+started that one command directly).
+Everything you read or write goes through one file server; see
+.Xr filesystem 7 .
+.Pp
+ABSD is not a Unix.
+Programs are started, never forked; a process holds handles with rights
+instead of file descriptors and user IDs; there are no signals, no users,
+and no permission bits.
+The session is a single operator identity whose authority is fixed by
+.Nm sshd
+when the session starts; everything the session runs has that authority or
+less.
+See
+.Xr process 7
+and
+.Xr handles 7 .
+.Pp
+Start with
+.Xr afterboot 8 .
+.Ss Commands under /bin
+A bare command name runs
+.Pa /bin/ Ns Ar name .
+There is no
+.Ev PATH .
+The platform's own programs:
+.Pp
+.Bl -tag -width "sha256sum" -compact
+.It Nm cat
+copy files, or standard input, to standard output
+.It Nm cp
+copy files and directories
+.Pq Fl r
+.It Nm date
+the date and time, UTC; see
+.Xr date 1
+.It Nm df
+filesystem space, and this session's mounts
+.It Nm echo
+print arguments
+.It Nm head
+first lines or bytes of files
+.It Nm ls
+list directories;
+.Fl l
+adds kind, read-only flag, links, and size
+.It Nm man
+print a manual page; see
+.Xr man 1
+.It Nm mkdir
+make directories
+.Pq Fl p
+.It Nm mv
+rename, or move into a directory, in one filesystem commit
+.It Nm printenv
+print the environment (empty in an SSH session)
+.It Nm pwd
+print the working directory
+.It Nm release
+the release this machine is serving; see
+.Xr release 1
+.It Nm rm
+remove files, and with
+.Fl r
+directories
+.It Nm sha256sum
+SHA-256 of files, or check a list
+.Pq Fl c
+.It Nm stat
+what the filesystem records about an object
+.It Nm sync
+commit everything the file server has accepted
+.It Nm sysinfo
+the release, this boot, the kernel's memory and object counts, and the
+filesystem's space, live; see
+.Xr sysinfo 1
+.It Nm tail
+last lines or bytes of files
+.It Nm uname
+system name, and with
+.Fl a
+or
+.Fl r
+the release id
+.It Nm uptime
+time since boot, and this boot's identity; see
+.Xr uptime 1
+.It Nm wc
+line, word, and byte counts
+.El
+.Pp
+Unmodified uutils 0.12.0 programs, built from their published sources:
+.Nm basename ,
+.Nm base64 ,
+.Nm cut ,
+.Nm fold ,
+.Nm nl ,
+.Nm seq ,
+and
+.Nm uniq .
+They behave as on Linux.
+And
+.Nm rg ,
+ripgrep 15.2.0, likewise unmodified: the search tool (there is no
+.Nm grep ) ;
+see
+.Xr rg 1
+for what differs here, in particular that standard input must be named as
+.Ql - .
+Each port is 0.5 to 2.3 MB, and a program is read whole through the file
+server before it starts, so they start more slowly than the native commands.
+.Pp
+.Nm man
+has pages only for the topics listed under
+.Sx SEE ALSO ;
+most commands have no page of their own.
+.Ss Deliberately absent
+These are not missing by accident; each would need a mechanism or an
+authority decision ABSD does not have:
+.Bl -bullet
+.It
+.Nm kill ,
+.Nm top ,
+a
+.Pa /bin/ps :
+a process can see only itself and its own children; the shell's
+.Xr ps 1
+builtin asks
+.Nm sshd
+for this session's processes only.
+.It
+.Nm chmod ,
+.Nm chown ,
+.Nm touch ,
+.Nm ln :
+there are no owners, modes, or links, and nothing sets a file's time
+(the one time a file records is described in
+.Xr filesystem 7 ) .
+.It
+.Nm syslogd ,
+.Nm cron ,
+.Pa /etc/rc.d :
+each program that logs writes its own file under
+.Pa /var/log ;
+nothing runs on a schedule; the boot starts a fixed set of programs.
+.It
+.Nm mount :
+a session's mounts are fixed by
+.Nm sshd .
+.It
+Users, logins, and
+.Nm su :
+one operator identity; multi-session is not multi-user.
+.It
+A screen editor
+.Pq Nm vi , Nm nano :
+a program's keyboard is its standard input, which on a terminal session
+the SSH server edits a line at a time (no raw mode, no window size);
+see
+.Xr absd-sh 1 .
+.It
+.Nm fork ,
+.Nm exec ,
+signals, job control, process groups: see
+.Xr process 7 .
+.El
+.Pp
+There is no text editor and no pager (above).
+Write files with
+.Nm echo
+and
+.Ql > ,
+or with
+.Nm cp ;
+read long output a part at a time with
+.Nm head
+and
+.Nm tail ,
+or pick lines out of it with
+.Nm rg .
+.Ss Copying files
+There is no
+.Nm scp
+or
+.Nm sftp
+(the SSH server has no subsystems).
+Copy with a command and redirection instead, from the host:
+.Bd -literal -offset indent
+$ ssh -p 2222 operator@127.0.0.1 'cat > /home/operator/f' < f
+$ ssh -p 2222 operator@127.0.0.1 cat /home/operator/f > f
+.Ed
+.Pp
+Both are byte-exact for any file (binary included), as long as no terminal
+is requested (no
+.Fl t ) .
+See
+.Xr afterboot 8 .
+.Sh QUALIFICATION
+What these pages describe is the qualified system: the ABSD kernel's
+.Ql net fsd
+durable boot under QEMU (x86-64, TCG,
+.Ql -cpu max,vendor=GenuineIntel,+rdrand ,
+one e1000 network card, one IDE disk image) running the file server
+.Nm absd-fsd
+and
+.Nm sshd ,
+reached from the host with OpenSSH.
+The platform's
+.Pa scripts/check-all.sh
+qualifies it.
+No ABSD boot has run on physical hardware.
+The operator image is built and booted by the platform's
+.Pa scripts/build-operator-image.sh
+and
+.Pa scripts/boot-operator.sh ;
+see
+.Xr afterboot 8 .
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr date 1 ,
+.Xr man 1 ,
+.Xr ps 1 ,
+.Xr release 1 ,
+.Xr rg 1 ,
+.Xr sysinfo 1 ,
+.Xr uptime 1 ,
+.Xr ata 4 ,
+.Xr e1000 4 ,
+.Xr nvme 4 ,
+.Xr network.conf 5 ,
+.Xr sshd.conf 5 ,
+.Xr filesystem 7 ,
+.Xr handles 7 ,
+.Xr process 7 ,
+.Xr afterboot 8 ,
+.Xr shutdown 8

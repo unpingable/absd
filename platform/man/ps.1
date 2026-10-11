@@ -1,0 +1,74 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt PS 1
+.Os ABSD
+.Sh NAME
+.Nm ps
+.Nd list this session's processes
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+.Nm
+is a builtin of
+.Xr absd-sh 1 ,
+not a program: there is no
+.Pa /bin/ps .
+The shell asks the SSH server on the session's control channel, and the
+server answers for the session that channel belongs to.
+There is no way to name another session, and no list of every process in
+the system exists.
+.Pp
+The answer has three parts:
+.Bl -enum
+.It
+The session: its number (the SSH server's connection number), whether it
+has a terminal, and how long ago it connected.
+.It
+The processes the server can name: those it holds a process handle to.
+That is the session's shell alone.
+The shell runs its commands in the foreground only, so while it runs
+.Nm
+it has none running, and no command's process appears.
+.It
+What the server can only count:
+.Ql other holders: input N, file server channels M .
+.Ar N
+is how many more read ends of the session's input pipe exist than the
+shell's own, and
+.Ar M
+how many more write ends of the session's file server channels than the
+server's and the shell's.
+Both are 0 in normal operation: commands cannot start programs, so the
+shell and its commands are the whole session.
+A nonzero count would be a process that belongs to this session in effect
+but that no process of it can name or end (adopted by init); it keeps the
+session's input and filesystem channel until it ends.
+.El
+.Pp
+.Nm
+may start a pipeline
+.Pq Ql ps | wc -l
+and may be redirected.
+.Sh EXIT STATUS
+0 when the server answered.
+1 when the shell has no session control channel (it was not started by the
+SSH server for a session, for instance a shell started by another shell)
+or the server did not answer.
+2 when
+.Nm
+is given arguments.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ ps
+session 3 (this session), terminal, connected 41 s
+  PID PROGRAM
+   23 /bin/absd-sh
+other holders: input 0, file server channels 0
+.Ed
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr process 7
+.Sh CAVEATS
+The counts are of handles, not processes: one leftover process that holds
+both the input and a channel adds one to each.
+They are a snapshot; a leftover process may end at any moment.

@@ -1,0 +1,259 @@
+[package]
+name = "absd-user"
+version = "0.1.0"
+edition = "2024"
+description = "Freestanding ABSD userspace: syscall wrappers and the embedded programs"
+
+[dependencies]
+absd-abi = { path = "../abi" }
+
+[[bin]]
+name = "smp_user"
+test = false
+bench = false
+
+# Host-side `cargo test` cannot link these freestanding targets.
+[lib]
+test = false
+doctest = false
+
+[[bin]]
+name = "init"
+test = false
+bench = false
+
+[[bin]]
+name = "hello_a"
+test = false
+bench = false
+
+[[bin]]
+name = "hello_b"
+test = false
+bench = false
+
+[[bin]]
+name = "exit7"
+test = false
+bench = false
+
+[[bin]]
+name = "fault"
+test = false
+bench = false
+
+[[bin]]
+name = "fpu"
+test = false
+bench = false
+
+[[bin]]
+name = "trap"
+test = false
+bench = false
+
+[[bin]]
+name = "privileged"
+test = false
+bench = false
+
+[[bin]]
+name = "heap"
+test = false
+bench = false
+
+[[bin]]
+name = "unmapped"
+test = false
+bench = false
+
+[[bin]]
+name = "overflow"
+test = false
+bench = false
+
+[[bin]]
+name = "cell"
+test = false
+bench = false
+
+[[bin]]
+name = "shared"
+test = false
+bench = false
+
+[[bin]]
+name = "readonly"
+test = false
+bench = false
+
+[[bin]]
+name = "watcher"
+test = false
+bench = false
+
+[[bin]]
+name = "piper"
+test = false
+bench = false
+
+[[bin]]
+name = "sleeper"
+test = false
+bench = false
+
+[[bin]]
+name = "shell"
+test = false
+bench = false
+
+[[bin]]
+name = "fuzz"
+test = false
+bench = false
+
+[[bin]]
+name = "multi_handle"
+test = false
+bench = false
+
+[[bin]]
+name = "stack_grow"
+test = false
+bench = false
+
+[[bin]]
+name = "stack_jump"
+test = false
+bench = false
+
+[[bin]]
+name = "orphaner"
+test = false
+bench = false
+
+[[bin]]
+name = "supervised_worker"
+test = false
+bench = false
+
+[[bin]]
+name = "recovery_worker"
+test = false
+bench = false
+
+[[bin]]
+name = "service_client"
+test = false
+bench = false
+
+[[bin]]
+name = "client_service_worker"
+test = false
+bench = false
+
+[[bin]]
+name = "alloc_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "isolation"
+test = false
+bench = false
+
+[[bin]]
+name = "input_stream"
+test = false
+bench = false
+
+[[bin]]
+name = "external_workload"
+test = false
+bench = false
+
+[[bin]]
+name = "block_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "durable_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "broker_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "broker_child"
+test = false
+bench = false
+
+[[bin]]
+name = "image_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "elf_matrix"
+test = false
+bench = false
+
+[[bin]]
+name = "disclosure_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "nic_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "machine_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "hostile_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "rt_probe"
+path = "src/bin/rt_probe.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "fpu_mxcsr"
+test = false
+bench = false
+
+[[bin]]
+name = "capability_actor"
+test = false
+bench = false
+
+[[bin]]
+name = "capability_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "authority_effect_child"
+test = false
+bench = false
+
+[[bin]]
+name = "authority_effect_probe"
+test = false
+bench = false
+
+[[bin]]
+name = "portability"
+test = false
+bench = false

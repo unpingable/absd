@@ -1,0 +1,141 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt PROCESS 7
+.Os ABSD
+.Sh NAME
+.Nm process
+.Nd processes, starting programs, waiting, and parentage on ABSD
+.Sh DESCRIPTION
+A process is an address space, a table of handles
+.Pq Xr handles 7 ,
+a PID, a parent, and exactly one task: there are no threads.
+PIDs are not reused within a boot; process table slots are.
+There are sixteen slots in the whole system.
+.Ss Starting a program
+A new program is always a new process.
+There is no
+.Fn fork
+and no
+.Fn exec
+that replaces a running program.
+To run a program from the filesystem, the parent reads the whole file with
+its own filesystem authority and hands the bytes to the kernel, which checks
+and loads them into a new process
+.Pq Fn spawn_image .
+The file must be a static x86-64 ELF executable of at most 32 MiB: no
+dynamic linking, no interpreter, no
+.Ql #!
+scripts.
+There is no execute permission; what stands in for it is the
+.Em spawn right ,
+a per-process attribute without which every start is refused.
+Nothing restores it once withheld.
+.Pp
+The child starts with an ordered set of handles copied from the parent,
+never with more rights than the parent's copy, and a startup record on its
+first handle carrying its arguments, environment, working directory, and
+program name.
+Its standard input, output, and error are kernel pipes (or the parent's own
+streams, copied); there are no file descriptors.
+Everything else about its authority is in
+.Xr handles 7 .
+.Ss Waiting and killing
+Starting a child gives the parent a process handle with the wait and kill
+rights.
+With it the parent can wait for the child to end, which collects its
+outcome and frees its slot (reaping), or kill it: the child ends at once,
+wherever it was blocked, and everything it held is released.
+A process ends in one of three ways: it exits with a status, it faults
+(the kernel records the vector and address), or it is killed.
+In a shell, a fault or kill is reported as status 128.
+.Pp
+There are no signals.
+Nothing interrupts a process from outside except its parent's kill.
+^C on a session's terminal is not delivered to any process: the SSH server
+tells the session's shell on a control channel of its own, and the shell,
+the parent, kills its running commands; see
+.Xr absd-sh 1 .
+A write to a pipe whose readers are all gone fails with a broken-pipe
+error; it does not stop the writer.
+.Ss Parentage
+The parent is the process that started the child; nothing else is.
+When a process ends, its children are reparented to init (orphan adoption).
+Adoption grants init no handle and no authority over them; it lets init
+reap them when they end.
+There is no process-tree kill: ending a process does not end its children.
+.Pp
+In an SSH session the tree is:
+.Nm sshd
+starts the session's shell (or, for
+.Ql ssh host command ,
+that command); the shell starts the commands you type.
+The shell keeps the spawn right; the commands it starts do not, so they
+cannot start programs, and a
+.Ql ssh host command
+without shell syntax gets none either.
+The tree is at most two deep: the SSH server holds a kill right on the
+shell, the shell on each of its commands.
+.Pp
+When the session ends (the client disconnects, its idle timeout passes, or
+the system is going down),
+.Nm sshd
+tells the shell on the session's control channel first; the shell kills
+and reaps its commands and exits.
+Only if it has not exited within a second of reading that, or has not
+read it within 10 seconds, does
+.Nm sshd
+kill the shell itself
+.Pq Ql SSH SESSION END ... forced=true ;
+its commands would then be adopted by init and run to their own end, with
+their standard input at end of file, their writes to the terminal failing,
+and the file server refusing their channel, which stays out of use until
+they end.
+Init has no right to end them, and a
+.Xr shutdown 8
+or
+.Xr reboot 8
+that finds one still running stops the machine instead.
+A command
+.Nm sshd
+started directly (no shell) is killed and reaped at once.
+.Ss What a process can see
+A process can inspect itself and, through the process handles it holds, its
+own children, and nothing else.
+There is no list of all processes.
+A session's listing,
+.Xr ps 1 ,
+is the SSH server's answer for that session alone: it names the session's
+shell, which it holds a handle to, and counts what else holds the
+session's input and filesystem channels.
+There is no
+.Nm kill
+command: only a parent ends a child.
+.Ss Replacement is not recovery
+Starting a new instance of a program after an earlier one ended is a
+restart, and the new instance is a replacement.
+A replacement is not a recovery: recovery is claimed only once the
+replacement has read the state the earlier instance left and reconciled it.
+.Pp
+In the qualified boot nothing is restarted.
+If the SSH server ends, or the file server ends while the SSH server runs,
+the boot ends and is reported failed.
+A policy for replacing either in a long-running boot is not defined yet.
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr ps 1 ,
+.Xr filesystem 7 ,
+.Xr handles 7
+.Pp
+In the kernel repository:
+.Pa docs/PROCESS-STARTUP.md
+(the start contract and the startup record) and
+.Pa docs/TERMINOLOGY.md .
+.Sh CAVEATS
+If the SSH server itself ends while sessions run, nothing tells their
+shells to end: what they run is left to init, and the boot ends failed
+instead of restarting (see
+.Sx Replacement is not recovery
+and
+.Xr shutdown 8 ) .
+Sixteen processes are few: init, the file server, and the SSH server take
+three, and each open shell running a pipeline takes one per command.

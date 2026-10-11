@@ -1,0 +1,1 @@
+{"comparison":"present iff headroom_frames * 1000 < capacity_frames * 125; equality is explicitly_absent","headroom_threshold_per_mille":125,"id":"absd.host.frame_pressure.threshold_policy","schema":"absd.observation_threshold_policy.v1","version":"1"}

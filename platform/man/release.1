@@ -1,0 +1,125 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 2, 2026
+.Dt RELEASE 1
+.Os ABSD
+.Sh NAME
+.Nm release
+.Nd which ABSD release this machine is serving
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+.Nm
+prints one line, the fields in the order of the release record:
+.Bd -literal -offset indent
+release=2026.10.02-a kernel_abi=1 fsd_protocol=2 fs_format=2 app_abi=1
+.Ed
+.Pp
+An ABSD release is a boot image and a release tree built together under
+one id.
+The boot image carries the kernel, the file server, and
+the SSH server;
+the tree,
+.Pa /releases/ Ns Ar id Ns Pa /
+on the disk, carries the commands and this manual.
+The file
+.Pa /absd/selected
+names the tree to serve.
+Before it serves anything, the file server reads that tree's release
+record and refuses to start unless every field states exactly what it
+was built as:
+.Bl -tag -width fsd_protocol
+.It Cm release
+the release id,
+.Ql [a-z0-9.-]+ ;
+.Ql dev
+for a development build
+.It Cm kernel_abi
+the kernel's system call interface generation; every program checks the
+kernel's answer when it starts
+.It Cm fsd_protocol
+the file server's wire protocol; every program asks the file server for
+it when it starts
+.It Cm fs_format
+the filesystem format the file server reads
+.Pq Xr filesystem 7
+.It Cm app_abi
+the conventions programs are started and supervised by
+.El
+.Pp
+.Cm release ,
+.Cm fsd_protocol ,
+and
+.Cm fs_format
+are the file server's own answer;
+.Cm kernel_abi
+and
+.Cm app_abi
+are the generations
+.Nm
+was built for, which the kernel and the file server have already been
+found to match: a program refuses to run otherwise.
+.Pp
+.Pa /bin
+and
+.Pa /share
+are the selected release's
+.Pa bin
+and
+.Pa share ;
+.Pa /releases
+itself is never visible.
+Everything else
+.Po
+.Pa /etc ,
+.Pa /home ,
+.Pa /tmp ,
+.Pa /var
+.Pc
+belongs to the machine and is kept when the release changes.
+.Pp
+.Ql uname -r
+prints the id the command itself was built as.
+.Sh EXIT STATUS
+0; 1 when no file server answers or its answer is refused; 2 when given
+any argument.
+.Sh DIAGNOSTICS
+These console lines come before any session exists:
+.Bl -tag -width Ds
+.It Li RELEASE OK release= Ns Ar id
+The file server accepted the selected release and serves it.
+.It Li RELEASE REFUSED reason= Ns Ar reason
+The file server refused to start: the boot ends before the SSH server
+listens.
+.Ar reason
+is one of
+.Cm no_selected_release ,
+.Cm malformed_selected ,
+.Cm no_release_tree ,
+.Cm malformed_record ,
+.Cm check_mismatch ,
+.Cm release_mismatch ,
+.Cm kernel_abi_mismatch ,
+.Cm fsd_protocol_mismatch ,
+.Cm fs_format_mismatch ,
+or
+.Cm app_abi_mismatch .
+Boot the image of the release the disk selects, or select the release
+this image belongs to.
+.It Li ABI REFUSED kernel= Ns Ar n Li required= Ns Ar m
+A program was started by a kernel of another system call generation
+.Po
+.Ar n
+is
+.Li -38
+for a kernel older than the question
+.Pc ;
+it exits with status 103 before doing anything.
+.It Li FSD PROTOCOL REFUSED ...
+A program's file server speaks another protocol, or did not answer
+within about five seconds; it exits with status 104 before doing
+anything.
+.El
+.Sh SEE ALSO
+.Xr intro 1 ,
+.Xr filesystem 7 ,
+.Xr afterboot 8

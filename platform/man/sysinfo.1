@@ -1,0 +1,78 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 8, 2026
+.Dt SYSINFO 1
+.Os ABSD
+.Sh NAME
+.Nm sysinfo
+.Nd what this machine is serving, and what it has left
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+.Nm
+prints five lines, each a live answer from the kernel or the file server
+at the moment it was asked; nothing comes from a log and nothing is
+estimated:
+.Bd -literal -offset indent
+release: dev (kernel_abi 1, fsd_protocol 2, fs_format 2, app_abi 1)
+boot: 7c0e2b6a9d4f41e3a2b5c8d9e0f1a2b3, up 0 days 00:12:34 (754434 ticks)
+memory: 118540 KiB free, 12532 KiB allocated (29635 + 3133 frames of 4096 bytes)
+kernel: 6 process slots, 41 handles, 14 pipes, 2 cells
+filesystem: absd:0123456789abcdef, 16216 KiB, 9960 KiB used (62%), 6256 KiB free, commit 212
+.Ed
+.Bl -tag -width "filesystem"
+.It release
+the release the file server serves, with the protocol and format it
+answers; the two ABI generations are the ones this command was built
+for, which the runtime found the kernel to match
+.Pq Xr release 1 .
+.It boot
+the kernel's boot identity and the boot tick counter, as
+.Xr uptime 1
+prints them.
+.It memory
+the kernel's frame allocator: frames free and frames allocated, each
+4096 bytes, among the frames the allocator tracks (usable memory below
+256 MiB, less what the boot reserved), for every process and the kernel
+itself.
+Their sum is not the machine's memory.
+There is no other memory accounting; a process's own heap window is not
+shown.
+When the kernel's exhaustion test has set an allocation limit, it is
+printed too.
+.It kernel
+the kernel's object census: process slots in use (a slot stays in use
+from creation until the process is reaped, so an exited process not yet
+waited for counts), handles, pipes, and cells, across the whole system.
+The counts include
+.Nm
+itself.
+.It filesystem
+the filesystem behind every session, as
+.Nm df
+reports it: identity, data blocks in all, in use, and free, and the
+commit sequence durable on the disk.
+.El
+.Pp
+Every number is for the whole machine.
+Nothing names another session or another process; the census is counts
+only.
+.Sh EXIT STATUS
+0 when every line was answered; 1 when a source refused, in which case
+that line says so in place and the rest are still printed; 2 when given
+any argument.
+.Sh EXAMPLES
+A process without a file server channel
+.Pq Ql nofs sysinfo
+prints the kernel lines, the release line as
+.Ql no file server serves this process ,
+and
+.Ql filesystem: no file server channel ,
+with status 1.
+A file server that does not answer when the command starts is the
+runtime's refusal, status 104, before anything is printed.
+.Sh SEE ALSO
+.Xr intro 1 ,
+.Xr ps 1 ,
+.Xr release 1 ,
+.Xr uptime 1 ,
+.Xr afterboot 8

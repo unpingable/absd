@@ -1,0 +1,3 @@
+schema = "nq.config.v1"
+database_path = "/nq/nq.db"
+admissions_dir = "/nq/nonexistent-admissions"

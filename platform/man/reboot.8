@@ -1,0 +1,45 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd September 27, 2026
+.Dt REBOOT 8
+.Os ABSD
+.Sh NAME
+.Nm reboot
+.Nd restart a served ABSD machine
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+.Nm
+is
+.Ql shutdown -r now :
+the SSH server ends every session in order, the file server commits and
+stops, and init restarts the machine, which boots the same image again.
+It takes no arguments.
+Ask with
+.Ql ssh host reboot
+or type it to an interactive
+.Xr absd-sh 1 ;
+see
+.Xr shutdown 8
+for what happens, who may ask, and the exit status.
+.Sh DIAGNOSTICS
+On the serial console the sequence of
+.Xr shutdown 8
+with
+.Ql action=restart ,
+then
+.Ql MACHINE RESTART ARMED pid=1
+and
+.Ql MACHINE RESTART .
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr shutdown 8
+.Sh QUALIFICATION
+Qualified under QEMU's i440fx machine, which resets on the first of the
+three methods the kernel tries (the 0xcf9 reset register, the keyboard
+controller, a triple fault).
+QEMU must be allowed to reboot: under
+.Fl no-reboot
+without
+.Fl no-shutdown
+it exits with status 0 instead, and with both it pauses.
+None of the three methods is tested on a physical machine.

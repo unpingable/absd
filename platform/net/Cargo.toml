@@ -1,0 +1,24 @@
+[package]
+name = "absd-net"
+version = "0.1.0"
+edition = "2024"
+description = "IPv4 and TCP for ABSD programs: smoltcp over the kernel's NIC frame calls"
+
+[dependencies]
+smoltcp = { version = "=0.14.0", default-features = false, features = [
+    "alloc",
+    "medium-ethernet",
+    "proto-ipv4",
+    "socket-tcp",
+    "socket-icmp",
+    "auto-icmp-echo-reply",
+] }
+
+[target.'cfg(target_os = "absd")'.dependencies]
+absd-runtime = { path = "../runtime" }
+
+[lib]
+doctest = false
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("absd"))'] }

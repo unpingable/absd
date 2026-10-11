@@ -1,0 +1,158 @@
+# The ABSD public source release: which development revisions, where they
+# land, what is left out. Read by assemble.py. A release is a change to the
+# commits below (and the id), reviewed like any other change.
+
+overlay = "overlay"
+
+# Reasons this assembly may not be published that no check can see. Whether
+# the owner has authorized publication is not one of them: that is given for
+# each outward step when it is taken (CUTOVER.md), not recorded in the tree.
+held = []
+
+# Qualification that was not run on this release. It goes into the manifest
+# and the README says the same; an item leaves this list only when a receipt
+# for the exact release revisions exists.
+not_run = [
+  "kernel suite (kernel `make check`) on kernel 260b4a2",
+  "platform gate, core profile (`tools/check.sh platform`) on platform 65cf80f with kernel 260b4a2",
+  "platform gate, full profile with the Pulse, AG, Nightshift and NQ workloads (development repositories only)",
+  "second clean build to compare image digests",
+]
+
+[release]
+id = "absd-preview-20261010"
+date = "2026-10-10"
+status = "technical preview: built, booted and smoke-tested from a clean clone under software emulation; the qualification suites were not run on these revisions (see not_run); scheduled after 2026-10-17"
+
+[toolchain]
+rust_kernel = "1.98.0 (kernel/rust-toolchain.toml)"
+rust_platform = "1.95.0, with rust-src (platform/scripts/verify-inputs.sh pins the compiler, cargo and library source digests)"
+host = "Ubuntu 24.04 x86_64"
+clang = "18.1.3 (clang, llvm-ar-18, llvm-strip-18)"
+qemu = "8.2.2 (qemu-system-x86_64)"
+grub = "2.12 (grub-mkrescue, with xorriso 1.5.6)"
+groff = "1.23.0 (exact; platform/scripts/verify-inputs.sh)"
+
+[[component]]
+name = "kernel"
+role = "kernel, architecture support, boot, kernel tests"
+source = "absd-kernel (private development repository)"
+commit = "260b4a20755a70db2ec8aa4556b9c576285fe284"
+dest = "kernel"
+readiness = true
+# Campaign records, review transcripts, hardware survey receipts and the
+# agent instructions: development custody, not source.
+exclude = ["docs/*/*", "AGENTS.md"]
+
+[[component]]
+name = "platform"
+role = "native userspace, servers, shell, SSH, Rust standard-library port, image tooling, platform tests"
+source = "absd-rust-std (private development repository)"
+commit = "65cf80f9440f8bba018f5993aa70744e4e0d5b64"
+dest = "platform"
+readiness = true
+# Qualification receipts recorded on the development host, agent
+# instructions, and the files that carry other projects' source: the patches
+# against Pulse, AG, Nightshift and NQ (their context lines are those
+# projects' code), the manifests derived from AG's and NQ's, and those
+# projects' NOTICE files; and the extended integration profile's own
+# programs and reference tools (integration/, durable/, tools/, the request
+# builder), which are written against those projects' code and in places
+# repeat it. Only the extended profile reads any of this, and it is run from
+# the development repositories, not from a release.
+exclude = ["docs/u1-endurance-20261008/*", "docs/user-tools-20261008/*", "AGENTS.md",
+           "patches/ag-*.patch", "patches/nq-absd.patch", "patches/nightshiftd-absd.patch", "patches/pulse-*.patch",
+           "ag/*", "nq/*", "provenance/upstream-notices/*",
+           "integration/*", "durable/*", "tools/*", "fixtures/nightshift-pipeline/tools/*"]
+
+# Cross-references between components that must agree with the commits above.
+[[pin]]
+component = "kernel"
+file = "platform/scripts/check-all.sh"
+pattern = 'kernel_commit=\$\{ABSD_KERNEL_COMMIT:-([0-9a-f]{40})\}'
+
+# Private-material findings accepted with a stated reason and the number of
+# lines the reason was written for. Everything else the scan finds, and any
+# line beyond that number, keeps the tree unpublishable. `public` names a
+# component whose commit must be on a branch of its public repository for
+# the rule to apply at all.
+[[accept]]
+kinds = ["development-path", "home-path"]
+paths = ["kernel/scripts/provenance.py", "kernel/scripts/test_provenance.py", "kernel/provenance/obligations.toml",
+         "platform/scripts/provenance.py", "platform/scripts/test_provenance.py",
+         "platform/provenance/obligations.toml", "tools/assemble.py"]
+lines = 9
+reason = "the checking tools' own detection patterns and test data"
+
+[[accept]]
+kinds = ["development-path"]
+paths = ["kernel/scripts/smp-app-matrix.py"]
+lines = 1
+reason = "a guard that refuses to run in the development checkout; one path name"
+
+[[accept]]
+kinds = ["private-address"]
+paths = ["platform/ssh/src/etc.rs", "platform/man/network.conf.5", "platform/scripts/operator-matrix.py"]
+lines = 5
+reason = "example and test addresses for the guest's own configuration, not a real network"
+
+[[accept]]
+kinds = ["home-path"]
+paths = ["tools/Containerfile"]
+lines = 1
+reason = "the container's own build user"
+
+[[accept]]
+kinds = ["credential"]
+paths = ["platform/fixtures/ag-native/reference/i-fresh-ag/ag/secrets/issuer.pk8"]
+lines = 1
+reason = "a test key derived from a published seed (platform/fixtures/ag-native/README.md); platform/provenance.toml declares it kind = test-key"
+
+# Open obligations in a component's own readiness report that describe its
+# development repository as a whole and that this assembly answers. Each is
+# printed in the report with its reason. Any other open obligation keeps
+# SOURCE from clearing.
+[[discharged]]
+component = "kernel"
+obligation = "DISCLOSE-PATHS"
+reason = "judged on this tree by PRIVATE; the records that hold them are left out"
+[[discharged]]
+component = "kernel"
+obligation = "DISCLOSE-PRIVATE-NAMES"
+reason = "judged on this tree by PRIVATE; the records that hold them are left out"
+[[discharged]]
+component = "kernel"
+obligation = "DISCLOSE-LAN-AND-LINKS"
+reason = "judged on this tree by PRIVATE; the records that hold them are left out"
+[[discharged]]
+component = "kernel"
+obligation = "DISCLOSE-HISTORY"
+reason = "a release is one new commit of an assembled tree; no development history is published"
+[[discharged]]
+component = "kernel"
+obligation = "AUTHORSHIP-RECORD"
+reason = "the top-level README states how the code was written and reviewed"
+[[discharged]]
+component = "platform"
+obligation = "DISCLOSE-PATHS"
+reason = "judged on this tree by PRIVATE; the records that hold them are left out"
+[[discharged]]
+component = "platform"
+obligation = "DISCLOSE-PRIVATE-NAMES"
+reason = "judged on this tree by PRIVATE; the records that hold them are left out"
+[[discharged]]
+component = "platform"
+obligation = "DISCLOSE-HISTORY"
+reason = "a release is one new commit of an assembled tree; no development history is published"
+[[discharged]]
+component = "platform"
+obligation = "PORT-SIBLING-CHECKOUTS"
+reason = "a release builds, boots and runs its core checks from this tree alone; only the extended integration profile, run from the development repositories, uses other checkouts"
+[[discharged]]
+component = "platform"
+obligation = "OWNER-PROJECT-NOTICES"
+reason = "this tree carries no Pulse or Nightshift material: their source, the patches against it and their NOTICE files are left out"
+[[discharged]]
+component = "platform"
+obligation = "PRIVATE-PROJECT-MATERIAL"
+reason = "owner decision 2026-10-10: no source of the owner's other projects is in a release; what remains are ABSD's own test programs and synthetic fixtures for the extended profile"
