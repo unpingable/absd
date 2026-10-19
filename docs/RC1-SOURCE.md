@@ -341,8 +341,8 @@ alone does not waive any of these comparisons.
 
 The blank disk contains these ports, so their changed bytes and sizes also
 change its filesystem allocation and disk digest. The operator ISO boots
-the served system from that separate disk; it does not contain the eight port
-ELFs. Its separate kernel-metadata difference is described below. The
+the served system from that separate disk; neither ISO contains the eight
+port ELFs. Its separate kernel-metadata difference is described below. The
 enrollment ISO also has independent kernel and packaging differences.
 Reproducing the eight port ELFs does not promise equality of all media.
 
@@ -491,7 +491,7 @@ Expected section hashes for the frozen pair and this source attempt:
 | enroll | `.rodata` | `089f5a1533c69ddfc036588cb1872b1c3937395270021d40ac2e97a3c413bde7` |
 | enroll | `.data` | `b4e5315d771d681ae711af6c9288a939fc4b95a5619545ba65ebe03aa3aac505` |
 
-The enrollment ISO is made by the kernel's plain `grub-mkrescue` path, rather than the deterministic operator recipe. Its bytes also depend on the clock-derived `.disk/*.uuid` and GRUB search UUID; FAT serial and directory dates; uninitialized bytes in unallocated FAT space; the GRUB translations installed on the host, including backup files; and boot-location/checksum fields that follow the ISO layout. The frozen recipe already documents these factors in `platform/scripts/media_operator.py`. They are not fixed merely by choosing the original platform checkout root.
+The enrollment ISO is made by the kernel's plain `grub-mkrescue` path, rather than the deterministic operator recipe. Its bytes also depend on ISO volume/file dates and hybrid GPT identifiers; the clock-derived `.disk/*.uuid` and GRUB search UUID; FAT serial and directory dates; uninitialized bytes in unallocated FAT space; the GRUB translations installed on the host, including backup files; and boot-location/checksum fields that follow the ISO layout. The frozen recipe already documents these factors in `platform/scripts/media_operator.py`. They are not fixed merely by choosing the original platform checkout root.
 
 In this attempt the EFI program became exactly equal after substituting its one UUID; the BIOS image and boot catalog became exactly equal after their decoded location and checksum fields were substituted. All 78 changed EFI FAT bytes were assigned to serial (4), dates (49), UUID (6) or unallocated space (19). Eight absent English translation/backup files account for 136 data sectors and two further directory sectors. Every other ordinary enrollment ISO file matches, apart from the kernel metadata described above. A new change outside these stated boundaries requires investigation; a different whole-image hash alone does not identify its cause.
 
