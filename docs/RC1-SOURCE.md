@@ -326,8 +326,8 @@ compiler correctness or arbitrary-environment reproducibility.
 
 The guest checks and supplemental reconstruction used source revision
 `41f5a1baec603b68206df59cc200954c300c143d`. The subsequent public-source
-changes affect the check wrapper and this documentation, outside the
-identical kernel/platform component trees. Those later source revisions
+changes affect the check wrapper, this documentation and the manifest
+assembler identity, outside the identical kernel/platform component trees. Those later source revisions
 were not independently re-executed as guest campaigns.
 
 The supported reconstruction attempt above may use another checkout root.
@@ -357,7 +357,7 @@ script. Keep the pinned toolchains, archives and host tools.
 
 Run as the same unprivileged builder. Linux must permit unprivileged user
 and mount namespaces and `unshare --keep-caps`. The directory
-`/data/git/absd/.campaign-local` must already exist as a mountpoint; on a
+`/data/git/absd/.campaign-local` must already exist as a directory for the bind mount; on a
 new machine an administrator may create that empty directory first.
 Do not change an existing checkout there. The two bind mounts below exist
 only in the child namespace and leave the host path unchanged. Use a new
@@ -366,6 +366,7 @@ build against this scratch source. This replay builds ports only, not a
 new guest or media set.
 
 ```sh
+set -eu
 export RC1_REPLAY_WORK=/absolute/path/rc1-work
 # Choose four available CPUs; the controlled host run used 2-5.
 export RC1_REPLAY_CPUS=2-5
