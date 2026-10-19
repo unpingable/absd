@@ -1,0 +1,7 @@
+ctor
+main
+_Exit 5
+--
+absd-sh: /bin/exit: exit status 5
+--
+status=5

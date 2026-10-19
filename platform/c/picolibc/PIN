@@ -1,0 +1,9 @@
+# Pinned third-party inputs of the C kit. sha256 over the downloaded file.
+meson	1.9.1	f824ab770c041a202f532f69e114c971918ed2daff7ea56583d80642564598d0
+ninja	1.13.0	fb46acf6b93b8dd0322adc3a4945452a4e774b75b91293bafcc7b7f8e6517dfa
+picolibc	1.8.12	64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa	https://github.com/picolibc/picolibc/releases/download/1.8.12/picolibc-1.8.12.tar.xz
+# The installed archives scripts/build-picolibc.sh produces from the line above
+# (any prefix: the cross file's -fdebug-compilation-dir=. keeps paths out);
+# scripts/build-c-kit.sh refuses a libc.a or libm.a that differs.
+picolibc-libc.a	1.8.12	7924073af8c975a4d623917070cbe098276632f0e332accfd82e11cdb7975f20
+picolibc-libm.a	1.8.12	0f9abd5d86e0d824906ebe10be2f660409a3b8ad994e1b59ffcb1ed8eef2b215

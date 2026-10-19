@@ -13,9 +13,10 @@ questions apart and never folds them into one answer:
     PINS          do the components agree about each other's revisions
     PRIVATE       host names, home paths, addresses, credentials in OUT
     SOURCE        each component's own scripts/provenance.py verdict
+    NOTICES       configured linked-input notice check (separate from SOURCE)
     REPRODUCIBLE  does a second assembly give the same tree
     QUALIFICATION what the release itself says was not run on it
-    PUBLISHABLE   the four checks above, a committed assembler, nothing held
+    PUBLISHABLE   the configured checks above, a committed assembler, nothing held
 
 PUBLISHABLE means the tree is safe to publish as it describes itself. It is
 not a statement that any qualification suite passed: what was not run is
@@ -34,8 +35,10 @@ It adds no inventory of its own. Standard library only.
 
 import argparse
 import fnmatch
+import hashlib
 import importlib.util
 import io
+import json
 import os
 import pwd
 import re
@@ -47,12 +50,13 @@ import tarfile
 import tempfile
 import tomllib
 from pathlib import Path
+import check_inputs
 
 HERE = Path(__file__).resolve().parent
 sys.dont_write_bytecode = True  # importing a component's tool must not add files to the tree
 MARKER = "NOT-FOR-PUBLICATION.md"
 STAMP = "ABSD_ASSEMBLY"  # in OUT/.git: the tree the last build produced, and its verdict
-GENERATED = ["SOURCE-MANIFEST.toml", "THIRD-PARTY.md", "tools/assemble.py", "tools/assembly.toml", MARKER]
+GENERATED = ["SOURCE-MANIFEST.toml", "THIRD-PARTY.md", "tools/assemble.py", "tools/check_inputs.py", "tools/assembly.toml", MARKER]
 
 # What must not reach a public tree. The assembling machine is a development
 # machine, so its own user, home and host name are patterns without any
@@ -61,6 +65,7 @@ GENERATED = ["SOURCE-MANIFEST.toml", "THIRD-PARTY.md", "tools/assemble.py", "too
 # a finding: ABSD has a /home. 10.0.2.0/24 is QEMU's user network.
 USER = pwd.getpwuid(os.getuid()).pw_name
 HOST = socket.gethostname().split(".")[0]
+INTERNAL_COORDINATION_NAME = "-".join(("absd", "coord"))
 GENERIC = [
     ("home-path", re.compile(r"/home/(?!operator/)[a-z][a-z0-9_-]*/\.[a-z]|/Users/[A-Za-z]|" + re.escape(str(Path.home())))),
     ("assembler-user", re.compile(rf"(?<![A-Za-z0-9]){re.escape(USER)}(?![A-Za-z0-9])", re.I)),
@@ -70,6 +75,7 @@ GENERIC = [
         r"(?<![\d.])(?:192\.168\.\d{1,3}\.\d{1,3}|10\.(?!0\.2\.)\d{1,3}\.\d{1,3}\.\d{1,3}"
         r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(?![\d.])")),
     ("project-board", re.compile(r"github\.com/users/[\w-]+/projects/")),
+    ("private-coordination", re.compile(rf"\b(?:{INTERNAL_COORDINATION_NAME}|PVTI_[A-Za-z0-9_-]+|card\s+[0-9]{{6,}})\b", re.I)),
 ]
 
 
@@ -122,7 +128,7 @@ def extract(component, out, pinned):
     commit = git("rev-parse", f"{rev}^{{commit}}", cwd=repo)
     if commit != rev:
         raise Problem(f"{component['name']}: commit must be a full id, {rev} resolves to {commit}")
-    exclude, keep, listed = component.get("exclude", []), component.get("keep", []), None
+    exclude, keep, listed = component.get("exclude", []), list(component.get("keep", [])), None
     if "files_from" in component:
         if exclude or keep:
             raise Problem(f"{component['name']}: a listed component takes no exclusions")
@@ -134,6 +140,24 @@ def extract(component, out, pinned):
     dropped, members = [], []
     dest.mkdir(parents=True)
     with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+        all_members = {m.name: m for m in tar if not m.isdir() and m.name != "pax_global_header"}
+        if component.get("keep_check_inputs"):
+            if listed is not None:
+                raise Problem("check-input restoration requires a filtered component")
+            # Compute the closure before extracting: only tracked source input
+            # bytes from the pinned archive can restore an excluded file.
+            while True:
+                sources = {n: tar.extractfile(m).read() for n, m in all_members.items()
+                           if wanted(n) and n.endswith((".py", ".rs", ".tsv")) and m.isfile()}
+                required = {p for p, _, _ in check_inputs.discover(sources)}
+                missing = required - all_members.keys()
+                if missing:
+                    raise Problem(f"{component['name']}: check inputs absent from pinned source: {sorted(missing)}")
+                restored = sorted(p for p in required if not wanted(p))
+                if not restored:
+                    break
+                keep.extend(restored)
+        # TarFile iteration is cached, so this still covers every member.
         for member in tar:
             if member.isdir() or member.name == "pax_global_header":
                 continue
@@ -173,6 +197,72 @@ def pin_checks(config, out):
     return rows
 
 
+def source_edits(config, component, dest):
+    """Apply reviewed public-source edits, with complete input/output hashes.
+
+    Line hashes avoid carrying the removed private text into the public
+    assembly instructions. No fuzzy matching, implicit redaction or patch
+    fallback: a changed source, line or result refuses the assembly.
+    """
+    records = []
+    seen = set()
+    for edit in config.get("source_edit", []):
+        if edit["component"] != component:
+            continue
+        rel = Path(edit["path"])
+        if rel.is_absolute() or ".." in rel.parts or str(rel) in seen:
+            raise Problem(f"invalid or duplicate source edit: {component}:{rel}")
+        seen.add(str(rel))
+        path = dest / rel
+        if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(dest.resolve()):
+            raise Problem(f"source edit is not a regular component file: {component}:{rel}")
+        original = path.read_bytes()
+        if hashlib.sha256(original).hexdigest() != edit["input_sha256"]:
+            raise Problem(f"source edit input differs: {component}:{rel}")
+        lines = original.splitlines(keepends=True)
+        used = set()
+        for change in edit["change"]:
+            number = change["line"]
+            if number in used or not 1 <= number <= len(lines):
+                raise Problem(f"invalid or duplicate source line: {component}:{rel}:{number}")
+            used.add(number)
+            if hashlib.sha256(lines[number - 1]).hexdigest() != change["input_sha256"]:
+                raise Problem(f"source edit line differs: {component}:{rel}:{number}")
+            lines[number - 1] = change["text"].encode("utf-8")
+        result = b"".join(lines)
+        if hashlib.sha256(result).hexdigest() != edit["output_sha256"]:
+            raise Problem(f"source edit output differs: {component}:{rel}")
+        path.write_bytes(result)
+        records.append({key: edit[key] for key in ("path", "input_sha256", "output_sha256", "reason")})
+    return records
+
+
+def notice_check(config, out):
+    """A declared release-notice check must run, not merely be documented."""
+    spec = config.get("notice_check")
+    if spec is None:
+        return {"ok": True, "configured": False, "detail": "No linked-input notice check declared; no coverage claim."}
+    rel = Path(spec["script"])
+    if rel.is_absolute() or ".." in rel.parts:
+        raise Problem("notice check script must be inside the assembled tree")
+    script = out / rel
+    if script.is_symlink() or not script.is_file() or not script.resolve().is_relative_to(out.resolve()):
+        raise Problem("notice check script is not a regular assembled file")
+    base = os.environ.get(spec["base_env"])
+    if not base:
+        return {"ok": False, "configured": True, "detail": f"{spec['base_env']} must name the exact published base notices archive."}
+    run = subprocess.run([sys.executable, "-B", str(script), "check", "--root", str(out), "--base", base],
+                         cwd=out, capture_output=True, text=True)
+    try:
+        result = json.loads(run.stdout)
+    except ValueError:
+        result = {}
+    passed = (run.returncode == 0 and isinstance(result, dict)
+              and result.get("schema") == "absd-linked-notices-check/1" and result.get("result") == "PASS")
+    return {"ok": passed, "configured": True, "exit_code": run.returncode,
+            "detail": run.stdout + run.stderr, "receipt": result}
+
+
 def tool(path):
     spec = importlib.util.spec_from_file_location("absd_provenance", path)
     module = importlib.util.module_from_spec(spec)
@@ -202,9 +292,13 @@ def private_scan(config, out, prov):
     by_name = {c["name"]: c for c in config["component"]}
     accepted = []
     for rule in config.get("accept", []):
+        if "private-coordination" in rule["kinds"]:
+            raise Problem("private coordination findings cannot be waived")
         if "public" in rule and not is_public(by_name[rule["public"]]):
             continue  # the claim "already public" does not hold: the rule accepts nothing
-        accepted.append(dict(rule, used=0))
+        if "line_sha256" in rule and len(rule["kinds"]) != 1:
+            raise Problem("hash-bound private exception must name exactly one pattern kind")
+        accepted.append(dict(rule, used=0, observed={}))
     hits, waived = [], []
     for path in sorted(p for p in out.rglob("*") if p.is_file() and ".git" not in p.relative_to(out).parts):
         rel = str(path.relative_to(out))
@@ -218,20 +312,31 @@ def private_scan(config, out, prov):
             text = data.decode("utf-8", "replace")
             kinds = ["credential"] if prov.SECRETS.search(text) else []
             lines = text.splitlines()
-        counts = {}
+        counts, line_hashes = {}, {}
         for kind, pattern in patterns:
-            n = sum(1 for line in lines if pattern.search(line))
+            matching = [line for line in lines if pattern.search(line)]
+            n = len(matching)
             if n:
                 counts[kind] = n
+                line_hashes[kind] = [hashlib.sha256(line.encode("utf-8")).hexdigest() for line in matching]
         for kind in kinds:
             counts[kind] = counts.get(kind, 0) + 1
         for kind, n in counts.items():
             rule = next((a for a in accepted if kind in a["kinds"] and matches(rel, a["paths"])), None)
             if rule:
                 rule["used"] += n
+                if "line_sha256" in rule:
+                    rule["observed"][rel] = line_hashes.get(kind, [])
             (waived if rule else hits).append((rel, kind, n, rule["reason"] if rule else ""))
     # An accepted rule states how many lines it was written for; more is new.
     over = [f"{a['reason']}: {a['used']} lines, accepted for {a['lines']}" for a in accepted if a["used"] > a["lines"]]
+    # Optional exact per-path sequences bind matching UTF-8 lines without their
+    # terminators. A count alone cannot refuse substitution on an existing line.
+    for rule in accepted:
+        if "line_sha256" in rule and rule["observed"] != rule["line_sha256"]:
+            changed = sorted(path for path in rule["observed"].keys() | rule["line_sha256"].keys()
+                             if rule["observed"].get(path) != rule["line_sha256"].get(path))
+            over.append(f"{rule['reason']}: matching line hashes differ: {', '.join(changed)}")
     return hits, waived, over, extra is not None
 
 
@@ -316,7 +421,8 @@ def manifest(config, records):
              "#     git rev-parse HEAD:<path>",
              "# It is the tree of the named commit's files less those `exclude` names",
              "# (and `keep` restores), or, where `files_from` is given, of exactly the",
-             "# files that list names. Nothing else is changed.", "",
+             "# files that list names. Explicit source edits, if any, are recorded below;",
+             "# filtered_tree is the unchanged subset before those edits.", "",
              "[release]", f"id = {q(release['id'])}", f"date = {q(release['date'])}",
              f"status = {q(release['status'])}", f"assembler = {q(config['_assembler'])}",
              "# Qualification that was NOT run on this release. An empty list would mean",
@@ -325,6 +431,10 @@ def manifest(config, records):
     if config.get("toolchain"):
         lines.append("[toolchain]")
         lines += [f"{key} = {q(value)}" for key, value in config["toolchain"].items()]
+        lines.append("")
+    if config.get("notice_check"):
+        lines += ["# Check configuration, not a success receipt.", "[notice_check]"]
+        lines += [f"{key} = {q(value)}" for key, value in config["notice_check"].items()]
         lines.append("")
     for record in records:
         lines.append("[[component]]")
@@ -342,6 +452,11 @@ def manifest(config, records):
                 lines.append("keep = [" + ", ".join(q(p) for p in record["keep"]) + "]")
         if record["note"]:
             lines.append(f"note = {q(record['note'])}")
+        if record.get("edits"):
+            lines.append(f"filtered_tree = {q(record['filtered_tree'])}")
+            for edit in record["edits"]:
+                lines.append("[[component.source_edit]]")
+                lines += [f"{key} = {q(value)}" for key, value in edit.items()]
         lines.append("")
     return "\n".join(lines)
 
@@ -360,8 +475,15 @@ def assemble(config, out):
         return git("show", f"{by_name[name]['commit']}:{path}", cwd=by_name[name]["repo"]) + "\n"
 
     records, dropped = [], {}
+    unknown = {e["component"] for e in config.get("source_edit", [])} - set(by_name)
+    if unknown:
+        raise Problem(f"source edits name unknown components: {sorted(unknown)}")
     for component in config["component"]:
         record, gone = extract(component, out, pinned)
+        record["filtered_tree"] = record["tree"]
+        record["edits"] = source_edits(config, component["name"], out / component["dest"])
+        if record["edits"]:
+            record["tree"] = tree_id(out / component["dest"])
         records.append(record)
         dropped[component["name"]] = gone
     overlay = HERE / config.get("overlay", "overlay")
@@ -377,6 +499,7 @@ def assemble(config, out):
     # The tool and its configuration travel with the tree they produced.
     (out / "tools").mkdir(exist_ok=True)
     shutil.copy2(Path(__file__).resolve(), out / "tools/assemble.py")
+    shutil.copy2(HERE / "check_inputs.py", out / "tools/check_inputs.py")
     shutil.copy2(config["_config_path"], out / "tools/assembly.toml")
     for path in sorted(overlay.rglob("*.md")):
         for named in re.findall(r"`((?:kernel|platform|examples|tools|docs)/[^`\s*<>]+)`", path.read_text()):
@@ -384,6 +507,18 @@ def assemble(config, out):
                 raise Problem(f"{path.relative_to(overlay)} names {named}, which is not in the tree")
     third_party(config, out, records)
     (out / "SOURCE-MANIFEST.toml").write_text(manifest(config, records))
+    try:
+        # This pre-commit check uses the same discovery as the public gate.
+        for record in records:
+            dest = out / record["path"]
+            files = {str(p.relative_to(dest)): p.read_bytes() for p in dest.rglob("*")
+                     if p.is_file()}
+            check_inputs.check_file_hashes(files)
+            for path, consumer, line in check_inputs.discover(files):
+                if not (dest / path).is_file() or (dest / path).is_symlink():
+                    raise Problem(f"{record['name']}/{consumer}:{line}: missing check input {path}")
+    except (check_inputs.Problem, SyntaxError) as error:
+        raise Problem(str(error)) from error
     return records, dropped
 
 
@@ -422,6 +557,7 @@ def build(args):
     pins = pin_checks(config, out)
     hits, waived, over, had_private = private_scan(config, out, tool(prov_path))
     sources = source_verdicts(config)
+    notices = notice_check(config, out)
 
     for key in ("held", "not_run"):
         if not isinstance(config.get(key), list):
@@ -433,6 +569,7 @@ def build(args):
         "PINS": all(row[0] == "ok" for row in pins),
         "PRIVATE": not hits and not over,
         "SOURCE": all(not open_items for _, _, open_items, _ in sources),
+        "NOTICES": notices["ok"],
         "REPRODUCIBLE": first == second,
     }
     publishable = all(ok.values()) and not held
@@ -443,6 +580,9 @@ def build(args):
     for r in records:
         text.append(f"- {r['path']}/: {r['source']} {r['commit']}, {r['files']} files, {r['excluded_files']} left out"
                     + (f" (listed by {r['files_from']})" if r["files_from"] else "") + f", tree {r['tree']}")
+        for edit in r.get("edits", []):
+            text.append(f"  - public source edit {edit['path']}: {edit['input_sha256']} -> "
+                        f"{edit['output_sha256']}; {edit['reason']}")
     text += ["", f"## PINS: {'CONSISTENT' if ok['PINS'] else 'INCONSISTENT'}", ""]
     text += [f"- {s}: {f} names {n}; {c} is assembled at {want}" for s, c, f, n, want in pins]
     text += ["", f"## PRIVATE: {'NONE_FOUND' if ok['PRIVATE'] else 'FOUND'}", "",
@@ -463,6 +603,10 @@ def build(args):
         text += [f"- {name}: its own report says " + ", ".join(f"{k} {v}" for k, v in verdicts.items())]
         text += [f"  - open: {bullet}" for bullet, _ in open_items]
         text += [f"  - answered by this assembly ({reason}): {bullet}" for bullet, reason in answered]
+    notice_verdict = "PASS" if notices["ok"] else "NOT_CLEAR"
+    if not notices["configured"]:
+        notice_verdict = "NOT_CONFIGURED"
+    text += ["", f"## NOTICES: {notice_verdict}", "", notices["detail"], ""]
     text += ["", f"## REPRODUCIBLE: {'SAME_TREE' if ok['REPRODUCIBLE'] else 'DIFFERS'}", "",
              f"Two assemblies: {first} and {second}. This is the source tree only, not built artifacts.", ""]
     text += [f"## QUALIFICATION: {'NOT_RUN' if config['not_run'] else 'NOTHING_OUTSTANDING'}", "",
@@ -475,6 +619,7 @@ def build(args):
     report = Path(args.report or f"{out}-report")
     report.mkdir(parents=True, exist_ok=True)
     (report / "ASSEMBLY.md").write_text("\n".join(text) + "\n")
+    (report / "NOTICES-CHECK.json").write_text(json.dumps(notices, indent=2, sort_keys=True) + "\n")
     (report / "excluded.txt").write_text(
         "".join(f"{name}\t{path}\n" for name, paths in dropped.items() for path in paths))
 

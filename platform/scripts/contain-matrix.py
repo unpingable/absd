@@ -107,12 +107,12 @@ SSH_CAPACITY = re.compile(
     r"slots=(?P<slots>\d+) pool=(?P<pool>\d+) net_sockets=(?P<net_sockets>\d+) "
     r"net_closing=(?P<net_closing>\d+) processes=(?P<processes>\d+) handles=(?P<handles>\d+) "
     r"pipes=(?P<pipes>\d+) cells=(?P<cells>\d+) frames=(?P<frames>\d+) "
-    r"heap_pages_peak=(?P<heap_pages_peak>\d+)(?=\r?\n|$)", re.MULTILINE)
+    r"heap_pages_peak=(?P<heap_pages_peak>\d+) link=(?P<link>up|down|unknown)(?: heap_free_pages=(?P<heap_free_pages>\d+))?(?=\r?\n|$)", re.MULTILINE)
 FSD_CAPACITY = re.compile(
     r"^FSD CAPACITY boot=(?P<boot>[0-9a-f]{32}) settled_releases=(?P<settled_releases>\d+) "
     r"fs_objects=(?P<fs_objects>\d+) rotated_logs=(?P<rotated_logs>\d+) "
     r"bound=(?P<bound>\d+) opens=(?P<opens>\d+) draining=(?P<draining>\d+) "
-    r"heap_pages_peak=(?P<heap_pages_peak>\d+)(?=\r?\n|$)", re.MULTILINE)
+    r"heap_pages_peak=(?P<heap_pages_peak>\d+)(?: heap_free_pages=(?P<heap_free_pages>\d+))?(?=\r?\n|$)", re.MULTILINE)
 
 
 def capacity_record(pattern, text):
@@ -120,7 +120,7 @@ def capacity_record(pattern, text):
     if not matches:
         return None
     record = matches[-1].groupdict()
-    return {key: value if key == "boot" else int(value) for key, value in record.items()}
+    return {key: value if value is None or key in ("boot", "link") else int(value) for key, value in record.items()}
 
 
 class CaseFailed(Exception):

@@ -1,0 +1,4 @@
+status 2
+--- stdout
+--- stderr
+usage: /bin/sort [-Cbcdfimnru] [-o outfile] [-t delim] [-k def]... [file ...]

@@ -165,10 +165,24 @@ impl Channel {
         if hidden(path) {
             return None;
         }
-        self.mounts
+        Self::covering(&self.mounts, path)
+    }
+    fn covering<'a>(mounts: &'a [Mount], path: &[u8]) -> Option<&'a Mount> {
+        mounts
             .iter()
             .filter(|m| within(path, &m.path))
             .max_by_key(|m| m.path.len())
+    }
+    /// On validated, normalized mount lists, access changes only at a mount
+    /// root. Comparing the union of roots therefore covers every path, even
+    /// when the child omits a parent's nested read-only carve-out.
+    fn narrows(parent: &[Mount], child: &[Mount]) -> bool {
+        let access = |mounts: &[Mount], path: &[u8]| {
+            Self::covering(mounts, path).map_or(0, |m| if m.writable { 2 } else { 1 })
+        };
+        parent.iter().chain(child).all(|m| {
+            access(child, &m.path) <= access(parent, &m.path)
+        })
     }
     /// `path` is a strict ancestor of a mount point: a directory the
     /// client may look at but sees only the way down to its mounts in.
@@ -192,6 +206,15 @@ impl Channel {
             None if self.ancestor(path) => Err(status::READ_ONLY),
             None => Err(status::NOT_FOUND),
         }
+    }
+    /// Removing or replacing a namespace anchor must not relocate a nested
+    /// mount into a wider writable mount. Check both endpoints of a rename.
+    fn writable_namespace(&self, path: &[u8]) -> Result<(), i64> {
+        self.writable_below(path)?;
+        if self.ancestor(path) {
+            return Err(status::BUSY);
+        }
+        Ok(())
     }
 }
 
@@ -626,6 +649,9 @@ impl<D: Device> Server<D> {
                     Some(m) if code == op::MKDIR && m.path == path && m.writable => {}
                     _ => target.writable_below(&path)?,
                 }
+                if code == op::RMDIR {
+                    target.writable_namespace(&path)?;
+                }
                 let path = self.physical(&path);
                 match code {
                     op::MKDIR => self.fs.mkdir(&path),
@@ -642,8 +668,8 @@ impl<D: Device> Server<D> {
                     .ok_or(status::INVALID)?;
                 let to = Self::path(reader)?;
                 let target = &self.channels[channel];
-                target.writable_below(&from)?;
-                target.writable_below(&to)?;
+                target.writable_namespace(&from)?;
+                target.writable_namespace(&to)?;
                 let (from, to) = (self.physical(&from), self.physical(&to));
                 self.fs.rename(&from, &to, noreplace).map_err(errno)?;
                 Ok(0)
@@ -1087,15 +1113,10 @@ impl<D: Device> Server<D> {
                 if !Self::valid_session_mounts(&asked) {
                     return Err(status::INVALID);
                 }
-                // Each asked mount lies inside one of the session's and
-                // asks for no more access: authority only narrows.
-                for m in &asked {
-                    if !parent
-                        .iter()
-                        .any(|p| within(&m.path, &p.path) && (p.writable || !m.writable))
-                    {
-                        return Err(status::DENIED);
-                    }
+                // Compare effective longest-prefix authority, not individual
+                // entries: an outer writable mount cannot erase a carve-out.
+                if !Channel::narrows(parent, &asked) {
+                    return Err(status::DENIED);
                 }
                 asked
             }
@@ -1134,5 +1155,61 @@ impl<D: Device> Server<D> {
         };
         self.channels[spare].mounts.clear();
         Ok(closed as i64)
+    }
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+
+    #[test]
+    fn narrowing_matches_bounded_path_permission_sets() {
+        let roots: [&[u8]; 5] = [
+            b"/home/operator", b"/home/operator/a", b"/home/operator/a/b",
+            b"/home/operator/a/b/c", b"/home/operator/ab",
+        ];
+        // Include each boundary, the intervening subtree, a byte-prefix
+        // sibling and an inaccessible path. None/read/write at five roots
+        // gives 243 lists and 59,049 ordered parent/child comparisons.
+        let witnesses: [&[u8]; 11] = [
+            b"/home/operator", b"/home/operator/other", b"/home/operator/a",
+            b"/home/operator/a/other", b"/home/operator/a/b",
+            b"/home/operator/a/b/other", b"/home/operator/a/b/c",
+            b"/home/operator/a/b/c/leaf", b"/home/operator/ab",
+            b"/home/operator/ab/leaf", b"/outside",
+        ];
+        let mut cases = Vec::new();
+        for mut code in 0..3usize.pow(roots.len() as u32) {
+            let mut mounts = Vec::new();
+            for root in roots {
+                match code % 3 {
+                    1 => mounts.push(Mount::new(root, false)),
+                    2 => mounts.push(Mount::new(root, true)),
+                    _ => {}
+                }
+                code /= 3;
+            }
+            // Independent reference: apply overlays from broadest to
+            // narrowest to concrete read/write permission sets.
+            mounts.sort_by_key(|m| m.path.len());
+            let (mut read, mut write) = (0u16, 0u16);
+            for mount in &mounts {
+                for (i, path) in witnesses.iter().enumerate() {
+                    if within(path, &mount.path) {
+                        read |= 1 << i;
+                        if mount.writable { write |= 1 << i; } else { write &= !(1 << i); }
+                    }
+                }
+            }
+            cases.push((mounts, read, write));
+        }
+        assert_eq!(cases.len(), 243);
+        for (parent, pr, pw) in &cases {
+            for (child, cr, cw) in &cases {
+                let subset = cr & !pr == 0 && cw & !pw == 0;
+                assert_eq!(Channel::narrows(parent, child), subset,
+                    "parent={parent:?}, child={child:?}");
+            }
+        }
     }
 }

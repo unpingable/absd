@@ -20,7 +20,7 @@ pub const SAVED_FRAME_WORDS: usize = 20;
 /// covers a 6 MiB image, its stack, and a heap holding a multi-megabyte
 /// file, which AG's pinned-file check reads whole. A page fault or `map`
 /// that needs one more table fails as it did at the old bound of 8.
-pub const MAX_USER_PAGE_TABLES: usize = 32;
+pub const MAX_USER_PAGE_TABLES: usize = crate::frame_geometry::MAX_LEAF_TABLES;
 /// Parent identifier for processes started directly by the kernel.
 pub const KERNEL_PARENT: u64 = 0;
 /// SysV permits leaf functions to use 128 bytes below RSP without moving it.
@@ -160,6 +160,10 @@ pub struct Process {
     /// Whether `spawn` and `spawn_many_copy` are permitted. The kernel grants
     /// it to init; a child keeps it only if spawned without `SPAWN_NO_SPAWN`.
     pub may_spawn: bool,
+    /// Private v0 comparison: only trusted root construction grants this;
+    /// neither ordinary spawn permission nor copied handles confer it.
+    #[cfg(feature = "frame-admission-v0")]
+    pub may_admit_frames: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -213,7 +217,18 @@ impl Process {
         claim_epoch: 0,
         stop: StopState::Active,
         may_spawn: false,
+        #[cfg(feature = "frame-admission-v0")]
+        may_admit_frames: false,
     };
+    /// The boot caller explicitly grants this to the designated init before
+    /// activation. Common constructors, including other kernel roots, do not.
+    /// There is no userspace setter or inheritance path.
+    #[cfg(feature = "frame-admission-v0")]
+    pub fn grant_bootstrap_frame_admission(&mut self) {
+        assert_eq!(self.state, ProcessState::Created);
+        assert_eq!(self.parent, KERNEL_PARENT);
+        self.may_admit_frames = true;
+    }
     pub fn is_runnable(&self) -> bool {
         self.state == ProcessState::Runnable
             && self.cpu_owner.is_none()
@@ -321,7 +336,8 @@ impl ProcessTable {
             next_pid: 1,
         }
     }
-    /// Reserves the next PID; PIDs are never reused within one boot.
+    /// Reserves the next PID. Only `rewind_newest_pid` can return a number:
+    /// failed construction or boot-time self-tests that leave no live handle.
     pub fn allocate_pid(&mut self) -> u64 {
         let pid = self.next_pid;
         self.next_pid += 1;
@@ -712,6 +728,73 @@ mod tests {
             0x1f80
         );
         assert_eq!(core::mem::align_of::<FpuState>(), 16);
+    }
+
+    #[cfg(feature = "frame-admission-v0")]
+    #[test]
+    fn frame_admission_grant_is_separate_from_spawn_and_copied_objects() {
+        use crate::handle::{Object, RIGHT_WRITE};
+        let mut table = ProcessTable::new();
+        let root = table.claim(0, 0).unwrap();
+        table.entries[root].grant_bootstrap_frame_admission();
+        let child = table.claim(table.entries[root].pid, 1).unwrap();
+        table.entries[child].may_spawn = true;
+        let machine = table.entries[child]
+            .handles
+            .insert(Object::Machine, RIGHT_WRITE)
+            .unwrap();
+        table.entries[child]
+            .handles
+            .duplicate(machine, RIGHT_WRITE)
+            .unwrap();
+        assert!(table.entries[root].may_admit_frames);
+        assert!(table.entries[child].may_spawn);
+        assert!(!table.entries[child].may_admit_frames);
+        table.entries[root].may_spawn = false;
+        assert!(table.entries[root].may_admit_frames);
+        let other_root = table.claim(KERNEL_PARENT, 1).unwrap();
+        assert_ne!(table.entries[other_root].pid, 1);
+        assert!(!table.entries[other_root].may_admit_frames);
+        table.entries[other_root].grant_bootstrap_frame_admission();
+        assert!(table.entries[other_root].may_admit_frames);
+        table.entries[child].parent = KERNEL_PARENT;
+        assert!(!table.entries[child].may_admit_frames);
+    }
+
+    #[cfg(feature = "frame-admission-v0")]
+    #[test]
+    fn frame_admission_authority_cannot_return_through_slot_reuse_or_failed_creation() {
+        let mut table = ProcessTable::new();
+        let root = table.claim(0, 0).unwrap();
+        table.entries[root].grant_bootstrap_frame_admission();
+        assert!(table.entries[root].may_admit_frames);
+        table.unclaim(root);
+        assert!(!table.entries[root].may_admit_frames);
+        let reused = table.claim(42, 0).unwrap();
+        assert_eq!(root, reused);
+        assert!(!table.entries[reused].may_admit_frames);
+        table.entries[reused].state = ProcessState::Exited;
+        table.release(reused);
+        assert!(!table.entries[reused].may_admit_frames);
+    }
+
+    #[cfg(feature = "frame-admission-v0")]
+    #[test]
+    fn reparenting_to_init_does_not_confer_admission_authority() {
+        let mut table = ProcessTable::new();
+        let root = table.claim(0, 0).unwrap();
+        table.entries[root].grant_bootstrap_frame_admission();
+        table.entries[root].state = ProcessState::Running;
+        let parent = table.claim(1, 0).unwrap();
+        let orphan = table.claim(table.entries[parent].pid, 0).unwrap();
+        let pid = table.entries[orphan].pid;
+        assert_eq!(
+            table.reparent_children_to_live_init(table.entries[parent].pid),
+            Some(1)
+        );
+        assert_eq!(table.entries[orphan].parent, 1);
+        assert_eq!(table.entries[orphan].pid, pid);
+        assert!(!table.entries[orphan].may_admit_frames);
     }
 }
 

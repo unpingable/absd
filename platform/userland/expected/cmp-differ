@@ -1,0 +1,4 @@
+status 1
+--- stdout
+words.txt lines.txt differ: byte 1, line 1
+--- stderr

@@ -107,7 +107,10 @@ the cell and pipe calls, the block device (single- and multi-sector reads
 and writes, flush, info), the NIC, the wall clock, `frame_stats`,
 `resource_census`, the machine object (`machine_stop`, `machine_restart`,
 `machine_recover`) and `abi_version` (`abi/src/syscall.rs` is the
-authoritative list; HANDOFF.md has the semantics). Kernel objects are reached only through opaque
+authoritative list; HANDOFF.md has the semantics). The optional
+`frame-admission-v0` feature adds bootstrap-only calls 45/46; its
+[implementation status](docs/FRAME-ADMISSION-V0-IMPLEMENTATION.md) records
+build separation, host checks and the remaining RAM/guest qualification gates. Kernel objects are reached only through opaque
 per-process handles: the console at entry, child processes from `spawn`,
 cells, and pipes; stale, guessed, or wrong-kind handles fail. A pipe is a
 bounded byte stream with blocking `read` and `write`, end of file when the

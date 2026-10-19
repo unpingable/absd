@@ -53,6 +53,20 @@ numbers, never block addresses. The `std::fs` hooks of a process whose
 startup record names channels and no block handle go there
 (`runtime/src/fsd.rs`).
 
+Mounts bind normalized pathnames, not object identities. A channel cannot
+rename either endpoint or remove a directory that is a strict ancestor of
+one of its mounts: these operations return `-16` (busy), even below a wider
+writable mount. This keeps a nested read-only carve-out at its configured
+path when that channel mutates the namespace. The existing read-only and
+mount-point refusals still apply, and writable siblings remain mutable.
+Another channel with broader authority retains its own namespace rights;
+this is not an immutable-object guarantee against an authorized parent.
+DERIVE LIST compares the longest matching parent and child mount at every
+boundary in both lists: a child can never gain read or write access the
+parent lacks. It may omit a read-only entry only when its remaining list
+is equally restrictive or narrower there. MKDIR may create a missing
+ancestor, which then stays pinned against that channel's rename/RMDIR.
+
 Revalidation of the exclusive-writer invariant for this shape:
 
 - One request is one library call (or, for `close` of a written file, a
@@ -173,8 +187,16 @@ refused, and what every object gets from a process that sets no clock.
   non-`fsd` boots) record 0.
 - Exposed in the file server's `attr` payload (`fsd/src/proto.rs`,
   `ATTR_BYTES` 48, the last word), and by the host reader as each record's
-  `mtime` (`None` for format-1 records, which have none). No access or
-  change time exists.
+  `mtime` (`None` for format-1 records, which have none). The internal V2
+  runtime metadata hooks preserve that word for `std::fs::Metadata::modified`;
+  0 returns `Unsupported`, while positive values become exact whole seconds
+  since the Unix epoch. Path, open-handle and listing snapshot metadata share
+  the decoder. V1 hooks retain their 40-byte C-kit layout and omit time.
+  The agreement claim covers Rust std routes only: the unchanged V1 C kit
+  reports POSIX `st_mtime = 0` (1970), including for objects whose actual
+  mtime is known. Promoting times into the C kit is outside this change.
+  Native `stat` shows ISO UTC or `unknown`; `ls -l` shows UTC to the minute
+  or `-`. No access, change or creation time or timestamp setter exists.
 
 **Migration** is host-side and never in place: read the old image with
 the host reader (which reads format 1), create a new image with the new

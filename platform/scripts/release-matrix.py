@@ -12,7 +12,9 @@ Cases (the numbers are the gate's):
   1  mismatched boot image and release tree: A's image, B selected
   2  unsupported filesystem format: B's image on a format-1 disk
   3  update artifact missing: stage from a release directory lacking its importer
-  4  staged release corrupted: B's record altered on the disk, then selected
+  4  staged release corrupted: first a copy of B with one tree file altered after
+     its build is refused by stage (manifest_mismatch, nothing written); then B's
+     record altered on the disk, then selected
   5  failure before the selection switch: a partial stage, then select
   6  failure after selection before readiness: B selected, A's image booted
   7  failed served boot, manual rollback: B refused, rollback to A
@@ -22,6 +24,24 @@ Cases (the numbers are the gate's):
      altered record, mismatched backup.toml, future format
   11 migration from format 1 (needs --format1-image)
   12 rollback across the migration boundary is refused; the retained image restores
+
+Cases run only when named with --only (they are not part of the gate's 1-12):
+  13 rollback from cache without a kernel checkout: B served, `rollback
+     --target` alone boots the selection image cached at A's install (any
+     kernel build is refused), A accepted, halted backup, restore, A served
+     with its marker and accepted again
+  14 A->B->C staging after removing A (needs --release-c): B staged, selected
+     and accepted; C's stage refused (two trees); `remove --id A` by B's
+     importer (step 5); C staged, selected and accepted; rollback from the
+     cache to B, B served and accepted
+  15 restore --clone through served readiness: a halted backup of the A
+     machine restored with --clone into a new operator directory under another
+     target identity; the clone served with a host key that is not the
+     source's (a client trusting only the source's key is refused), its
+     selection cache for A present, every other release without one named,
+     and the source's operator directory byte-identical after the backup
+  16 corrupted source tree: stage refuses by exact tree-file name, appends one
+     REFUSED receipt and leaves every previous target file unchanged
 """
 
 import argparse
@@ -115,6 +135,55 @@ def accept(target, key, port):
     return run_tool(rel.cmd_accept, target=str(target.out), key=str(key), port=port)
 
 
+def no_build(*args, **kwargs):
+    raise rel.Failed("a kernel build was attempted")
+
+
+def last_receipt(target, prefix):
+    found = sorted((target.out / "receipts").glob(f"{prefix}-*.toml"))
+    return rel.read_toml_flat(found[-1]) if found else {}
+
+
+def snapshot(directory):
+    """Every file under `directory` and its digest."""
+    return {str(p.relative_to(directory)): rel.sha256_file(p)
+            for p in sorted(pathlib.Path(directory).rglob("*")) if p.is_file()}
+
+
+def stage_refusal_only(target, before, reason):
+    """One new, parseable pre-write receipt; every previous byte preserved."""
+    after = snapshot(target.out)
+    added = set(after) - set(before)
+    if len(added) != 1:
+        return False
+    name = added.pop()
+    if not name.startswith("receipts/stage-failed-") or not name.endswith(".toml"):
+        return False
+    try:
+        receipt = rel.read_toml_flat(target.out / name).get("stage", {})
+    except (OSError, ValueError):
+        return False
+    del after[name]
+    return (after == before and receipt.get("state") == "REFUSED"
+            and receipt.get("target_effects_possible") is False
+            and reason in receipt.get("error", ""))
+
+
+def corrupt_tree_stage_case(target, release, kernel, work):
+    # A private source copy: the supplied release and target remain intact,
+    # apart from the one failure receipt that is itself checked below.
+    with tempfile.TemporaryDirectory(prefix="case16-release-", dir=work) as scratch:
+        changed = pathlib.Path(scratch) / "release"
+        shutil.copytree(release.path, changed)
+        victim = sorted(p for p in (changed / "tree").rglob("*") if p.is_file())[0]
+        victim.write_bytes(victim.read_bytes() + b"\ncase16 changed source\n")
+        reason = f"manifest_mismatch digest {victim.relative_to(changed).as_posix()}"
+        before = snapshot(target.out)
+        ok, text = run_tool(rel.cmd_stage, release=str(changed), kernel=str(kernel), target=str(target.out))
+        checked = not ok and reason in text and stage_refusal_only(target, before, reason)
+        return checked, f"named_refusal={not ok and reason in text} receipt_and_target={checked} {text[-180:]}"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--release-a", required=True)
@@ -122,6 +191,8 @@ def main():
     ap.add_argument("--kernel", help="default checkout for both releases (same-kernel matrix)")
     ap.add_argument("--kernel-a", help="checkout matching release A's manifest")
     ap.add_argument("--kernel-b", help="checkout matching release B's manifest")
+    ap.add_argument("--release-c", help="a third release directory (case 14), another id")
+    ap.add_argument("--kernel-c", help="checkout matching release C's manifest (default: --kernel)")
     ap.add_argument("--key", required=True)
     ap.add_argument("--work", required=True)
     ap.add_argument("--port", type=int, default=2231)
@@ -196,6 +267,21 @@ def main():
 
     if want(4):
         t = from_base("case4")
+        # A release directory whose tree no longer matches its manifest
+        # (one command altered after the build): stage refuses by name
+        # before any importer boot, and the operator directory is unchanged.
+        tampered = work / "case4-tampered-release"
+        shutil.rmtree(tampered, ignore_errors=True)
+        shutil.copytree(B.path, tampered)
+        victim = sorted((tampered / "tree" / "bin").iterdir())[0]
+        data = bytearray(victim.read_bytes())
+        data[len(data) // 2] ^= 0x01
+        victim.write_bytes(bytes(data))
+        before = snapshot(t.out)
+        okt, textt = run_tool(rel.cmd_stage, release=str(tampered), kernel=str(kernel), target=str(t.out))
+        tamper_refused = (not okt and f"manifest_mismatch digest tree/bin/{victim.name}" in textt
+                          and stage_refusal_only(t, before, f"manifest_mismatch digest tree/bin/{victim.name}"))
+        shutil.rmtree(tampered, ignore_errors=True)
         ok, text = run_tool(rel.cmd_stage, release=str(B.path), kernel=str(kernel), target=str(t.out))
         # Corrupt the staged record on the disk the only way the disk is
         # written: an importer step replacing the file whole.
@@ -206,8 +292,9 @@ def main():
         # The host refuses the selection (check_mismatch) and A still boots.
         okb, ready, boot = boot_expect(t, t.release_iso(A.id), "case4", port, release_id=A.id)
         boot.ssh(key, "shutdown"); boot.wait_end(); boot.stop()
-        record(4, "staged-release-corrupted", ok and not ok2 and "check_mismatch" in text2 and okb,
-               f"stage={ok} select_refused={not ok2} ({text2[:60]}) A_boots={okb}")
+        record(4, "staged-release-corrupted", tamper_refused and ok and not ok2 and "check_mismatch" in text2 and okb,
+               f"tampered_tree_refused={tamper_refused} ({textt[-80:]}) stage={ok} select_refused={not ok2} "
+               f"({text2[:60]}) A_boots={okb}")
 
     if want(5):
         t = from_base("case5")
@@ -343,6 +430,139 @@ def main():
                 retained = sorted(t.out.glob(f"{rel.IMAGE}.pre-migration-*"))
                 record(12, "rollback-across-migration", not okr and retained and
                        ("migration" in textr or "accepted" in textr), f"refused={not okr} ({textr[:80]}) retained={len(retained)}")
+
+    if want(13):
+        t = from_base("case13")
+        ok, text = run_tool(rel.cmd_stage, release=str(B.path), kernel=str(kernel), target=str(t.out))
+        ok2, text2 = run_tool(rel.cmd_select, release=str(B.path), kernel=str(kernel), target=str(t.out))
+        okb, ready, boot = boot_expect(t, t.iso, "case13-b", port, release_id=B.id)
+        rc, out, err = boot.ssh(key, "/bin/release")
+        boot.ssh(key, "shutdown"); boot.wait_end(); boot.stop()
+        b_ready = okb and f"release={B.id}" in out.decode(errors="replace")
+        # No --kernel, no --release: the cached selection image of A, and
+        # any kernel build on the way is a refusal.
+        saved, rel.oi.kernel_iso = rel.oi.kernel_iso, no_build
+        try:
+            okr, textr = run_tool(rel.cmd_rollback, target=str(t.out))
+        finally:
+            rel.oi.kernel_iso = saved
+        source = last_receipt(t, f"rolled_back-{A.id}").get("rolled_back", {}).get("source")
+        oka, texta = accept(t, key, port)
+        backup = work / "backup-case13"
+        shutil.rmtree(backup, ignore_errors=True)
+        okk, textk = run_tool(rel.cmd_backup, target=str(t.out), backup=str(backup))
+        t.image.write_bytes(b"\0" * 4096)
+        okre, textre = run_tool(rel.cmd_restore, target=str(t.out), backup=str(backup), replace=True, clone=False,
+                                release=None, kernel=None, key=None, port=port, target_identity=None)
+        okboot, ready, boot = boot_expect(t, t.iso, "case13-restored", port, release_id=A.id)
+        rcm, marker, _ = boot.ssh(key, "/bin/cat /home/operator/.accept")
+        boot.ssh(key, "shutdown"); boot.wait_end(); boot.stop()
+        oka2, texta2 = accept(t, key, port)
+        record(13, "rollback-from-cache", ok and ok2 and b_ready and okr and source == "cache" and oka and okk
+               and okre and okboot and rcm == 0 and f"accept {A.id} ".encode() in marker and oka2,
+               f"B_ready={b_ready} rollback={okr} source={source} accepted={oka} backup={okk} restore={okre} "
+               f"boot={okboot} marker={marker[:40]!r} reaccepted={oka2} {textr[-80:] if not okr else ''}")
+
+    if want(14) and not args.release_c:
+        record(14, "stage-third-after-remove", False, "skipped: no --release-c")
+    elif want(14):
+        C = rel.Release(args.release_c)
+        kernel_c = pathlib.Path(args.kernel_c or args.kernel or args.kernel_b).resolve()
+        t = from_base("case14")
+        steps = {}
+        steps["stage_b"], _ = run_tool(rel.cmd_stage, release=str(B.path), kernel=str(kernel), target=str(t.out))
+        steps["select_b"], _ = run_tool(rel.cmd_select, release=str(B.path), kernel=str(kernel), target=str(t.out))
+        steps["accept_b"], _ = accept(t, key, port)
+        okc, textc = run_tool(rel.cmd_stage, release=str(C.path), kernel=str(kernel_c), target=str(t.out))
+        steps["third_refused"] = not okc and "at most 2" in textc
+        # A is neither selected nor the last accepted (B is both): B's
+        # importer removes /releases/A/ in one step-5 commit.
+        okr, textr = run_tool(rel.cmd_remove, release=str(B.path), kernel=str(kernel), target=str(t.out), id=A.id)
+        steps["remove_a"] = okr and A.id not in t.trees() and not (t.out / "releases" / A.id).exists()
+        steps["stage_c"], textsc = run_tool(rel.cmd_stage, release=str(C.path), kernel=str(kernel_c),
+                                            target=str(t.out))
+        steps["select_c"], _ = run_tool(rel.cmd_select, release=str(C.path), kernel=str(kernel_c), target=str(t.out))
+        steps["accept_c"], _ = accept(t, key, port)
+        steps["trees_bc"] = t.trees() == sorted([B.id, C.id])
+        saved, rel.oi.kernel_iso = rel.oi.kernel_iso, no_build
+        try:
+            steps["rollback_b"], textrb = run_tool(rel.cmd_rollback, target=str(t.out))
+        finally:
+            rel.oi.kernel_iso = saved
+        steps["reaccept_b"], _ = accept(t, key, port)
+        failed = [name for name, ok in steps.items() if not ok]
+        record(14, "stage-third-after-remove", not failed,
+               f"failed={','.join(failed) or 'none'} remove={textr[-100:]!r} trees={','.join(t.trees())}")
+
+    if want(15):
+        # The source: the A machine (installed, accepted, its host key made
+        # at its first served boot), halted. The backup appends one ledger
+        # line to it; from then on nothing may change it.
+        src = from_base("case15-source")
+        src_seed = src.tree().get("/ssh/host_ed25519_seed")
+        src_fp = rel.host_key_fingerprint(src_seed) if src_seed else "none"
+        src_image = rel.sha256_file(src.image)
+        backup = work / "backup-case15"
+        shutil.rmtree(backup, ignore_errors=True)
+        steps, facts = {}, {}
+        steps["source_has_key"] = src_seed is not None
+        steps["backup"], textk = run_tool(rel.cmd_backup, target=str(src.out), backup=str(backup))
+        src_after_backup = snapshot(src.out)
+        t = fresh_target(work, "case15-clone")
+        steps["clone"], textc = run_tool(rel.cmd_restore, target=str(t.out), backup=str(backup), replace=False,
+                                         clone=True, release=str(A.path), kernel=str(kernel_a), key=str(key),
+                                         port=port, target_identity="matrix-clone")
+        # The CLONE OK line, or the whole refusal (a readiness refusal puts
+        # its cause first and the console lines after it).
+        facts["clone"] = ((textc.splitlines() or [""])[-1] if steps["clone"]
+                          else " | ".join(textc.splitlines())[:300])
+        clone_seed = t.tree().get("/ssh/host_ed25519_seed") if steps["clone"] else None
+        clone_fp = rel.host_key_fingerprint(clone_seed) if clone_seed else "none"
+        steps["identity_differs"] = t.identity() == "matrix-clone" and t.identity() != src.identity()
+        steps["key_differs"] = clone_seed is not None and clone_seed != src_seed and clone_fp != src_fp
+        try:
+            facts["cache"] = rel.select_cache(t, A.id)["iso_sha256"][:16]
+            receipt = last_receipt(t, f"clone-{A.id}")
+            steps["cache_present"] = receipt.get("select_cache", {}).get("iso_sha256", "")[:16] == facts["cache"]
+            absent = receipt.get("select_cache_absent", {}).get("releases")
+            steps["absent_named"] = absent == [r for r in t.trees() if r != A.id]
+        except rel.Failed as error:
+            steps["cache_present"], facts["cache"] = False, str(error)[:120]
+        if steps["clone"]:
+            try:
+                okb, ready, boot = boot_expect(t, t.iso, "case15-clone", port, release_id=A.id)
+                try:
+                    rc, out, err = boot.ssh(key, "/bin/release")
+                    steps["served"] = rc == 0 and f"release={A.id}" in out.decode(errors="replace")
+                    steps["served_key_is_clones"] = not ready["generated"] and ready["fingerprint"] == clone_fp
+                    # A client that trusts only the source machine's key.
+                    old = work / "case15-source-trust"
+                    old.mkdir(exist_ok=True)
+                    client = rel.smx.Client(old, port)
+                    client.trust(rel.host_public_key(src_seed) if src_seed else "ssh-ed25519 AAAA")
+                    rco, _, erro = client.run(key, "echo in")
+                    steps["source_key_refused"] = rco == 255 and b"Host key verification failed" in erro
+                    facts["old_client"] = f"rc={rco} {erro.decode(errors='replace').strip()[:60]}"
+                    boot.ssh(key, "shutdown")
+                    steps["halted"] = boot.wait_end() == 3
+                finally:
+                    boot.stop()
+            except rel.Failed as error:
+                steps["served"], facts["boot"] = False, str(error)[-200:]
+        steps["source_untouched"] = (rel.sha256_file(src.image) == src_image
+                                     and snapshot(src.out) == src_after_backup)
+        failed = [name for name, ok in steps.items() if not ok]
+        # A refusal goes right after failed=: record() prints 300 characters.
+        record(15, "restore-clone-served", not failed and len(steps) == 12,
+               f"failed={','.join(failed) or 'none'} "
+               + ("" if steps["clone"] else f"clone_refused={facts['clone'][:160]!r} ")
+               + f"source={src_fp} clone={clone_fp} target={t.identity()} "
+               f"cache={facts.get('cache')} old_client={facts.get('old_client')} {facts.get('boot', '')}")
+
+    if want(16):
+        t = from_base("case16")
+        ok, text = corrupt_tree_stage_case(t, B, kernel, work)
+        record(16, "corrupted-source-tree-receipt", ok, text)
 
     passed = sum(r["verdict"] == "PASS" for r in RESULTS)
     print(f"E3 SUMMARY pass={passed} fail={len(RESULTS) - passed}")

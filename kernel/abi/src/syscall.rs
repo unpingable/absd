@@ -60,8 +60,9 @@ pub const MAX_SPAWN_IMAGE_BYTES: u64 = 32 << 20;
 /// the one CPU, so the counts are one consistent state of the allocator at
 /// the instant of the call, not an estimate or an average. Only frames the
 /// allocator tracks are counted: those the firmware memory map marked
-/// usable, below `TRACKED_PHYSICAL_LIMIT`, minus the ranges reserved at
-/// boot (low memory, the kernel image, boot information). Every frame a
+/// usable and the kernel tracks (below its disclosed limit, at most 64 GiB
+/// on x86), minus the ranges reserved at boot (low memory, the kernel
+/// image, boot information, modules, the frame table). Every frame a
 /// process or the kernel holds through the allocator is allocated,
 /// including page tables and the calling process's own frames.
 pub const SYS_FRAME_STATS: u64 = 35;
@@ -475,6 +476,11 @@ pub const ERROR_PIPE: i64 = -32;
 pub const ERROR_NOT_IMPLEMENTED: i64 = -38;
 /// No further PID can be represented by the kernel's resource-owner field.
 pub const ERROR_PID_EXHAUSTED: i64 = -75;
+/// `nic_send` only: the transmit bound expired while the link had no
+/// carrier, or a descriptor held that way has not completed and carrier is
+/// still absent. The frame was not reported done; the NIC is not disabled
+/// (`ERROR_IO` keeps meaning disabled). Linux's `ENETDOWN` value.
+pub const ERROR_NO_CARRIER: i64 = -100;
 /// A timed wait ended before the awaited event.
 pub const ERROR_TIMEOUT: i64 = -110;
 /// A conditional transition found the object past the expected version.
@@ -625,11 +631,13 @@ mod tests {
                 SYS_RESOURCE_CENSUS,
                 SYS_ABI_VERSION,
                 SYS_BLOCK_READ_MANY,
-                SYS_BLOCK_WRITE_MANY
+                SYS_BLOCK_WRITE_MANY,
+                SYS_FRAME_ADMIT_SELF,
+                SYS_SPAWN_RESERVED_COPY
             ],
             [
                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 24,
-                25, 26, 27, 29, 30, 31, 35, 36, 37, 38, 40, 41, 42, 43, 44
+                25, 26, 27, 29, 30, 31, 35, 36, 37, 38, 40, 41, 42, 43, 44, 45, 46
             ]
         );
         assert_eq!(
@@ -648,11 +656,12 @@ mod tests {
                 ERROR_PIPE,
                 ERROR_NOT_IMPLEMENTED,
                 ERROR_PID_EXHAUSTED,
+                ERROR_NO_CARRIER,
                 ERROR_TIMEOUT,
                 ERROR_STALE
             ],
             [
-                -1, -2, -5, -8, -9, -10, -11, -12, -14, -22, -24, -32, -38, -75, -110, -116
+                -1, -2, -5, -8, -9, -10, -11, -12, -14, -22, -24, -32, -38, -75, -100, -110, -116
             ]
         );
     }
@@ -746,5 +755,72 @@ mod tests {
             assert_eq!(Outcome::from_words(words), Some(outcome));
         }
         assert_eq!(Outcome::from_words([9, 0, 0, 0]), None);
+    }
+}
+
+/// Fixed PID-owned frame admission, available only to bootstrap init before READY.
+pub const SYS_FRAME_ADMIT_SELF: u64 = 45;
+pub const SYS_SPAWN_RESERVED_COPY: u64 = 46;
+pub const MAX_FRAME_ADMISSION_FRAMES: u64 = 65536;
+pub const SPAWN_RESERVED_REQUEST_BYTES: usize = 32;
+pub const SPAWN_RESERVED_PROGRAM_OFFSET: usize = 0;
+pub const SPAWN_RESERVED_COPIES_OFFSET: usize = 8;
+pub const SPAWN_RESERVED_COUNT_OFFSET: usize = 16;
+pub const SPAWN_RESERVED_TOTAL_OFFSET: usize = 24;
+
+/// Explicit little-endian wire record, independent of Rust layout/alignment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SpawnReservedRequest {
+    pub program_and_flags: u64,
+    pub copies_address: u64,
+    pub copies_count: u64,
+    pub total_frames: u64,
+}
+impl SpawnReservedRequest {
+    pub fn to_bytes(self) -> [u8; SPAWN_RESERVED_REQUEST_BYTES] {
+        let mut bytes = [0; SPAWN_RESERVED_REQUEST_BYTES];
+        for (chunk, word) in bytes.as_chunks_mut::<8>().0.iter_mut().zip([
+            self.program_and_flags,
+            self.copies_address,
+            self.copies_count,
+            self.total_frames,
+        ]) {
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        bytes
+    }
+    pub fn from_bytes(bytes: &[u8; SPAWN_RESERVED_REQUEST_BYTES]) -> Self {
+        let mut words = [0; 4];
+        for (word, chunk) in words.iter_mut().zip(bytes.as_chunks::<8>().0.iter()) {
+            *word = u64::from_le_bytes(*chunk);
+        }
+        Self {
+            program_and_flags: words[0],
+            copies_address: words[1],
+            copies_count: words[2],
+            total_frames: words[3],
+        }
+    }
+}
+#[cfg(test)]
+mod frame_wire_tests {
+    use super::*;
+    #[test]
+    fn reserved_request_is_four_little_endian_words() {
+        let raw = core::array::from_fn(|i| i as u8);
+        let request = SpawnReservedRequest::from_bytes(&raw);
+        assert_eq!(request.program_and_flags, 0x0706050403020100);
+        assert_eq!(request.copies_address, 0x0f0e0d0c0b0a0908);
+        assert_eq!(request.copies_count, 0x1716151413121110);
+        assert_eq!(request.total_frames, 0x1f1e1d1c1b1a1918);
+        assert_eq!(request.to_bytes(), raw);
+        assert_eq!(
+            [
+                SYS_FRAME_ADMIT_SELF,
+                SYS_SPAWN_RESERVED_COPY,
+                MAX_FRAME_ADMISSION_FRAMES
+            ],
+            [45, 46, 65536]
+        );
     }
 }

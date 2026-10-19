@@ -16,6 +16,24 @@ nothing.
 A passing check is a mechanical result. It is not legal clearance, and it
 says nothing about whether unchanged code is original.
 
+## Host build inputs
+
+The developer build's host-tool list is in README.md. The cross-host build
+also requires these Ubuntu 24.04 inputs:
+
+| Package | Qualified version | Build consumer |
+| --- | --- | --- |
+| ninja-build | 1.11.1-2 | Picolibc's Meson backend finds `ninja` on PATH |
+| groff-base | 1.23.0-3build2 | Manual renderer and the exact tree checked by `verify-inputs.sh` |
+| clang | 1:18.0-59~exp2 | Provides the unversioned `clang` driver used during staging |
+| libclang-rt-18-dev | 1:18.1.3-1ubuntu1 | Supplies the target builtins archive selected by clang's resource directory |
+
+Installing the full `groff` package adds files outside the pinned renderer
+tree. A host package prerequisite is distinct from shipped material: clang's
+builtins library can be linked into an image, while the build driver itself
+does not become an image component merely because it ran. Keep actual image
+inventory and notice obligations separate from this host-tool declaration.
+
 ## Commands
 
     scripts/provenance.py check          # fast; run before every integration
@@ -168,3 +186,33 @@ upstream, modified upstream files.
   those are absent.
 - `scripts/provenance.py` and `scripts/spdx-check.py` are kept identical in
   the kernel and platform repositories by hand.
+
+## Owner distribution policy, 2026-10-19
+
+The owner distinguishes three scopes. Code distributed as part of ABSD
+must be permissively licensed. Libraries incorporated into ABSD binaries
+have a strong preference against LGPL. External build and test tools are
+evaluated case by case; their execution alone does not incorporate their
+code or determine the license of independently authored files.
+
+Provenance must distinguish copied context or modified upstream expression,
+independently authored additions, generated configuration and mere API use.
+A patch target's license is not sufficient evidence to classify every added
+line. Mixed patch files still carry their copied upstream material. Generated
+output requires its own provenance assessment; generation alone does not
+settle copyright or license applicability.
+
+For the public RC1 source, the three mixed TinyCC patches and generated
+configuration are excluded. Five locally introduced TinyCC build-support
+files are omitted because their only consumer is that unavailable stage;
+this is a scope decision, not a finding of LGPL derivation. TinyCC compiler
+qualification is NOT_RUN / not included in the public source. Its public
+stage entry points refuse explicitly; kernel/core checks and their refusal
+criteria are unchanged. The private isolated stage remains separate.
+
+An inventory is a bounded evidence record, not legal clearance. Report any
+additional GPL/LGPL finding with its actual scope before publication. Notice
+texts for unbuilt upstream files and permissive alternatives already elected
+must not be described as incorporated copyleft code. GRUB/Unifont boot
+components and their separate source/notices remain separately disclosed;
+this source correction does not replace or relicense them.

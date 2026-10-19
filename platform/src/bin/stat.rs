@@ -4,9 +4,13 @@
 //! reused), and link count, and, when this process reaches the filesystem
 //! through the file server, the mount of this session's binding that holds
 //! it and whether that mount is writable here. ABSD files have no owner,
-//! mode, or times, so none is shown. Exit 1 if a path cannot be examined.
+//! or mode. Modification time is shown in UTC, or unknown when absent.
+//! Exit 1 if a path cannot be examined.
 
 use std::os::absd::fs::MetadataExt;
+
+#[path = "../cmd_mtime.rs"]
+mod cmd_mtime;
 
 #[path = "../cmd_mounts.rs"]
 mod cmd_mounts;
@@ -43,6 +47,10 @@ fn main() {
                 println!("read-only flag: {}", if meta.permissions().readonly() { "yes" } else { "no" });
                 println!("object: filesystem={:016x} serial={}", meta.filesystem_id(), meta.object_serial());
                 println!("links: {}", meta.links());
+                match cmd_mtime::display(&meta, true) {
+                    Ok(time) => println!("modified: {time}"),
+                    Err(error) => { eprintln!("stat: {path}: {error}"); status = 1; }
+                }
                 if let Some(line) = mount_line(path) {
                     println!("{line}");
                 }

@@ -13,6 +13,7 @@ here = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("survival_recovery", here / "survival-recovery.py")
 recovery = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(recovery)
+from served_ram import served_qemu
 
 
 class BadConfigTarget(recovery.RecoveryTarget):
@@ -51,7 +52,7 @@ def main():
     env = os.environ.copy()
     env["ABSD_QEMU_REBOOT"] = "allow"
     command = [str(target.kernel / "scripts/durable-boot.sh"), str(iso),
-               str(target.image), str(log), "120", *args.qemu.split(),
+               str(target.image), str(log), "120", *served_qemu(args.qemu),
                "-netdev", "user,id=n0,net=10.0.2.0/24", "-device", "e1000,netdev=n0"]
     runner = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               text=True, env=env, start_new_session=True)

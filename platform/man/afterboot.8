@@ -176,7 +176,8 @@ This manual
 .Pq Pa /share/man .
 Read-only.
 .It Pa /var/log
-The logs.
+The logs and retained owner network sample; see
+.Xr net-status 1 .
 Read-only.
 .It Pa /ssh
 The host key and authorized keys.
@@ -234,7 +235,10 @@ begins each boot with
 .Ql fsd: started: boot ID ,
 the identity
 .Xr uptime 1
-prints.
+prints, and then records how the previous generation ended
+.Pq Ql FSD RECOVERY ;
+.Xr health 1
+reads that line for this boot.
 When a log would grow past 64 KiB it is renamed to
 .Pa NAME.0 ,
 replacing the older one, and started again: each log keeps at most
@@ -316,7 +320,8 @@ ABSD.
 counts kernel ticks since boot and names the boot.
 A file records one time, its modification time
 .Pq Xr filesystem 7 ;
-no command shows or sets it yet.
+stat shows it as UTC ISO time (or unknown), and ls -l shows UTC to the
+minute (or -). No command sets it.
 .Ss Limits
 .Bl -bullet -compact
 .It
@@ -411,6 +416,7 @@ instead.
 .Sh SEE ALSO
 .Xr absd-sh 1 ,
 .Xr date 1 ,
+.Xr health 1 ,
 .Xr intro 1 ,
 .Xr man 1 ,
 .Xr release 1 ,

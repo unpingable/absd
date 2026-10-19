@@ -40,4 +40,17 @@ mv "$stage/sunset-0.6.0" "$stage/sunset"
 test -z "$(find "$stage" \( -name '*.rej' -o -name '*.orig' \) \
     ! -path "$stage/sunset/Cargo.toml.orig" -print -quit)"
 grep -q 'pub fn send_exit_status' "$stage/sunset/src/runner.rs"
+# ssh/ reaches the tree's crates and the staged sunset through ssh/tree/
+# (untracked symlinks; see ssh/Cargo.toml), so that Cargo hashes their paths
+# relative to the workspace and the programs do not depend on the checkout
+# path. runtime and net name broker, fs, fsd and release by relative path,
+# which Cargo resolves from tree/ without following the links.
+# Made afresh: ln -sfn would put a link inside a real directory left there
+# (a tree copied with its links followed), and the build would use it.
+rm -rf "$root/ssh/tree"
+mkdir -p "$root/ssh/tree"
+for crate in runtime broker fs fsd release net; do
+    ln -sfn "../../$crate" "$root/ssh/tree/$crate"
+done
+ln -sfn ../../../absd-std-staged-ssh/sunset "$root/ssh/tree/sunset"
 printf '%s\n' 'ABSD SSH SUNSET PATCH APPLY OK'

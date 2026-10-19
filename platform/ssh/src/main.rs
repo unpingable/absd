@@ -26,6 +26,8 @@ mod tty;
 
 #[cfg(target_os = "absd")]
 mod absd;
+#[cfg(target_os = "absd")]
+mod net_diagnostics;
 #[cfg(unix)]
 mod linux;
 

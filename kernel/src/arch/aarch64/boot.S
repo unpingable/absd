@@ -13,14 +13,43 @@ _start:
 start:
  msr daifset, #15
  mov x20, x0
- mrs x1, CurrentEL
- cmp x1, #8
+ mrs x21, CurrentEL
+ cmp x21, #8
  b.ne 1f
  mov x1, #0x80000000
  msr hcr_el2, x1
+ mrs x1, hcr_el2
+ lsr x1, x1, #34
+ and x1, x1, #1
+ orr x21, x21, x1, lsl #8
  mov x1, #3
  msr cnthctl_el2, x1
  msr cntvoff_el2, xzr
+ msr vttbr_el2, xzr
+ // The minimum ARMv8.0 non-VHE EL2 state for an EL1 kernel: EL1 sees
+ // the real MIDR/MPIDR, no FP/SIMD or trace trap, no debug or coarse
+ // system-register traps, the PMU left to EL1, and the GICv3 system
+ // register interface enabled for EL1 when the CPU has one.
+ mrs x1, midr_el1
+ msr vpidr_el2, x1
+ mrs x1, mpidr_el1
+ msr vmpidr_el2, x1
+ mov x1, #0x33ff
+ msr cptr_el2, x1
+ msr hstr_el2, xzr
+ mrs x1, pmcr_el0
+ ubfx x1, x1, #11, #5
+ msr mdcr_el2, x1
+ mrs x1, id_aa64pfr0_el1
+ ubfx x1, x1, #24, #4
+ cbz x1, 4f
+ mov x1, #0xf
+ msr S3_4_C12_C9_5, x1
+4:
+ mov x1, #0x0800
+ movk x1, #0x30d0, lsl #16
+ msr sctlr_el1, x1
+ isb
  adr x1, 1f
  msr elr_el2, x1
  mov x1, #0x3c5
@@ -37,6 +66,14 @@ start:
  str xzr, [x1], #8
  b 2b
 3:
+ adrp x1, ARM_ENTRY_EL
+ add x1, x1, :lo12:ARM_ENTRY_EL
+ // CurrentEL>>2 in bits [3:0]; bit 8 set when HCR_EL2.E2H would not clear.
+ lsr x2, x21, #2
+ and x2, x2, #0xf
+ and x21, x21, #0x100
+ orr x2, x2, x21
+ str x2, [x1]
  adrp x1, ARM_CPU_LOCAL
  add x1, x1, :lo12:ARM_CPU_LOCAL
  msr tpidr_el1, x1
@@ -239,6 +276,31 @@ arm_secondary_entry:
  mov x1, #3
  msr cnthctl_el2, x1
  msr cntvoff_el2, xzr
+ msr vttbr_el2, xzr
+ // The minimum ARMv8.0 non-VHE EL2 state for an EL1 kernel: EL1 sees
+ // the real MIDR/MPIDR, no FP/SIMD or trace trap, no debug or coarse
+ // system-register traps, the PMU left to EL1, and the GICv3 system
+ // register interface enabled for EL1 when the CPU has one.
+ mrs x1, midr_el1
+ msr vpidr_el2, x1
+ mrs x1, mpidr_el1
+ msr vmpidr_el2, x1
+ mov x1, #0x33ff
+ msr cptr_el2, x1
+ msr hstr_el2, xzr
+ mrs x1, pmcr_el0
+ ubfx x1, x1, #11, #5
+ msr mdcr_el2, x1
+ mrs x1, id_aa64pfr0_el1
+ ubfx x1, x1, #24, #4
+ cbz x1, 7f
+ mov x1, #0xf
+ msr S3_4_C12_C9_5, x1
+7:
+ mov x1, #0x0800
+ movk x1, #0x30d0, lsl #16
+ msr sctlr_el1, x1
+ isb
  adr x1, 6f
  msr elr_el2, x1
  mov x1, #0x3c5

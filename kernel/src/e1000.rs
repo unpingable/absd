@@ -13,8 +13,12 @@
 //! Everything the device writes is checked (`absd_kernel::e1000_ring`): a
 //! receive descriptor that is not one whole, error-free frame of 14..=1514
 //! bytes is counted and recycled, never delivered, and a head register
-//! outside its ring disables the NIC for the rest of the boot. A disabled
-//! NIC has receive and transmit turned off and fails every later call.
+//! outside its ring disables the NIC for the rest of the boot.
+//! A disabled NIC has receive and transmit turned off and fails every later
+//! call. A transmit bound that expires without carrier is not a device
+//! failure (`e1000_ring::TxSlots`, the service-lifecycle record's §10): the
+//! send returns `NoCarrier`, the descriptor stays the device's until its
+//! done bit is seen, and the NIC stays enabled.
 //!
 //! The NIC is probed only when the boot command line carries `net`, so no
 //! other boot (and no physical boot) touches a network device.
@@ -23,7 +27,8 @@ use core::sync::atomic::{Ordering, fence};
 
 use absd_kernel::e1000_ring::{
     BUFFER_BYTES, RX_DESCRIPTORS, RxRefusal, RxVerdict, TX_COMMAND, TX_DESCRIPTORS, TX_STATUS_DD,
-    classify_rx, head_in_ring, next, send_length,
+    TxCounters, TxOutcome, TxPort, TxSlots, accept_rx_destination, classify_rx, head_in_ring, next,
+    send_length,
 };
 use absd_kernel::nic::{NIC_FLAG_DISABLED, NIC_FLAG_LINK_UP, NicInfo};
 
@@ -68,6 +73,9 @@ const RCTL_VALUE: u32 = (1 << 1) | (1 << 15) | (1 << 26);
 const TCTL_VALUE: u32 = (1 << 1) | (1 << 3) | (0x10 << 4) | (0x40 << 12);
 /// IPGT 10, IPGR1 8, IPGR2 6: the 82540EM manual's values for copper.
 const TIPG_VALUE: u32 = 10 | (8 << 10) | (6 << 20);
+/// TCTL.EN: the transmitter runs. Cleared only by the qualification
+/// fixture ([`TxHold`]) and by `disable`.
+const TCTL_EN: u32 = 1 << 1;
 
 /// Timer ticks (~1 ms) a reset or link-up may take.
 const SETUP_TICKS: u64 = 2_000;
@@ -105,7 +113,13 @@ pub enum SendError {
     Length,
     /// The frame could not be copied in.
     Copy,
+    /// The NIC is disabled for the rest of the boot (`ERROR_IO`).
     Disabled,
+    /// A link outcome (`ERROR_NO_CARRIER`): the frame was not reported done
+    /// because the link has no carrier. The NIC is not disabled; a
+    /// descriptor may still be device-owned, and later sends are refused
+    /// this way, at once, until it completes or carrier returns.
+    NoCarrier,
 }
 
 #[repr(C, align(4096))]
@@ -135,7 +149,10 @@ struct Nic {
     registers: u64,
     identity: Identity,
     rx_next: usize,
-    tx_next: usize,
+    tx: TxSlots,
+    /// Qualification fixture state ([`TxHold`]): the transmitter is paused
+    /// (TCTL.EN clear) or, for the software kind, done bits are withheld.
+    tx_paused: bool,
     disabled: Option<Disabled>,
     info: NicInfo,
 }
@@ -237,8 +254,11 @@ pub fn probe() -> Result<Identity, NicError> {
     let mut mac = [0u8; 6];
     mac[..4].copy_from_slice(&low.to_le_bytes());
     mac[4..].copy_from_slice(&(high as u16).to_le_bytes());
+    // The set of solicited-node MAC suffixes spans every MTA hash bit.
+    // UPE and MPE remain clear; take_frame narrows the hardware's multicast
+    // reception to the fixed all-nodes / solicited-node Ethernet policy.
     for index in 0..128 {
-        write32(registers, MTA + 4 * index, 0);
+        write32(registers, MTA + 4 * index, u32::MAX);
     }
 
     let rx = rx_ring();
@@ -294,7 +314,8 @@ pub fn probe() -> Result<Identity, NicError> {
             registers,
             identity,
             rx_next: 0,
-            tx_next: 0,
+            tx: TxSlots::new(),
+            tx_paused: false,
             disabled: None,
             info: NicInfo {
                 mac,
@@ -368,6 +389,23 @@ impl Nic {
         Ok(())
     }
 
+    /// Counts a held transmit descriptor whose done bit has appeared (once,
+    /// in `tx_frames`) and frees it; reads one done bit, writes nothing but
+    /// the fixture's resume.
+    fn reap_held(&mut self) {
+        let mut counters = TxCounters {
+            frames: self.info.tx_frames,
+            errors: self.info.tx_errors,
+        };
+        let mut port = MmioTx {
+            registers: self.registers,
+            paused: &mut self.tx_paused,
+        };
+        port.resume();
+        self.tx.reap(&mut port, &mut counters);
+        (self.info.tx_frames, self.info.tx_errors) = (counters.frames, counters.errors);
+    }
+
     /// Returns the descriptor at `rx_next` to the device and moves on.
     fn recycle(&mut self) {
         let index = self.rx_next;
@@ -421,6 +459,25 @@ pub fn take_frame(deliver: impl FnOnce(&[u8]) -> bool) -> Result<Option<usize>, 
                 // The device's writes to the buffer precede its status write.
                 fence(Ordering::SeqCst);
                 let frame = unsafe { core::slice::from_raw_parts(rx_buffer(index), bytes) };
+                let destination = [frame[0], frame[1], frame[2], frame[3], frame[4], frame[5]];
+                if !accept_rx_destination(destination, nic.identity.mac) {
+                    nic.info.rx_refused += 1;
+                    // Keep the same bounded diagnostic budget as descriptor
+                    // refusals, but identify destination filtering separately.
+                    // The shared NicInfo counter and wire ABI are unchanged.
+                    if nic.info.rx_refused <= 4 {
+                        serial::write("NIC RX FILTERED dst=");
+                        for (index, byte) in destination.iter().enumerate() {
+                            if index != 0 {
+                                serial::write(":");
+                            }
+                            serial::hex_digits(u64::from(*byte), 2);
+                        }
+                        serial::write("\n");
+                    }
+                    nic.recycle();
+                    continue;
+                }
                 let delivered = deliver(frame);
                 nic.recycle();
                 if !delivered {
@@ -434,8 +491,108 @@ pub fn take_frame(deliver: impl FnOnce(&[u8]) -> bool) -> Result<Option<usize>, 
     Ok(None)
 }
 
+/// Qualification only (`nic-tx-hold`, `nic-tx-hold-stuck`; docs/NETWORK.md
+/// "Verification"): QEMU's device completes a transmit descriptor without
+/// carrier, so the §10 link branch is unreachable there. Armed, a
+/// descriptor posted while `STATUS.LU` is clear is held by pausing the
+/// transmitter (TCTL.EN clear) before the tail moves; `Release` resumes it
+/// once carrier is back, `Stuck` never does. It models a device that holds
+/// descriptors without carrier; it is not one, and shows the driver's rule,
+/// not any device's behaviour. Unarmed (every boot without the option), it
+/// is inert: `tx_hold()` is `None` and no fixture branch runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TxHold {
+    Release,
+    Stuck,
+}
+
+static mut TX_HOLD: Option<TxHold> = None;
+
+/// Arms the fixture; called once from the probe, before init starts.
+pub fn arm_tx_hold(mode: TxHold) {
+    crate::kernel_lock::assert_bsp_device_access();
+    unsafe { *core::ptr::addr_of_mut!(TX_HOLD) = Some(mode) };
+}
+
+fn tx_hold() -> Option<TxHold> {
+    unsafe { *core::ptr::addr_of!(TX_HOLD) }
+}
+
+/// The transmit ring as `TxSlots` reaches it.
+struct MmioTx<'a> {
+    registers: u64,
+    paused: &'a mut bool,
+}
+
+impl MmioTx<'_> {
+    /// Fixture only: a paused transmitter resumes once carrier is back,
+    /// unless the hold is `Stuck`.
+    fn resume(&mut self) {
+        if *self.paused && tx_hold() == Some(TxHold::Release) && self.link_up() {
+            write32(self.registers, TCTL, TCTL_VALUE);
+            *self.paused = false;
+        }
+    }
+}
+
+impl TxPort for MmioTx<'_> {
+    fn link_up(&mut self) -> bool {
+        read32(self.registers, STATUS) & STATUS_LU != 0
+    }
+
+    fn done(&mut self, index: usize) -> bool {
+        let word = unsafe { core::ptr::read_volatile(tx_ring().add(2 * index + 1)) };
+        (word >> 32) as u8 & TX_STATUS_DD != 0
+    }
+
+    fn post(&mut self, index: usize, wire: usize, tail: usize) {
+        let descriptor = tx_ring();
+        let command = u64::from(wire as u16) | (u64::from(TX_COMMAND) << 24);
+        unsafe {
+            core::ptr::write_volatile(descriptor.add(2 * index), tx_buffer(index) as u64);
+            core::ptr::write_volatile(descriptor.add(2 * index + 1), command);
+        }
+        fence(Ordering::SeqCst);
+        if tx_hold().is_some() && !*self.paused && !self.link_up() {
+            write32(self.registers, TCTL, TCTL_VALUE & !TCTL_EN);
+            *self.paused = true;
+        }
+        write32(self.registers, TDT, tail as u32);
+    }
+
+    /// The spin phase reads only the descriptor (memory); `STATUS.LU` is
+    /// read at each tick-paced poll after it, and `transmit` has already
+    /// read it at post and reads it again at expiry.
+    fn wait_done(&mut self, index: usize, carrier_lost: &mut bool) -> bool {
+        self.resume();
+        crate::smp_fixture::device_first_poll(crate::kernel_lock::WaitSite::NicSend);
+        let start = ticks();
+        let mut spins = 0u32;
+        loop {
+            if self.done(index) {
+                return true;
+            }
+            if spins < SPIN_LIMIT {
+                spins += 1;
+                core::hint::spin_loop();
+                continue;
+            }
+            if !self.link_up() {
+                *carrier_lost = true;
+            }
+            if ticks().wrapping_sub(start) > TX_TICKS {
+                return false;
+            }
+            pause(crate::kernel_lock::WaitSite::NicSend);
+        }
+    }
+}
+
 /// Sends one frame of `length` bytes that `fill` copies into the transmit
-/// buffer. Returns once the device reports the descriptor done.
+/// buffer. Returns once the device reports the descriptor done, or with the
+/// §10 outcome (`e1000_ring::TxSlots`): a bound that expires without
+/// carrier is `NoCarrier` and leaves the descriptor device-owned and the
+/// NIC enabled; one that expires with carrier present disables the NIC.
 pub fn send(length: u64, fill: impl FnOnce(&mut [u8]) -> bool) -> Result<(), SendError> {
     let Some(nic) = nic() else {
         return Err(SendError::Disabled);
@@ -447,43 +604,41 @@ pub fn send(length: u64, fill: impl FnOnce(&mut [u8]) -> bool) -> Result<(), Sen
         nic.info.tx_refused += 1;
         return Err(SendError::Length);
     };
-    let index = nic.tx_next;
-    let buffer = unsafe { core::slice::from_raw_parts_mut(tx_buffer(index), BUFFER_BYTES) };
-    if !fill(&mut buffer[..bytes]) {
-        return Err(SendError::Copy);
-    }
-    buffer[bytes..wire].fill(0);
-    let descriptor = tx_ring();
-    let command = u64::from(wire as u16) | (u64::from(TX_COMMAND) << 24);
-    unsafe {
-        core::ptr::write_volatile(descriptor.add(2 * index), tx_buffer(index) as u64);
-        core::ptr::write_volatile(descriptor.add(2 * index + 1), command);
-    }
-    fence(Ordering::SeqCst);
-    nic.tx_next = next(index, TX_DESCRIPTORS);
-    write32(nic.registers, TDT, nic.tx_next as u32);
-    crate::smp_fixture::device_first_poll(crate::kernel_lock::WaitSite::NicSend);
-    let start = ticks();
-    let mut spins = 0u32;
-    loop {
-        let word = unsafe { core::ptr::read_volatile(descriptor.add(2 * index + 1)) };
-        if (word >> 32) as u8 & TX_STATUS_DD != 0 {
-            break;
+    let mut counters = TxCounters {
+        frames: nic.info.tx_frames,
+        errors: nic.info.tx_errors,
+    };
+    let mut port = MmioTx {
+        registers: nic.registers,
+        paused: &mut nic.tx_paused,
+    };
+    let outcome = match nic.tx.before_post(&mut port, &mut counters) {
+        Err(outcome) => Some(outcome),
+        Ok(index) => {
+            let buffer = unsafe { core::slice::from_raw_parts_mut(tx_buffer(index), BUFFER_BYTES) };
+            if fill(&mut buffer[..bytes]) {
+                buffer[bytes..wire].fill(0);
+                Some(nic.tx.transmit(&mut port, index, wire, &mut counters))
+            } else {
+                None
+            }
         }
-        if spins < SPIN_LIMIT {
-            spins += 1;
-            core::hint::spin_loop();
-            continue;
-        }
-        if ticks().wrapping_sub(start) > TX_TICKS {
-            nic.info.tx_errors += 1;
+    };
+    (nic.info.tx_frames, nic.info.tx_errors) = (counters.frames, counters.errors);
+    match outcome {
+        None => Err(SendError::Copy),
+        Some(TxOutcome::Sent) => nic.check_heads().map_err(|_| SendError::Disabled),
+        Some(TxOutcome::NoCarrier) => Err(SendError::NoCarrier),
+        Some(TxOutcome::DeviceFailed) => {
+            // A device outcome (counted by `TxSlots`, except a misused
+            // `transmit`, which counts nothing). The ring state is rebuilt
+            // so nothing of it outlives the disable.
             nic.disable(Disabled::TxTimeout);
-            return Err(SendError::Disabled);
+            nic.tx = TxSlots::new();
+            nic.tx_paused = false;
+            Err(SendError::Disabled)
         }
-        pause(crate::kernel_lock::WaitSite::NicSend);
     }
-    nic.info.tx_frames += 1;
-    nic.check_heads().map_err(|_| SendError::Disabled)
 }
 
 /// The record `nic_info` returns. The device's missed-packet counter clears
@@ -492,6 +647,11 @@ pub fn info() -> Option<NicInfo> {
     let nic = nic()?;
     if nic.disabled.is_none() {
         nic.info.rx_missed += u64::from(read32(nic.registers, MPC));
+        // A late done bit is counted here too, so the counters `nic_info`
+        // returns are current without waiting for the next send. A disabled
+        // NIC's registers and descriptors are no longer consulted; its held
+        // descriptor stays abandoned.
+        nic.reap_held();
     }
     let mut info = nic.info;
     info.mac = nic.identity.mac;

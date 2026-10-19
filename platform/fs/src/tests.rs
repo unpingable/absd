@@ -152,6 +152,148 @@ fn tree<D: Device>(fs: &mut Fs<D>) -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
 }
 
 #[test]
+fn generation_encoding_reserves_exactly_its_large_block_map() {
+    let image = Image {
+        fs_id: 0xabcd,
+        seq: 7,
+        next_serial: 3,
+        geometry: Geometry::for_region(32768).unwrap(),
+        records: vec![
+            Record {
+                serial: ROOT, parent: 0, name: Vec::new(), kind: Kind::Dir,
+                readonly: false, size: 0, blocks: Vec::new(), mtime: 0,
+            },
+            Record {
+                serial: 2, parent: ROOT, name: b"eight.bin.gz".to_vec(), kind: Kind::File,
+                readonly: false, size: 2049 * BLOCK as u64,
+                blocks: (0..2049).collect(), mtime: 11,
+            },
+        ],
+    };
+    let bytes = image.encode();
+    // Independently packed format-2 bytes, including the complete block list.
+    assert_eq!(bytes.len(), 8352);
+    assert_eq!(sha256(&bytes), [
+        0x3e, 0x05, 0x78, 0x76, 0x18, 0xd7, 0x6f, 0x4a,
+        0xe0, 0xc8, 0x72, 0xce, 0x14, 0xf5, 0x84, 0xea,
+        0x8d, 0xdd, 0x11, 0x10, 0x81, 0xcf, 0x76, 0x2f,
+        0x34, 0x39, 0x32, 0xb2, 0xb1, 0x40, 0xbd, 0xa5,
+    ]);
+    assert_eq!(bytes.capacity(), bytes.len(), "generation encoding must not double its buffer");
+}
+
+#[test]
+fn commits_reuse_durable_bitmap_and_recompute_its_block_set() {
+    // The cports guest's 64 MiB region: 255 words, a 2040-byte bitmap.
+    let mut disk = Disk::new(131_072);
+    format(&mut disk, 0xabcd).unwrap();
+    let mut fs = Fs::mount(disk, true).unwrap();
+    assert_eq!(fs.geometry.data_blocks, 16_318);
+    assert_eq!(fs.durable.0.len(), 255);
+    let storage = fs.durable.0.as_ptr();
+    let capacity = fs.durable.0.capacity();
+    let check = |fs: &Fs<Disk>| {
+        assert_eq!(fs.durable.0.as_ptr(), storage, "commit replaced the durable bitmap");
+        assert_eq!(fs.durable.0.capacity(), capacity);
+        let blocks: std::collections::BTreeSet<_> = fs.objects.values()
+            .filter(|object| object.linked)
+            .flat_map(|object| object.blocks.iter().copied())
+            .collect();
+        for block in 0..fs.geometry.data_blocks {
+            assert_eq!(fs.durable.get(block), blocks.contains(&block));
+        }
+    };
+    fs.mkdir(b"/data").unwrap();
+    check(&fs);
+    let handle = fs.open(b"/data/file", create_new()).unwrap();
+    check(&fs);
+    let before_write = fs.durable.0.clone();
+    fs.write_at(handle, 0, &pattern(7, 3 * BLOCK)).unwrap();
+    assert_eq!(fs.durable.0, before_write);
+    fs.sync().unwrap();
+    check(&fs);
+    let before_truncate = fs.durable.0.clone();
+    fs.set_len(handle, BLOCK as u64).unwrap();
+    assert_eq!(fs.durable.0, before_truncate);
+    fs.sync().unwrap();
+    check(&fs);
+    fs.unlink(b"/data/file").unwrap();
+    check(&fs);
+    fs.close(handle).unwrap();
+    fs.check().unwrap();
+}
+
+#[test]
+fn failed_commit_keeps_the_previous_durable_bitmap() {
+    let mut fs = Fs::mount(fresh(), true).unwrap();
+    let handle = fs.open(b"/file", create_new()).unwrap();
+    fs.write_at(handle, 0, &pattern(9, 2 * BLOCK)).unwrap();
+    fs.sync().unwrap();
+    let before = fs.durable.0.clone();
+    assert!(before.iter().any(|word| *word != 0));
+    let storage = fs.durable.0.as_ptr();
+    fs.device.fail_after = Some(fs.device.writes());
+    assert_eq!(fs.unlink(b"/file"), Err(Error::Device(-5)));
+    assert_eq!(fs.durable.0, before);
+    assert_eq!(fs.durable.0.as_ptr(), storage);
+    assert!(fs.poisoned);
+}
+
+#[test]
+fn commit_borrows_linked_records_and_preserves_the_namespace() {
+    let mut fs = Fs::mount(fresh(), true).unwrap();
+    for n in 0..137 {
+        let name = std::format!("/f{n:03}");
+        let handle = fs.open(name.as_bytes(), create_new()).unwrap();
+        if n == 0 {
+            fs.write_at(handle, 0, &pattern(7, BLOCK * 3 + 17)).unwrap();
+        }
+        fs.close(handle).unwrap();
+    }
+    let long_name = vec![b'x'; image::MAX_NAME];
+    let mut long_path = vec![b'/'];
+    long_path.extend_from_slice(&long_name);
+    let long = fs.open(&long_path, create_new()).unwrap();
+    fs.write_at(long, 0, b"long name data").unwrap();
+    fs.close(long).unwrap();
+    let held = fs.open(b"/held", create_new()).unwrap();
+    fs.unlink(b"/held").unwrap();
+    assert_eq!(fs.fstat(held).unwrap().links, 0);
+    let records: Vec<_> = fs.linked_records().collect();
+    assert_eq!(records.len(), 139);
+    assert!(records[0].name.is_empty());
+    assert!(records.iter().any(|record| record.blocks.len() == 4));
+    assert!(records.iter().any(|record| record.name == long_name));
+    for record in &records {
+        let object = &fs.objects[&record.serial];
+        assert_eq!(record.name.as_ptr(), object.name.as_ptr());
+        assert_eq!(record.blocks.as_ptr(), object.blocks.as_ptr());
+    }
+    let owned = image::Image {
+        fs_id: fs.fs_id, seq: fs.seq + 1, next_serial: fs.next_serial, geometry: fs.geometry,
+        records: records.iter().map(|record| image::Record {
+            serial: record.serial, parent: record.parent, name: record.name.to_vec(),
+            kind: record.kind, readonly: record.readonly, size: record.size,
+            blocks: record.blocks.to_vec(), mtime: record.mtime,
+        }).collect(),
+    };
+    assert_eq!(owned.encode(), image::encode_records(fs.fs_id, fs.seq + 1,
+               fs.next_serial, fs.geometry, fs.linked_records()));
+    assert!(records.windows(2).all(|pair| pair[0].serial < pair[1].serial));
+    assert!(!records.iter().any(|record| record.name == b"held"));
+    fs.sync().unwrap();
+    let mut again = Fs::mount(fs.device.settle(), true).unwrap();
+    assert!(again.stat(b"/held").is_err());
+    assert_eq!(read_all(&mut again, b"/f000").unwrap(), pattern(7, BLOCK * 3 + 17));
+    assert_eq!(read_all(&mut again, &long_path).unwrap(), b"long name data");
+    for n in 0..137 {
+        let name = std::format!("/f{n:03}");
+        assert_eq!(again.stat(name.as_bytes()).unwrap().kind, Kind::File);
+    }
+    fs.close(held).unwrap();
+}
+
+#[test]
 fn format_mount_and_refusals() {
     let mut blank = Disk::new(REGION);
     assert!(matches!(Fs::mount(blank.clone(), true), Err(Error::Unformatted)));
@@ -1991,4 +2133,40 @@ fn a_run_that_fails_part_way_is_not_atomic_and_poisons() {
     let mut later = Fs::mount(settled.settle(), false).unwrap();
     assert_eq!(read_all(&mut later, b"/new"), Some(Vec::new()));
     assert_eq!(read_all(&mut later, b"/old"), Some(old));
+}
+
+/// SPEC A13 (R11): `O_NOFOLLOW` as a no-op, `lstat` == `stat` and `readlink`
+/// EINVAL are honest only while the filesystem has no link kind. This match
+/// has no wildcard arm, so adding a `Kind` variant fails compilation here;
+/// `scripts/check-fs-kinds.py` holds the on-disk and wire encodings to 1 and 2.
+fn kind_code(kind: Kind) -> u8 {
+    match kind {
+        Kind::File => 1,
+        Kind::Dir => 2,
+    }
+}
+
+#[test]
+fn object_kinds_are_exactly_file_and_dir() {
+    assert_eq!(kind_code(Kind::File), 1);
+    assert_eq!(kind_code(Kind::Dir), 2);
+}
+
+/// N6: the filesystem's `canonical` (the runtime's mounted route) refuses
+/// a component over 255 bytes as `Invalid` (-22 in the runtime), and also a
+/// `.` or `..` component: the mounted route does not normalize an absolute
+/// path first (cwd.rs `resolve`), unlike the server route.
+#[test]
+fn canonical_invalid_is_a_long_component_or_a_dot_component() {
+    let mut fs = Fs::mount(fresh(), true).unwrap();
+    fs.mkdir(b"/d").unwrap();
+    put(&mut fs, b"/d/f", b"x");
+    let mut name = b"/d/".to_vec();
+    name.extend(core::iter::repeat_n(b'a', 256));
+    assert_eq!(fs.canonical(&name), Err(Error::Invalid));
+    name.pop();
+    assert_eq!(fs.canonical(&name), Err(Error::NotFound));
+    assert_eq!(fs.canonical(b"/d/../d/f"), Err(Error::Invalid));
+    assert_eq!(fs.canonical(b"/d/./f"), Err(Error::Invalid));
+    assert_eq!(fs.canonical(b"/d//f").unwrap(), b"/d/f".to_vec());
 }

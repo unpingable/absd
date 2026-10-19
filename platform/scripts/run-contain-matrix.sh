@@ -64,11 +64,13 @@ if cmp -s "$out/absd-sh-keep-spawn" "$root/commands/absd-sh"; then
     exit 1
 fi
 
-# sshd with the qualification controls (ssh workspace, own target directory).
+# sshd with the qualification controls (ssh workspace, own target directory),
+# with the same source-path remap as build-ssh.sh.
+absd_rust_remap
 (cd "$root/ssh" && env -u CARGO_ENCODED_RUSTFLAGS -u RUSTFLAGS -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER \
     ABSD_REAL_RUSTC=$toolchain/bin/rustc ABSD_STAGED_SYSROOT=$sysroot RUSTC=$root/scripts/rustc-staged.sh \
     RUSTC_BOOTSTRAP=1 RUST_TARGET_PATH=$root/targets ABSD_PROGRAM_ARGS="--qualification-controls" \
-    cargo +1.95.0 build -Z build-std=core,alloc,std,panic_abort --target x86_64-unknown-absd --release \
+    cargo +1.95.0 --config "$ABSD_RUST_REMAP" build -Z build-std=core,alloc,std,panic_abort --target x86_64-unknown-absd --release \
     --offline --locked --target-dir "$out/target-ssh" --bin sshd)
 cp "$out/target-ssh/x86_64-unknown-absd/release/sshd" "$out/sshd-controls.elf"
 

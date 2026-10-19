@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 description = "Freestanding ABSD userspace: syscall wrappers and the embedded programs"
 
+[features]
+reservation-fixture = []
+
 [dependencies]
 absd-abi = { path = "../abi" }
 
@@ -198,6 +201,11 @@ test = false
 bench = false
 
 [[bin]]
+name = "image_rollback"
+test = false
+bench = false
+
+[[bin]]
 name = "elf_matrix"
 test = false
 bench = false
@@ -255,5 +263,17 @@ bench = false
 
 [[bin]]
 name = "portability"
+test = false
+bench = false
+
+[[bin]]
+name = "reservation_actor"
+required-features = ["reservation-fixture"]
+test = false
+bench = false
+
+[[bin]]
+name = "reservation_supervisor"
+required-features = ["reservation-fixture"]
 test = false
 bench = false

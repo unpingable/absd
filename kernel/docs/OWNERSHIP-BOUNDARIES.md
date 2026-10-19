@@ -247,8 +247,8 @@ foreign-engine admission (project board),
 rump filesystem experiment (project board),
 and remote storage interoperability (project board).
 Prior-art/integrity closeout stays with the
-existing native-storage lane (project board),
-item `PVTI_lAHOAFshrM4Blhg0zg-VqVM`; this note does not admit a second lane.
+existing native-storage lane, recorded internally;
+this note does not admit a second lane.
 
 ## Semantic dependency graph
 

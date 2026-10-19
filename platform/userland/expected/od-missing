@@ -1,0 +1,4 @@
+status 1
+--- stdout
+--- stderr
+/bin/od: open missing.txt: No such file or directory

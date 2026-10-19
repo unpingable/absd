@@ -255,3 +255,84 @@ print(next(e["commit"] for e in entries if e.get("path") == sys.argv[2]))' \
         printf '%s\n' "ABSD KERNEL SNAPSHOT source=$1 identity=$absd_identity"
     fi
 }
+
+# absd_rust_remap: sets and exports ABSD_RUST_REMAP, a cargo --config value
+# appending source-path remaps to the target's rustflags (.cargo/config.toml
+# sets the rest), for every ABSD Rust build of this tree's programs
+# (prepare-and-build.sh, build-ssh.sh, run-contain-matrix.sh). Rust keeps a
+# source path as Cargo gives it: relative under the workspace being built,
+# absolute elsewhere (the staged sysroot as ssh/ sees it, the Cargo
+# registry). Those absolute paths are remapped so that the programs do not
+# depend on where the tree is checked out (N3): the tree, in either
+# spelling, to /absd, as the C kit does (scripts/build-c-kit.sh), and the
+# registry's sources to /cargo/registry/src. Cargo's own -C metadata hashes
+# a path dependency absolutely unless it sits inside the workspace, which is
+# why ssh/ reaches the tree's crates through ssh/tree/ (ssh/Cargo.toml).
+absd_rust_remap() {
+    absd_remap=
+    for absd_pair in "$root=/absd" "$(CDPATH= cd -- "$root" && pwd -P)=/absd" \
+        "${CARGO_HOME:-$HOME/.cargo}/registry/src=/cargo/registry/src"; do
+        case $absd_pair in
+        *\'*) printf '%s\n' "absd_rust_remap: a path holds a quote: $absd_pair" >&2; return 1 ;;
+        esac
+        absd_remap="$absd_remap${absd_remap:+, }'--remap-path-prefix=$absd_pair'"
+    done
+    ABSD_RUST_REMAP="target.x86_64-unknown-absd.rustflags=[$absd_remap]"
+    export ABSD_RUST_REMAP
+}
+
+# Complete target flags for the six full-profile builders. Encoded flags are
+# mutually exclusive with Cargo's target/config arrays (which otherwise append).
+# Keep absd_rust_remap's existing zero-argument callers unchanged. This only
+# supplies flags; it does not establish Cargo metadata or artifact independence.
+absd_full_rustflags() {
+    ABSD_FULL_RUSTFLAGS=$(python3 - "$root" "${CARGO_HOME:-$HOME/.cargo}" "$@" <<'PY'
+import os
+from pathlib import Path
+import sys
+
+root, cargo, *arguments = sys.argv[1:]
+if not 1 <= len(arguments) <= 2:
+    sys.exit('absd_full_rustflags: expected family and optional Pulse cfg')
+family = arguments[0]
+cfg = arguments[1] if len(arguments) == 2 else ''
+if family not in ('integration', 'nightshift', 'pulse', 'pulse-observe', 'nq', 'ag-loopctl'):
+    sys.exit('absd_full_rustflags: unknown family')
+if cfg not in ('', '--cfg pulse_absd_test_config') or (cfg and family not in ('pulse', 'pulse-observe')):
+    sys.exit('absd_full_rustflags: unsupported family cfg')
+
+def checked(path):
+    # '=' is rustc's FROM=TO separator; control bytes include the encoded-flag
+    # separator. Spaces and quotes remain single argument bytes, not shell/TOML.
+    if not os.path.isabs(path) or '..' in path.split('/') or '=' in path or any(ord(c) < 32 or ord(c) == 127 for c in path):
+        sys.exit('absd_full_rustflags: unsupported or ambiguous path')
+    return os.path.normpath(path)
+
+root, cargo = checked(root), checked(cargo)
+mappings = {}
+def add(path, destination):
+    for spelling in (checked(path), checked(os.path.realpath(path))):
+        if spelling in mappings and mappings[spelling] != destination:
+            sys.exit('absd_full_rustflags: one source spelling has conflicting identities')
+        mappings[spelling] = destination
+
+add(root, '/absd')
+add(str(Path(cargo) / 'registry/src'), '/cargo/registry/src')
+for stage in ('ag', 'pulse-source', 'nightshift', 'pulse', 'pulse-observe', 'nq', 'ag-loopctl'):
+    add(str(Path(root).parent / ('absd-std-staged-' + stage)), '/absd-inputs/' + stage)
+linker = 'user-linker.ld' if family == 'integration' else root + '/user-linker.ld'
+flags = ['-C', 'link-arg=-T' + linker, '-C', 'link-arg=--gc-sections']
+if family in ('pulse', 'pulse-observe'):
+    flags += ['--check-cfg', 'cfg(pulse_absd_test_config)']
+    if cfg:
+        flags += ['--cfg', 'pulse_absd_test_config']
+else:
+    flags += ['--cfg', 'getrandom_backend="rdrand"']
+# rustc uses the last matching prefix. More specific source paths go last;
+# aliases for the same source are deduplicated rather than counted as coverage.
+for source in sorted(mappings, key=lambda p: (len(p), p)):
+    flags.append('--remap-path-prefix=' + source + '=' + mappings[source])
+sys.stdout.write('\x1f'.join(flags))
+PY
+    ) || return $?
+}

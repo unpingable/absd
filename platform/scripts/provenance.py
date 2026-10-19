@@ -94,7 +94,9 @@ def spdx_module(root):
 
 class Records:
     def __init__(self, root=ROOT):
-        self.root = Path(root)
+        # Resolved, as ROOT is: the manifest crawl follows symlinks and so
+        # yields resolved paths, which are compared with this root.
+        self.root = Path(root).resolve()
         self.config = load(self.root, "config.toml")
         self.obligations = load(self.root, "obligations.toml", required=False).get("obligation", [])
         self.policy = self.config.get("policy", {})
@@ -308,7 +310,10 @@ class Graph:
         self.cache = {}
 
     def crawl(self, directory, seen):
-        directory = Path(os.path.normpath(directory))
+        # Through symlinks: ssh/ reaches the tree's crates and the staged
+        # sunset through ssh/tree/ links (scripts/stage-ssh.sh), which Cargo
+        # does not resolve but which name the same crates.
+        directory = Path(os.path.realpath(directory))
         if directory in seen:
             return
         seen.add(directory)
@@ -455,6 +460,29 @@ def literal(root, spec):
     raise Problem(f"{path}: no list named {name}")
 
 
+def c_port_rows(root, unit):
+    """The rows of a C port table (userland/PORTS.tsv: NAME UPSTREAM SOURCE
+    BUILD GATED_SHA256 SHA256 BYTES; '#' starts a comment)."""
+    path = Path(root) / unit["c_ports"]
+    if not path.exists():
+        raise Problem(f"{unit['c_ports']}: missing")
+    rows = [line.split("\t") for line in path.read_text().splitlines() if line.strip() and not line.startswith("#")]
+    if any(len(r) != 7 for r in rows):
+        raise Problem(f"{unit['c_ports']}: a row without seven tab-separated fields")
+    return rows
+
+
+def c_port_pins(root, unit):
+    """NAME-VERSION -> (VERSION, URL, SHA256, LICENSE) from the pin file
+    (userland/PIN: NAME VERSION URL SHA256 LICENSE)."""
+    pins = {}
+    for line in (Path(root) / unit["pin"]).read_text().splitlines():
+        f = line.split("\t")
+        if len(f) == 5 and not line.startswith("#"):
+            pins[f"{f[0]}-{f[1]}"] = (f[1], f[2], f[3], f[4])
+    return pins
+
+
 def bin_sources(manifest, name):
     """The source files of one binary: its file and what it pulls in by path."""
     base = manifest.path.parent
@@ -581,14 +609,40 @@ def compute_inventory(rec, artifact):
         if use != "not-built":
             row["units"].add(unit["name"])
 
+    # Programs built from a pinned upstream tarball rather than a Cargo lock
+    # (the base userland's sbase ports): their names may share the image's
+    # port list with the crates, and are not crate rows.
+    c_names = set()
+    for unit in artifact.get("unit", []):
+        if "c_ports" in unit:
+            c_names |= {r[0] for r in c_port_rows(root, unit)}
+
     for unit in artifact.get("unit", []):
         if unit.get("listed") is False:
             # Named so that its lock file is accounted for (`note` says why
             # nothing is listed from it); never resolved, so it needs no
             # sources on this machine.
             continue
+        if "c_ports" in unit:
+            pins = c_port_pins(root, unit)
+            texts = ",".join(Path(f).name for f in unit.get("notice_files", [])) or "MISSING"
+            for name, upstream, source_file, *_ in c_port_rows(root, unit):
+                if upstream not in pins:
+                    notes.append(("UNKNOWN", unit["c_ports"], f"{name}: upstream {upstream} is not a row of {unit['pin']}"))
+                    continue
+                version, url, digest, declared = pins[upstream]
+                rows[(f"{upstream.rsplit('-', 1)[0]}-{name}", version)] = {
+                    "component": f"{upstream.rsplit('-', 1)[0]}-{name}", "version": version,
+                    "origin": "upstream-tarball", "source": f"{url} sha256:{digest} {source_file}",
+                    "license": declared,
+                    "elected": " AND ".join(elect(declared, rec.policy) or ["DECISION_REQUIRED"]) if declared
+                    else "UNDECLARED",
+                    "use": "linked", "units": {unit["name"]}, "texts": texts,
+                }
+            continue
         unit = dict(unit)
-        manifest_dir = root / unit.get("manifest_dir", ".")
+        manifest_dir = unit.get("manifest_dir", ".")
+        manifest_dir = [root / d for d in manifest_dir] if isinstance(manifest_dir, list) else root / manifest_dir
         if "sources" in unit:
             unit["_sources"] = expand(unit["sources"])
             manifest_dir = [unit["_sources"] / unit.get("manifest_dir", "."), unit["_sources"]]
@@ -600,6 +654,8 @@ def compute_inventory(rec, artifact):
                 if len(f) >= 5 and not line.startswith("#"):
                     table[f[3]] = (f[0], f[1])
             for name in literal(root, unit["ports"]):
+                if name in c_names:
+                    continue
                 if name not in table:
                     raise Problem(f"{unit['table']}: no row for port {name}")
                 crate, version = table[name]
@@ -1211,6 +1267,7 @@ def notices(rec, name, out_dir, quiet=False):
     index, missing, actions = [], [], []
     extras = {e["name"]: e for e in artifact.get("component", [])}
     toolchains = {u["name"]: u for u in artifact.get("unit", []) if "notice_files" in u}
+    tarballs = {u["name"]: u for u in artifact.get("unit", []) if "c_ports" in u}
     for row in rows:
         if not shipped(row):
             continue
@@ -1234,6 +1291,10 @@ def notices(rec, name, out_dir, quiet=False):
                 if row["units"] & {unit["name"]} if isinstance(row["units"], set) else unit["name"] in row["units"]:
                     sources = [expand(p) for p in unit["notice_files"]]
             ident = "rust-standard-library"
+        elif row["origin"] == "upstream-tarball":
+            for unit in tarballs.values():
+                if unit["name"] in row["units"]:
+                    sources = [expand(p, rec.root) for p in unit.get("notice_files", [])]
         copied = []
         absent = [str(src) for src in sources if not src.exists()]
         if absent:

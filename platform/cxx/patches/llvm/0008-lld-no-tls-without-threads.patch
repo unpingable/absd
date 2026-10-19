@@ -1,0 +1,69 @@
+lld: no thread_local allocator and no std::random_device on the C kit
+
+Failure: the lld link fails: `undefined symbol: __cxa_thread_atexit` and
+`lib/liblldELF.a(InputFiles.cpp.o) has an STT_TLS symbol but doesn't have an
+SHF_TLS section` (lld/include/lld/Common/Memory.h:68 declares a
+thread_local SpecificAlloc; the kit has no TLS, CPA-062, and absd-c.ld no
+.tdata/.tbss, which scripts/check-c-elf.py refuses anyway); and
+lld/ELF/Writer.cpp:1297 constructs a std::random_device (none in the kit's
+libc++) for an unseeded --shuffle-sections.
+Change: with LLVM_ENABLE_THREADS off the allocator singleton is a plain
+static (every platform: parallelFor* then runs on the calling thread
+only); under LLVM_ABSD_KIT the unseeded shuffle takes
+sys::Process::GetRandomNumber() (the kit's getentropy) as its seed.
+Behaviour preserved: with threads on nothing changes; with threads off
+there is one thread, so one instance is the per-thread instance; the
+shuffle's seed source changes, not its distribution.
+Upstreamability: the Memory.h hunk is upstreamable (threads-off builds
+should not need TLS); the seed hunk needs an ABSD OS or a "no
+random_device" switch.
+
+--- a/lld/include/lld/Common/Memory.h
++++ b/lld/include/lld/Common/Memory.h
+@@ -21,6 +21,7 @@
+ #ifndef LLD_COMMON_MEMORY_H
+ #define LLD_COMMON_MEMORY_H
+ 
++#include "llvm/Config/llvm-config.h"
+ #include "llvm/Support/Allocator.h"
+ 
+ namespace lld {
+@@ -65,7 +66,14 @@
+ template <typename T>
+ inline llvm::SpecificBumpPtrAllocator<T> &
+ getSpecificAllocSingletonThreadLocal() {
++#if LLVM_ENABLE_THREADS
+   thread_local SpecificAlloc<T> instance;
++#else
++  // Without threads parallelFor* runs on the calling thread only, so one
++  // instance is the per-thread instance (and needs no TLS, which the ABSD
++  // C kit does not have).
++  static SpecificAlloc<T> instance;
++#endif
+   return instance.alloc;
+ }
+ 
+--- a/lld/ELF/Writer.cpp
++++ b/lld/ELF/Writer.cpp
+@@ -28,6 +28,7 @@
+ #include "llvm/Support/BLAKE3.h"
+ #include "llvm/Support/Parallel.h"
+ #include "llvm/Support/RandomNumberGenerator.h"
++#include "llvm/Support/Process.h"
+ #include "llvm/Support/TimeProfiler.h"
+ #include "llvm/Support/xxhash.h"
+ #include <climits>
+@@ -1294,7 +1295,13 @@
+       // reliably.
+       std::reverse(matched.begin(), matched.end());
+     } else {
++#if defined(LLVM_ABSD_KIT)
++      // The C kit's libc++ has no std::random_device: an unseeded shuffle
++      // takes the process's own random number (getentropy, RDRAND).
++      std::mt19937 g(seed ? seed : llvm::sys::Process::GetRandomNumber());
++#else
+       std::mt19937 g(seed ? seed : std::random_device()());
++#endif
+       llvm::shuffle(matched.begin(), matched.end(), g);
+     }
+     size_t i = 0;

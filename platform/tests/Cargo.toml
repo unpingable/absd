@@ -1,0 +1,28 @@
+[package]
+name = "health-observation-host-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+name = "health_observation"
+path = "../src/health_observation.rs"
+
+[dependencies]
+absd-fsd = { path = "../fsd" }
+absd-release = { path = "../release" }
+serde_json = "1.0"
+
+[[test]]
+name = "projection"
+path = "health-observation/projection.rs"
+
+[[test]]
+name = "net_status_file"
+path = "net-status-file.rs"
+
+[[test]]
+name = "net_status_wiring"
+path = "net-status-wiring.rs"

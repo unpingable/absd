@@ -439,6 +439,41 @@ class Case(unittest.TestCase):
         self.assertEqual((rows["patched"]["origin"], rows["patched"]["use"], rows["patched"]["elected"]), ("registry", "linked", "MIT"))
         self.assertEqual((rows["sibling"]["origin"], rows["sibling"]["use"]), ("outside-repository", "not-built"))
 
+    def test_crates_reached_through_links_are_the_same_crates(self):
+        # As ssh/ does: a second workspace names a first-party crate and a staged, patched registry crate
+        # through tree/ links that a stage script makes; its unit also crawls the root workspace, which
+        # finds the first-party crate where the links are not made yet.
+        repo, tmp = self.repo, Path(self.tmp.name)
+        repo.write("core1/Cargo.toml", '[package]\nname = "core1"\nversion = "0.1.0"\n')
+        repo.append("Cargo.toml", '\n[workspace]\nmembers = ["core1"]\n')
+        repo.crate("patched", "1.0.0", "MIT")
+        staged = tmp / "staged/patched"
+        staged.mkdir(parents=True)
+        (staged / "Cargo.toml").write_text('[package]\nname = "patched"\nversion = "1.0.0"\nlicense = "GPL-3.0-only"\n')
+        repo.write("sub/Cargo.toml", '[package]\nname = "subapp"\nversion = "0.1.0"\n[dependencies]\n'
+                   'core1 = { path = "tree/core1" }\npatched = "1"\n[patch.crates-io]\n'
+                   'patched = { path = "tree/patched" }\n[workspace]\n')
+        repo.write("sub/Cargo.lock", lock([("subapp", "0.1.0", ["core1", "patched"], False), ("core1", "0.1.0", [], False),
+                                          ("patched", "1.0.0", [], False)]))
+        config = (repo.root / "provenance/config.toml").read_text()
+        repo.write("provenance/config.toml", config.replace("  [[artifact.component]]", '  [[artifact.unit]]\n'
+                   '  name = "sub"\n  lock = "sub/Cargo.lock"\n  package = "subapp"\n  manifest_dir = ["sub", "."]\n'
+                   '  [[artifact.component]]', 1))
+        absent = pv.render(pv.inventory(repo.rec(), repo.rec().config["artifact"][0])[0])
+        (repo.root / "sub/tree").mkdir()
+        (repo.root / "sub/tree/core1").symlink_to("../../core1")
+        (repo.root / "sub/tree/patched").symlink_to(os.path.relpath(staged, repo.root / "sub/tree"))
+        present = pv.render(pv.inventory(repo.rec(), repo.rec().config["artifact"][0])[0])
+        self.assertEqual(absent, present)
+        rows = repo.rows()
+        self.assertEqual((rows["core1"]["origin"], rows["core1"]["source"], rows["core1"]["use"]), ("first-party", "core1", "linked"))
+        self.assertEqual((rows["patched"]["origin"], rows["patched"]["elected"]), ("registry", "MIT"))
+        # The same records reached through a link to the repository classify the same way.
+        link = tmp / "repo-link"
+        link.symlink_to(repo.root)
+        through = pv.Records(link)
+        self.assertEqual(pv.render(pv.inventory(through, through.config["artifact"][0])[0]), present)
+
     def test_missing_registry_is_unknown_not_a_licence_failure(self):
         os.environ["ABSD_CARGO_REGISTRY"] = str(Path(self.tmp.name) / "nowhere")
         try:
@@ -706,6 +741,39 @@ class Case(unittest.TestCase):
         self.assertIn("reproduce the notice", text)
         self.assertTrue(any("Bootloader" in m for m in missing))             # nothing fabricated for it
         self.assertIn("does not by itself satisfy", text)
+
+    def test_c_ports_from_a_pinned_tarball(self):
+        """A C port table (userland/PORTS.tsv) lists one shipped row per
+        program, under the pinned upstream's licence, with the tarball digest;
+        its names are not crate ports, and its notice reaches the bundle."""
+        self.repo.write("userland/PIN", "# NAME VERSION URL SHA256 LICENSE\n"
+                        "tools\t1.0\thttps://example.invalid/tools-1.0.tar.gz\tabc123\tMIT\n")
+        self.repo.write("userland/PORTS.tsv", "# NAME UPSTREAM SOURCE BUILD GATED SHA256 BYTES\n"
+                        "grep\ttools-1.0\tgrep.c\tabsd/grep\taa\tbb\t10\n")
+        self.repo.write("userland/tools.LICENSE", "MIT text of tools\n")
+        self.repo.write("scripts/image.py", 'PORTS = ["grep"]\n')
+        self.repo.write("ports.tsv", "# crate version kind bin result\n")
+        units = "\n".join([
+            '  [[artifact.unit]]', '  name = "ports"', '  ports = "scripts/image.py:PORTS"', '  table = "ports.tsv"',
+            '  lock = "pins/{crate}-{version}.Cargo.lock"',
+            '  [[artifact.unit]]', '  name = "c-ports"', '  c_ports = "userland/PORTS.tsv"', '  pin = "userland/PIN"',
+            '  notice_files = ["userland/tools.LICENSE"]', '  [[artifact.component]]', '  name = "Bootloader"'])
+        config = self.repo.root / "provenance/config.toml"
+        config.write_text(config.read_text().replace('  [[artifact.component]]\n  name = "Bootloader"', units, 1))
+        rows = self.repo.rows()
+        row = rows["tools-grep"]
+        self.assertEqual((row["version"], row["origin"], row["use"], row["license"], row["elected"], row["texts"]),
+                         ("1.0", "upstream-tarball", "linked", "MIT", "MIT", "tools.LICENSE"))
+        self.assertIn("sha256:abc123", row["source"])
+        self.assertTrue(pv.shipped(row))
+        self.assertNotIn("grep", rows)                                         # not taken for a crate port
+        out_dir = Path(self.tmp.name) / "bundle"
+        pv.notices(self.repo.rec(), "image", out_dir, quiet=True)
+        self.assertEqual((out_dir / "licenses/tools-grep-1.0/tools.LICENSE").read_text(), "MIT text of tools\n")
+        self.repo.write("userland/PORTS.tsv", "grep\ttools-2.0\tgrep.c\tabsd/grep\taa\tbb\t10\n")
+        rec = self.repo.rec()
+        notes = pv.inventory(rec, rec.config["artifact"][0])[1]
+        self.assertTrue(any("not a row of userland/PIN" in why for _, _, why in notes))
 
     def test_unit_marked_unlisted_is_not_resolved(self):
         config = self.repo.root / "provenance/config.toml"

@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "policy": "Exact reviewed TLS package targets and archive identities; actual lock/target/feature closure requires separate review.",
+  "packages": [
+    {
+      "name": "rustls",
+      "version": "0.23.46",
+      "checksum": "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf",
+      "license": "Apache-2.0 OR ISC OR MIT",
+      "metadata_url": "https://crates.io/api/v1/crates/rustls/0.23.46"
+    },
+    {
+      "name": "rustls-webpki",
+      "version": "0.103.15",
+      "checksum": "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2",
+      "license": "ISC",
+      "metadata_url": "https://crates.io/api/v1/crates/rustls-webpki/0.103.15"
+    },
+    {
+      "name": "rustls-pki-types",
+      "version": "1.15.1",
+      "checksum": "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96",
+      "license": "MIT OR Apache-2.0",
+      "metadata_url": "https://crates.io/api/v1/crates/rustls-pki-types/1.15.1"
+    },
+    {
+      "name": "ring",
+      "version": "0.17.14",
+      "checksum": "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7",
+      "license": "Apache-2.0 AND ISC",
+      "metadata_url": "https://crates.io/api/v1/crates/ring/0.17.14"
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.4",
+      "checksum": "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801",
+      "license": "MIT OR Apache-2.0",
+      "metadata_url": "https://crates.io/api/v1/crates/cfg-if/1.0.4"
+    },
+    {
+      "name": "getrandom",
+      "version": "0.2.17",
+      "checksum": "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0",
+      "license": "MIT OR Apache-2.0",
+      "metadata_url": "https://crates.io/api/v1/crates/getrandom/0.2.17"
+    },
+    {
+      "name": "once_cell",
+      "version": "1.21.4",
+      "checksum": "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50",
+      "license": "MIT OR Apache-2.0",
+      "metadata_url": "https://crates.io/api/v1/crates/once_cell/1.21.4"
+    },
+    {
+      "name": "subtle",
+      "version": "2.6.1",
+      "checksum": "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292",
+      "license": "BSD-3-Clause",
+      "metadata_url": "https://crates.io/api/v1/crates/subtle/2.6.1"
+    },
+    {
+      "name": "untrusted",
+      "version": "0.9.0",
+      "checksum": "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1",
+      "license": "ISC",
+      "metadata_url": "https://crates.io/api/v1/crates/untrusted/0.9.0"
+    },
+    {
+      "name": "zeroize",
+      "version": "1.8.2",
+      "checksum": "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0",
+      "license": "Apache-2.0 OR MIT",
+      "metadata_url": "https://crates.io/api/v1/crates/zeroize/1.8.2"
+    },
+    {
+      "name": "cc",
+      "version": "1.2.62",
+      "checksum": "a1dce859f0832a7d088c4f1119888ab94ef4b5d6795d1ce05afb7fe159d79f98",
+      "license": "MIT OR Apache-2.0",
+      "metadata_url": "https://crates.io/api/v1/crates/cc/1.2.62"
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.9",
+      "checksum": "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582",
+      "license": "MIT OR Apache-2.0",
+      "metadata_url": "https://crates.io/api/v1/crates/find-msvc-tools/0.1.9"
+    },
+    {
+      "name": "shlex",
+      "version": "1.3.0",
+      "checksum": "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64",
+      "license": "MIT OR Apache-2.0",
+      "metadata_url": "https://crates.io/api/v1/crates/shlex/1.3.0"
+    },
+    {
+      "name": "libc",
+      "version": "0.2.186",
+      "checksum": "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66",
+      "license": "MIT OR Apache-2.0",
+      "metadata_url": "https://crates.io/api/v1/crates/libc/0.2.186"
+    }
+  ]
+}

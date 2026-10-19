@@ -1,0 +1,1846 @@
+# userland/DEMAND.tsv: written by scripts/userland-demand.py over sbase 0.1 (userland/PIN). One row per (utility, demanded name). Buckets as the script's docstring.
+# utility	symbol	bucket	links	via	note
+basename	basename	PICOLIBC	yes	program	
+basename	exit	PICOLIBC	yes	program	
+basename	fclose	PICOLIBC	yes	program	
+basename	fflush	PICOLIBC	yes	program	
+basename	fprintf	PICOLIBC	yes	program	
+basename	fputc	PICOLIBC	yes	program	
+basename	perror	PICOLIBC	yes	program	as strerror
+basename	puts	PICOLIBC	yes	program	
+basename	stderr	PICOLIBC	yes	program	
+basename	stdout	PICOLIBC	yes	program	
+basename	strcmp	PICOLIBC	yes	program	
+basename	strlen	PICOLIBC	yes	program	
+basename	strncmp	PICOLIBC	yes	program	
+basename	vfprintf	PICOLIBC	yes	program	
+cal	abort	PICOLIBC	yes	program	
+cal	errno	PICOLIBC	yes	program	
+cal	exit	PICOLIBC	yes	program	
+cal	fclose	PICOLIBC	yes	program	
+cal	fflush	PICOLIBC	yes	program	
+cal	fprintf	PICOLIBC	yes	program	
+cal	fputc	PICOLIBC	yes	program	
+cal	isatty	KIT	yes	program	0 with ENOTTY for every descriptor (no terminals)
+cal	localtime	PICOLIBC	yes	program	no time-zone database: UTC (CPA-019)
+cal	perror	PICOLIBC	yes	program	as strerror
+cal	printf	PICOLIBC	yes	program	
+cal	snprintf	PICOLIBC	yes	program	
+cal	stderr	PICOLIBC	yes	program	
+cal	stdout	PICOLIBC	yes	program	
+cal	strlen	PICOLIBC	yes	program	
+cal	strncmp	PICOLIBC	yes	program	
+cal	strtoll	PICOLIBC	yes	program	
+cal	time	PICOLIBC	yes	program	gettimeofday
+cal	vfprintf	PICOLIBC	yes	program	
+cat	close	KIT	yes	program	descriptor table
+cat	exit	PICOLIBC	yes	program	
+cat	fprintf	PICOLIBC	yes	program	
+cat	fputc	PICOLIBC	yes	program	
+cat	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+cat	perror	PICOLIBC	yes	program	as strerror
+cat	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+cat	stderr	PICOLIBC	yes	program	
+cat	strcmp	PICOLIBC	yes	program	
+cat	strlen	PICOLIBC	yes	program	
+cat	strncmp	PICOLIBC	yes	program	
+cat	vfprintf	PICOLIBC	yes	program	
+cat	write	KIT	yes	program	descriptor table, 256-byte transfers looped
+chgrp	calloc	KIT	yes	program	allocation adapter
+chgrp	closedir	ADAPTER	yes	program	as opendir
+chgrp	errno	PICOLIBC	yes	program	
+chgrp	exit	PICOLIBC	yes	program	
+chgrp	fchownat	MISSING	no	program	no archive defines it
+chgrp	fdopendir	MISSING	no	program	no archive defines it
+chgrp	fprintf	PICOLIBC	yes	program	
+chgrp	fputc	PICOLIBC	yes	program	
+chgrp	free	KIT	yes	program	allocation adapter
+chgrp	fstatat	MISSING	no	program	no archive defines it
+chgrp	getgrnam	PICOLIBC	yes	program	
+chgrp	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+chgrp	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+chgrp	openat	MISSING	no	program	no archive defines it
+chgrp	perror	PICOLIBC	yes	program	as strerror
+chgrp	readdir	ADAPTER	yes	program	as opendir
+chgrp	realloc	KIT	yes	program	allocation adapter
+chgrp	stderr	PICOLIBC	yes	program	
+chgrp	strcmp	PICOLIBC	yes	program	
+chgrp	strdup	PICOLIBC	yes	program	
+chgrp	strlen	PICOLIBC	yes	program	
+chgrp	strncmp	PICOLIBC	yes	program	
+chgrp	strndup	PICOLIBC	yes	program	
+chgrp	strtoll	PICOLIBC	yes	program	
+chgrp	vfprintf	PICOLIBC	yes	program	
+chmod	calloc	KIT	yes	program	allocation adapter
+chmod	closedir	ADAPTER	yes	program	as opendir
+chmod	exit	PICOLIBC	yes	program	
+chmod	fchmodat	MISSING	no	program	no archive defines it
+chmod	fdopendir	MISSING	no	program	no archive defines it
+chmod	fprintf	PICOLIBC	yes	program	
+chmod	fputc	PICOLIBC	yes	program	
+chmod	free	KIT	yes	program	allocation adapter
+chmod	fstatat	MISSING	no	program	no archive defines it
+chmod	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+chmod	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+chmod	openat	MISSING	no	program	no archive defines it
+chmod	perror	PICOLIBC	yes	program	as strerror
+chmod	readdir	ADAPTER	yes	program	as opendir
+chmod	realloc	KIT	yes	program	allocation adapter
+chmod	stderr	PICOLIBC	yes	program	
+chmod	strcmp	PICOLIBC	yes	program	
+chmod	strdup	PICOLIBC	yes	program	
+chmod	strlen	PICOLIBC	yes	program	
+chmod	strncmp	PICOLIBC	yes	program	
+chmod	strndup	PICOLIBC	yes	program	
+chmod	strtol	PICOLIBC	yes	program	
+chmod	umask	MISSING	no	program	no archive defines it
+chmod	vfprintf	PICOLIBC	yes	program	
+chown	calloc	KIT	yes	program	allocation adapter
+chown	closedir	ADAPTER	yes	program	as opendir
+chown	errno	PICOLIBC	yes	program	
+chown	exit	PICOLIBC	yes	program	
+chown	fchownat	MISSING	no	program	no archive defines it
+chown	fdopendir	MISSING	no	program	no archive defines it
+chown	fprintf	PICOLIBC	yes	program	
+chown	fputc	PICOLIBC	yes	program	
+chown	free	KIT	yes	program	allocation adapter
+chown	fstatat	MISSING	no	program	no archive defines it
+chown	getgrnam	PICOLIBC	yes	program	
+chown	getpwnam	PICOLIBC	yes	program	
+chown	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+chown	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+chown	openat	MISSING	no	program	no archive defines it
+chown	perror	PICOLIBC	yes	program	as strerror
+chown	readdir	ADAPTER	yes	program	as opendir
+chown	realloc	KIT	yes	program	allocation adapter
+chown	stderr	PICOLIBC	yes	program	
+chown	strchr	PICOLIBC	yes	program	
+chown	strcmp	PICOLIBC	yes	program	
+chown	strdup	PICOLIBC	yes	program	
+chown	strlen	PICOLIBC	yes	program	
+chown	strncmp	PICOLIBC	yes	program	
+chown	strndup	PICOLIBC	yes	program	
+chown	strtoll	PICOLIBC	yes	program	
+chown	vfprintf	PICOLIBC	yes	program	
+chroot	_exit	KIT	yes	program	__absd_std_exit
+chroot	chdir	ADAPTER	yes	program	__absd_std_chdir
+chroot	chroot	MISSING	no	program	no archive defines it
+chroot	errno	PICOLIBC	yes	program	
+chroot	execve	REFUSED	no	via link	ENOSYS; as fork [no archive defines it: refused at link time]
+chroot	execvp	REFUSED	yes	program	exec*: not provided (C-INTERFACE 10)
+chroot	exit	PICOLIBC	yes	program	
+chroot	fprintf	PICOLIBC	yes	program	
+chroot	fputc	PICOLIBC	yes	program	
+chroot	getenv	PICOLIBC	yes	program	as setenv
+chroot	perror	PICOLIBC	yes	program	as strerror
+chroot	stderr	PICOLIBC	yes	program	
+chroot	strlen	PICOLIBC	yes	program	
+chroot	strncmp	PICOLIBC	yes	program	
+chroot	vfprintf	PICOLIBC	yes	program	
+cksum	close	KIT	yes	program	descriptor table
+cksum	exit	PICOLIBC	yes	program	
+cksum	fclose	PICOLIBC	yes	program	
+cksum	fflush	PICOLIBC	yes	program	
+cksum	fprintf	PICOLIBC	yes	program	
+cksum	fputc	PICOLIBC	yes	program	
+cksum	fputs	PICOLIBC	yes	program	
+cksum	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+cksum	perror	PICOLIBC	yes	program	as strerror
+cksum	printf	PICOLIBC	yes	program	
+cksum	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+cksum	stderr	PICOLIBC	yes	program	
+cksum	stdout	PICOLIBC	yes	program	
+cksum	strcmp	PICOLIBC	yes	program	
+cksum	strlen	PICOLIBC	yes	program	
+cksum	strncmp	PICOLIBC	yes	program	
+cksum	vfprintf	PICOLIBC	yes	program	
+cmp	exit	PICOLIBC	yes	program	
+cmp	fclose	PICOLIBC	yes	program	
+cmp	fflush	PICOLIBC	yes	program	
+cmp	fopen	PICOLIBC	yes	program	
+cmp	fprintf	PICOLIBC	yes	program	
+cmp	fputc	PICOLIBC	yes	program	
+cmp	getc	PICOLIBC	yes	program	
+cmp	perror	PICOLIBC	yes	program	as strerror
+cmp	printf	PICOLIBC	yes	program	
+cmp	stderr	PICOLIBC	yes	program	
+cmp	stdin	PICOLIBC	yes	program	
+cmp	stdout	PICOLIBC	yes	program	
+cmp	strcmp	PICOLIBC	yes	program	
+cmp	strlen	PICOLIBC	yes	program	
+cmp	strncmp	PICOLIBC	yes	program	
+cmp	vfprintf	PICOLIBC	yes	program	
+comm	exit	PICOLIBC	yes	program	
+comm	fclose	PICOLIBC	yes	program	
+comm	fflush	PICOLIBC	yes	program	
+comm	fopen	PICOLIBC	yes	program	
+comm	fprintf	PICOLIBC	yes	program	
+comm	fputc	PICOLIBC	yes	program	
+comm	fwrite	PICOLIBC	yes	program	
+comm	getline	PICOLIBC	yes	program	
+comm	memcmp	PICOLIBC	yes	program	as memcpy
+comm	perror	PICOLIBC	yes	program	as strerror
+comm	stderr	PICOLIBC	yes	program	
+comm	stdin	PICOLIBC	yes	program	
+comm	stdout	PICOLIBC	yes	program	
+comm	strcmp	PICOLIBC	yes	program	
+comm	strlen	PICOLIBC	yes	program	
+comm	strncmp	PICOLIBC	yes	program	
+comm	vfprintf	PICOLIBC	yes	program	
+cp	basename	PICOLIBC	yes	program	
+cp	chmod	ADAPTER	yes	program	__absd_std_fs_set_readonly_path on files: 0444/0644 only; other modes and every directory EPERM (A14 audit)
+cp	chown	ADAPTER	yes	program	
+cp	close	KIT	yes	program	descriptor table
+cp	closedir	ADAPTER	yes	program	as opendir
+cp	creat	PICOLIBC	yes	program	
+cp	errno	PICOLIBC	yes	program	
+cp	exit	PICOLIBC	yes	program	
+cp	fclose	PICOLIBC	yes	program	
+cp	fflush	PICOLIBC	yes	program	
+cp	fprintf	PICOLIBC	yes	program	
+cp	fputc	PICOLIBC	yes	program	
+cp	fstatat	MISSING	no	program	no archive defines it
+cp	lchown	ADAPTER	yes	program	
+cp	mkdir	ADAPTER	yes	program	__absd_std_fs_mkdir; mode not applied (declared divergence CPA-014); mode without S_IWUSR EPERM
+cp	mknod	MISSING	no	program	no archive defines it
+cp	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+cp	opendir	ADAPTER	yes	program	__absd_std_fs_readdir by index; the file server snapshots the listing at index 0
+cp	perror	PICOLIBC	yes	program	as strerror
+cp	printf	PICOLIBC	yes	program	
+cp	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+cp	readdir	ADAPTER	yes	program	as opendir
+cp	readlink	ADAPTER	yes	program	EINVAL for every existing path (nothing is a symlink); ENOENT when absent
+cp	snprintf	PICOLIBC	yes	program	
+cp	stat	ADAPTER	yes	program	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+cp	stderr	PICOLIBC	yes	program	
+cp	stdout	PICOLIBC	yes	program	
+cp	strcmp	PICOLIBC	yes	program	
+cp	strlen	PICOLIBC	yes	program	
+cp	strncmp	PICOLIBC	yes	program	
+cp	symlink	REFUSED	yes	program	-1/EPERM (the filesystem has no symlinks); shell writefile() only
+cp	unlink	KIT	yes	program	__absd_std_fs_unlink
+cp	utimensat	MISSING	no	program	no archive defines it
+cp	vfprintf	PICOLIBC	yes	program	
+cp	write	KIT	yes	program	descriptor table, 256-byte transfers looped
+cut	_ctype_b	PICOLIBC	yes	program	
+cut	abort	PICOLIBC	yes	program	
+cut	errno	PICOLIBC	yes	program	
+cut	exit	PICOLIBC	yes	program	
+cut	fclose	PICOLIBC	yes	program	
+cut	fflush	PICOLIBC	yes	program	
+cut	fopen	PICOLIBC	yes	program	
+cut	fprintf	PICOLIBC	yes	program	
+cut	fputc	PICOLIBC	yes	program	
+cut	fwrite	PICOLIBC	yes	program	
+cut	getline	PICOLIBC	yes	program	
+cut	memchr	PICOLIBC	yes	program	
+cut	memcmp	PICOLIBC	yes	program	as memcpy
+cut	perror	PICOLIBC	yes	program	as strerror
+cut	realloc	KIT	yes	program	allocation adapter
+cut	stderr	PICOLIBC	yes	program	
+cut	stdin	PICOLIBC	yes	program	
+cut	stdout	PICOLIBC	yes	program	
+cut	strcmp	PICOLIBC	yes	program	
+cut	strlen	PICOLIBC	yes	program	
+cut	strncmp	PICOLIBC	yes	program	
+cut	strtoul	PICOLIBC	yes	program	
+cut	tolower	PICOLIBC	yes	program	
+cut	vfprintf	PICOLIBC	yes	program	
+date	_ctype_b	PICOLIBC	yes	program	
+date	abort	PICOLIBC	yes	program	
+date	clock_settime	MISSING	no	program	no archive defines it
+date	errno	PICOLIBC	yes	program	
+date	exit	PICOLIBC	yes	program	
+date	fclose	PICOLIBC	yes	program	
+date	fflush	PICOLIBC	yes	program	
+date	fprintf	PICOLIBC	yes	program	
+date	fputc	PICOLIBC	yes	program	
+date	localtime	PICOLIBC	yes	program	no time-zone database: UTC (CPA-019)
+date	mktime	PICOLIBC	yes	program	
+date	perror	PICOLIBC	yes	program	as strerror
+date	puts	PICOLIBC	yes	program	
+date	setenv	PICOLIBC	yes	program	process-local environ; the kit supplies environ from the startup record
+date	stderr	PICOLIBC	yes	program	
+date	stdout	PICOLIBC	yes	program	
+date	strftime	PICOLIBC	yes	program	as localtime
+date	strlen	PICOLIBC	yes	program	
+date	strncmp	PICOLIBC	yes	program	
+date	strtoll	PICOLIBC	yes	program	
+date	time	PICOLIBC	yes	program	gettimeofday
+date	vfprintf	PICOLIBC	yes	program	
+dd	calloc	KIT	yes	program	allocation adapter
+dd	errno	PICOLIBC	yes	program	
+dd	exit	PICOLIBC	yes	program	
+dd	fprintf	PICOLIBC	yes	program	
+dd	fputc	PICOLIBC	yes	program	
+dd	ftruncate	KIT	yes	program	__absd_std_fs_set_len
+dd	lseek	KIT	yes	program	userspace position; ESPIPE on pipes (zlib gz_open probes it on stdin)
+dd	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+dd	memmove	PICOLIBC	yes	program	as memcpy
+dd	memset	PICOLIBC	yes	program	as memcpy
+dd	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+dd	perror	PICOLIBC	yes	program	as strerror
+dd	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+dd	realloc	KIT	yes	program	allocation adapter
+dd	stderr	PICOLIBC	yes	program	
+dd	strchr	PICOLIBC	yes	program	
+dd	strcmp	PICOLIBC	yes	program	
+dd	strdup	PICOLIBC	yes	program	
+dd	strlen	PICOLIBC	yes	program	
+dd	strncmp	PICOLIBC	yes	program	
+dd	strndup	PICOLIBC	yes	program	
+dd	strtoll	PICOLIBC	yes	program	
+dd	strtoumax	PICOLIBC	yes	program	
+dd	tolower	PICOLIBC	yes	program	
+dd	toupper	PICOLIBC	yes	program	
+dd	vfprintf	PICOLIBC	yes	program	
+dd	write	KIT	yes	program	descriptor table, 256-byte transfers looped
+dirname	dirname	PICOLIBC	yes	program	
+dirname	exit	PICOLIBC	yes	program	
+dirname	fclose	PICOLIBC	yes	program	
+dirname	fflush	PICOLIBC	yes	program	
+dirname	fprintf	PICOLIBC	yes	program	
+dirname	fputc	PICOLIBC	yes	program	
+dirname	perror	PICOLIBC	yes	program	as strerror
+dirname	puts	PICOLIBC	yes	program	
+dirname	stderr	PICOLIBC	yes	program	
+dirname	stdout	PICOLIBC	yes	program	
+dirname	strlen	PICOLIBC	yes	program	
+dirname	strncmp	PICOLIBC	yes	program	
+dirname	vfprintf	PICOLIBC	yes	program	
+du	abort	PICOLIBC	yes	program	
+du	calloc	KIT	yes	program	allocation adapter
+du	closedir	ADAPTER	yes	program	as opendir
+du	errno	PICOLIBC	yes	program	
+du	exit	PICOLIBC	yes	program	
+du	fclose	PICOLIBC	yes	program	
+du	fdopendir	MISSING	no	program	no archive defines it
+du	fflush	PICOLIBC	yes	program	
+du	fprintf	PICOLIBC	yes	program	
+du	fputc	PICOLIBC	yes	program	
+du	free	KIT	yes	program	allocation adapter
+du	fstatat	MISSING	no	program	no archive defines it
+du	getenv	PICOLIBC	yes	program	as setenv
+du	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+du	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+du	openat	MISSING	no	program	no archive defines it
+du	perror	PICOLIBC	yes	program	as strerror
+du	printf	PICOLIBC	yes	program	
+du	readdir	ADAPTER	yes	program	as opendir
+du	realloc	KIT	yes	program	allocation adapter
+du	snprintf	PICOLIBC	yes	program	
+du	stderr	PICOLIBC	yes	program	
+du	stdout	PICOLIBC	yes	program	
+du	strcmp	PICOLIBC	yes	program	
+du	strdup	PICOLIBC	yes	program	
+du	strlen	PICOLIBC	yes	program	
+du	strncmp	PICOLIBC	yes	program	
+du	strndup	PICOLIBC	yes	program	
+du	strtoll	PICOLIBC	yes	program	
+du	vfprintf	PICOLIBC	yes	program	
+echo	exit	PICOLIBC	yes	program	
+echo	fclose	PICOLIBC	yes	program	
+echo	fflush	PICOLIBC	yes	program	
+echo	fprintf	PICOLIBC	yes	program	
+echo	fputc	PICOLIBC	yes	program	
+echo	fputs	PICOLIBC	yes	program	
+echo	perror	PICOLIBC	yes	program	as strerror
+echo	stderr	PICOLIBC	yes	program	
+echo	stdout	PICOLIBC	yes	program	
+echo	strcmp	PICOLIBC	yes	program	
+echo	strlen	PICOLIBC	yes	program	
+echo	strncmp	PICOLIBC	yes	program	
+echo	vfprintf	PICOLIBC	yes	program	
+ed	_ctype_b	PICOLIBC	yes	program	
+ed	abort	PICOLIBC	yes	program	
+ed	chdir	ADAPTER	yes	program	__absd_std_chdir
+ed	close	KIT	yes	program	descriptor table
+ed	errno	PICOLIBC	yes	program	
+ed	exit	PICOLIBC	yes	program	
+ed	fclose	PICOLIBC	yes	program	
+ed	fflush	PICOLIBC	yes	program	
+ed	fopen	PICOLIBC	yes	program	
+ed	fprintf	PICOLIBC	yes	program	
+ed	fputc	PICOLIBC	yes	program	
+ed	fputs	PICOLIBC	yes	program	
+ed	free	KIT	yes	program	allocation adapter
+ed	fwrite	PICOLIBC	yes	program	
+ed	getc	PICOLIBC	yes	program	
+ed	getenv	PICOLIBC	yes	program	as setenv
+ed	getline	PICOLIBC	yes	program	
+ed	longjmp	PICOLIBC	yes	program	
+ed	lseek	KIT	yes	program	userspace position; ESPIPE on pipes (zlib gz_open probes it on stdin)
+ed	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+ed	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+ed	mkstemp	PICOLIBC	yes	program	open(O_CREAT|O_EXCL) in the named directory; lua-posix os.tmpname (CPA-045)
+ed	pclose	REFUSED	yes	program	-1/ECHILD (no stream can exist)
+ed	perror	PICOLIBC	yes	program	as strerror
+ed	popen	REFUSED	yes	program	adapter replaces Picolibc's fork-based popen(): NULL/ENOSYS (CPA-003)
+ed	printf	PICOLIBC	yes	program	
+ed	puts	PICOLIBC	yes	program	
+ed	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+ed	realloc	KIT	yes	program	allocation adapter
+ed	regcomp	PICOLIBC	yes	program	
+ed	regerror	PICOLIBC	yes	program	
+ed	regexec	PICOLIBC	yes	program	
+ed	regfree	PICOLIBC	yes	program	
+ed	remove	PICOLIBC	yes	program	unlink/rmdir
+ed	setjmp	PICOLIBC	yes	program	
+ed	sigaction	REFUSED	no	program	-1/ENOSYS (lua-posix only) [no archive defines it: refused at link time]
+ed	snprintf	PICOLIBC	yes	program	
+ed	stderr	PICOLIBC	yes	program	
+ed	stdin	PICOLIBC	yes	program	
+ed	stdout	PICOLIBC	yes	program	
+ed	strcmp	PICOLIBC	yes	program	
+ed	strcpy	PICOLIBC	yes	program	
+ed	strdup	PICOLIBC	yes	program	
+ed	strlen	PICOLIBC	yes	program	
+ed	strncmp	PICOLIBC	yes	program	
+ed	system	REFUSED	yes	program	adapter replaces Picolibc's fork-based system(): system(NULL)=0 (no command processor), system(cmd)=-1/ENOSYS (CPA-003)
+ed	ungetc	PICOLIBC	yes	program	
+ed	vfprintf	PICOLIBC	yes	program	
+ed	write	KIT	yes	program	descriptor table, 256-byte transfers looped
+env	_exit	KIT	yes	program	__absd_std_exit
+env	abort	PICOLIBC	yes	program	
+env	environ	KIT	yes	program	
+env	errno	PICOLIBC	yes	program	
+env	execve	REFUSED	no	via link	ENOSYS; as fork [no archive defines it: refused at link time]
+env	execvp	REFUSED	yes	program	exec*: not provided (C-INTERFACE 10)
+env	exit	PICOLIBC	yes	program	
+env	fclose	PICOLIBC	yes	program	
+env	fflush	PICOLIBC	yes	program	
+env	fprintf	PICOLIBC	yes	program	
+env	fputc	PICOLIBC	yes	program	
+env	perror	PICOLIBC	yes	program	as strerror
+env	putenv	PICOLIBC	yes	program	
+env	puts	PICOLIBC	yes	program	
+env	stderr	PICOLIBC	yes	program	
+env	stdout	PICOLIBC	yes	program	
+env	strchr	PICOLIBC	yes	program	
+env	strlen	PICOLIBC	yes	program	
+env	strncmp	PICOLIBC	yes	program	
+env	unsetenv	PICOLIBC	yes	program	as setenv
+env	vfprintf	PICOLIBC	yes	program	
+expand	abort	PICOLIBC	yes	program	
+expand	calloc	KIT	yes	program	allocation adapter
+expand	errno	PICOLIBC	yes	program	
+expand	exit	PICOLIBC	yes	program	
+expand	fclose	PICOLIBC	yes	program	
+expand	fflush	PICOLIBC	yes	program	
+expand	fgetc	PICOLIBC	yes	program	
+expand	fopen	PICOLIBC	yes	program	
+expand	fprintf	PICOLIBC	yes	program	
+expand	fputc	PICOLIBC	yes	program	
+expand	fwrite	PICOLIBC	yes	program	
+expand	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+expand	perror	PICOLIBC	yes	program	as strerror
+expand	realloc	KIT	yes	program	allocation adapter
+expand	stderr	PICOLIBC	yes	program	
+expand	stdin	PICOLIBC	yes	program	
+expand	stdout	PICOLIBC	yes	program	
+expand	strcmp	PICOLIBC	yes	program	
+expand	strcspn	PICOLIBC	yes	program	
+expand	strdup	PICOLIBC	yes	program	
+expand	strerror	PICOLIBC	yes	program	Picolibc's texts; byte comparison with glibc texts is a divergence class (CPA-020)
+expand	strlen	PICOLIBC	yes	program	
+expand	strncmp	PICOLIBC	yes	program	
+expand	strndup	PICOLIBC	yes	program	
+expand	strtoll	PICOLIBC	yes	program	
+expand	vfprintf	PICOLIBC	yes	program	
+expr	calloc	KIT	yes	program	allocation adapter
+expr	errno	PICOLIBC	yes	program	
+expr	exit	PICOLIBC	yes	program	
+expr	fclose	PICOLIBC	yes	program	
+expr	fflush	PICOLIBC	yes	program	
+expr	fprintf	PICOLIBC	yes	program	
+expr	fputc	PICOLIBC	yes	program	
+expr	free	KIT	yes	program	allocation adapter
+expr	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+expr	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+expr	memset	PICOLIBC	yes	program	as memcpy
+expr	perror	PICOLIBC	yes	program	as strerror
+expr	printf	PICOLIBC	yes	program	
+expr	puts	PICOLIBC	yes	program	
+expr	realloc	KIT	yes	program	allocation adapter
+expr	regcomp	PICOLIBC	yes	program	
+expr	regerror	PICOLIBC	yes	program	
+expr	regexec	PICOLIBC	yes	program	
+expr	regfree	PICOLIBC	yes	program	
+expr	stderr	PICOLIBC	yes	program	
+expr	stdout	PICOLIBC	yes	program	
+expr	strchr	PICOLIBC	yes	program	
+expr	strcmp	PICOLIBC	yes	program	
+expr	strdup	PICOLIBC	yes	program	
+expr	strlen	PICOLIBC	yes	program	
+expr	strncmp	PICOLIBC	yes	program	
+expr	strndup	PICOLIBC	yes	program	
+expr	strrchr	PICOLIBC	yes	program	
+expr	strstr	PICOLIBC	yes	program	
+expr	strtoll	PICOLIBC	yes	program	
+expr	vfprintf	PICOLIBC	yes	program	
+find	_exit	KIT	yes	program	__absd_std_exit
+find	basename	PICOLIBC	yes	program	
+find	calloc	KIT	yes	program	allocation adapter
+find	clock_gettime	MISSING	no	program	no archive defines it
+find	closedir	ADAPTER	yes	program	as opendir
+find	environ	KIT	yes	program	
+find	errno	PICOLIBC	yes	program	
+find	execve	REFUSED	no	via link	ENOSYS; as fork [no archive defines it: refused at link time]
+find	execvp	REFUSED	yes	program	exec*: not provided (C-INTERFACE 10)
+find	exit	PICOLIBC	yes	program	
+find	fclose	PICOLIBC	yes	program	
+find	fflush	PICOLIBC	yes	program	
+find	fgetc	PICOLIBC	yes	program	
+find	fnmatch	PICOLIBC	yes	program	
+find	fork	REFUSED	no	program	ENOSYS; reached only through Picolibc's popen/system, which the adapter replaces [no archive defines it: refused at link time]
+find	fprintf	PICOLIBC	yes	program	
+find	fputc	PICOLIBC	yes	program	
+find	free	KIT	yes	program	allocation adapter
+find	getgrgid	PICOLIBC	yes	program	
+find	getgrnam	PICOLIBC	yes	program	
+find	getpwnam	PICOLIBC	yes	program	
+find	getpwuid	PICOLIBC	yes	program	reads /etc/passwd through stdio; absent on ABSD, so NULL; shell falls back to $HOME
+find	lstat	ADAPTER	yes	program	== stat: the platform has exactly two object kinds, file and directory (A13 invariant, ADAPTER-DESIGN.md 6.2)
+find	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+find	opendir	ADAPTER	yes	program	__absd_std_fs_readdir by index; the file server snapshots the listing at index 0
+find	perror	PICOLIBC	yes	program	as strerror
+find	puts	PICOLIBC	yes	program	
+find	readdir	ADAPTER	yes	program	as opendir
+find	realloc	KIT	yes	program	allocation adapter
+find	stat	ADAPTER	yes	program	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+find	stderr	PICOLIBC	yes	program	
+find	stdin	PICOLIBC	yes	program	
+find	stdout	PICOLIBC	yes	program	
+find	strchr	PICOLIBC	yes	program	
+find	strcmp	PICOLIBC	yes	program	
+find	strdup	PICOLIBC	yes	program	
+find	strlen	PICOLIBC	yes	program	
+find	strncmp	PICOLIBC	yes	program	
+find	strndup	PICOLIBC	yes	program	
+find	strtol	PICOLIBC	yes	program	
+find	sysconf	KIT	yes	program	kit-owned explicit values or refusals (R4 accepted), replacing Picolibc's libos fallback; WAL variant only (getpagesize) (CPA-006)
+find	umask	MISSING	no	program	no archive defines it
+find	vfprintf	PICOLIBC	yes	program	
+find	waitpid	REFUSED	no	program	wait*: not provided (C-INTERFACE 10); classify.tsv ADAPTER: reached only through Picolibc's popen/system; not built
+flock	_exit	KIT	yes	program	__absd_std_exit
+flock	close	KIT	yes	program	descriptor table
+flock	errno	PICOLIBC	yes	program	
+flock	execve	REFUSED	no	via link	ENOSYS; as fork [no archive defines it: refused at link time]
+flock	execvp	REFUSED	yes	program	exec*: not provided (C-INTERFACE 10)
+flock	exit	PICOLIBC	yes	program	
+flock	flock	MISSING	no	program	no archive defines it
+flock	fork	REFUSED	no	program	ENOSYS; reached only through Picolibc's popen/system, which the adapter replaces [no archive defines it: refused at link time]
+flock	fprintf	PICOLIBC	yes	program	
+flock	fputc	PICOLIBC	yes	program	
+flock	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+flock	perror	PICOLIBC	yes	program	as strerror
+flock	stderr	PICOLIBC	yes	program	
+flock	strlen	PICOLIBC	yes	program	
+flock	strncmp	PICOLIBC	yes	program	
+flock	vfprintf	PICOLIBC	yes	program	
+flock	waitpid	REFUSED	no	program	wait*: not provided (C-INTERFACE 10); classify.tsv ADAPTER: reached only through Picolibc's popen/system; not built
+fold	_ctype_b	PICOLIBC	yes	program	
+fold	abort	PICOLIBC	yes	program	
+fold	errno	PICOLIBC	yes	program	
+fold	exit	PICOLIBC	yes	program	
+fold	fclose	PICOLIBC	yes	program	
+fold	fflush	PICOLIBC	yes	program	
+fold	fopen	PICOLIBC	yes	program	
+fold	fprintf	PICOLIBC	yes	program	
+fold	fputc	PICOLIBC	yes	program	
+fold	fwrite	PICOLIBC	yes	program	
+fold	getline	PICOLIBC	yes	program	
+fold	perror	PICOLIBC	yes	program	as strerror
+fold	stderr	PICOLIBC	yes	program	
+fold	stdin	PICOLIBC	yes	program	
+fold	stdout	PICOLIBC	yes	program	
+fold	strcmp	PICOLIBC	yes	program	
+fold	strlen	PICOLIBC	yes	program	
+fold	strncmp	PICOLIBC	yes	program	
+fold	strtoll	PICOLIBC	yes	program	
+fold	vfprintf	PICOLIBC	yes	program	
+grep	abort	PICOLIBC	yes	program	
+grep	calloc	KIT	yes	program	allocation adapter
+grep	exit	PICOLIBC	yes	program	
+grep	fclose	PICOLIBC	yes	program	
+grep	fflush	PICOLIBC	yes	program	
+grep	fmemopen	PICOLIBC	yes	program	
+grep	fopen	PICOLIBC	yes	program	
+grep	fprintf	PICOLIBC	yes	program	
+grep	fputc	PICOLIBC	yes	program	
+grep	getline	PICOLIBC	yes	program	
+grep	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+grep	memset	PICOLIBC	yes	program	as memcpy
+grep	perror	PICOLIBC	yes	program	as strerror
+grep	printf	PICOLIBC	yes	program	
+grep	puts	PICOLIBC	yes	program	
+grep	realloc	KIT	yes	program	allocation adapter
+grep	regcomp	PICOLIBC	yes	program	
+grep	regerror	PICOLIBC	yes	program	
+grep	regexec	PICOLIBC	yes	program	
+grep	snprintf	PICOLIBC	yes	program	
+grep	stderr	PICOLIBC	yes	program	
+grep	stdin	PICOLIBC	yes	program	
+grep	stdout	PICOLIBC	yes	program	
+grep	strcasecmp	PICOLIBC	yes	program	
+grep	strcmp	PICOLIBC	yes	program	
+grep	strdup	PICOLIBC	yes	program	
+grep	strlen	PICOLIBC	yes	program	
+grep	strncasecmp	PICOLIBC	yes	program	
+grep	strncmp	PICOLIBC	yes	program	
+grep	strndup	PICOLIBC	yes	program	
+grep	strstr	PICOLIBC	yes	program	
+grep	vfprintf	PICOLIBC	yes	program	
+head	abort	PICOLIBC	yes	program	
+head	errno	PICOLIBC	yes	program	
+head	exit	PICOLIBC	yes	program	
+head	fclose	PICOLIBC	yes	program	
+head	fflush	PICOLIBC	yes	program	
+head	fopen	PICOLIBC	yes	program	
+head	fprintf	PICOLIBC	yes	program	
+head	fputc	PICOLIBC	yes	program	
+head	free	KIT	yes	program	allocation adapter
+head	fwrite	PICOLIBC	yes	program	
+head	getline	PICOLIBC	yes	program	
+head	perror	PICOLIBC	yes	program	as strerror
+head	printf	PICOLIBC	yes	program	
+head	stderr	PICOLIBC	yes	program	
+head	stdin	PICOLIBC	yes	program	
+head	stdout	PICOLIBC	yes	program	
+head	strcmp	PICOLIBC	yes	program	
+head	strlen	PICOLIBC	yes	program	
+head	strncmp	PICOLIBC	yes	program	
+head	strtoll	PICOLIBC	yes	program	
+head	vfprintf	PICOLIBC	yes	program	
+hostname	exit	PICOLIBC	yes	program	
+hostname	fclose	PICOLIBC	yes	program	
+hostname	fflush	PICOLIBC	yes	program	
+hostname	fprintf	PICOLIBC	yes	program	
+hostname	fputc	PICOLIBC	yes	program	
+hostname	gethostname	REFUSED	yes	program	-1/ENOSYS (no host name exists); shell prompt only; shell substitutes "?"
+hostname	perror	PICOLIBC	yes	program	as strerror
+hostname	puts	PICOLIBC	yes	program	
+hostname	sethostname	MISSING	no	program	no archive defines it
+hostname	stderr	PICOLIBC	yes	program	
+hostname	stdout	PICOLIBC	yes	program	
+hostname	strlen	PICOLIBC	yes	program	
+hostname	strncmp	PICOLIBC	yes	program	
+hostname	vfprintf	PICOLIBC	yes	program	
+join	_ctype_b	PICOLIBC	yes	program	
+join	abort	PICOLIBC	yes	program	
+join	errno	PICOLIBC	yes	program	
+join	exit	PICOLIBC	yes	program	
+join	fclose	PICOLIBC	yes	program	
+join	fflush	PICOLIBC	yes	program	
+join	fopen	PICOLIBC	yes	program	
+join	fprintf	PICOLIBC	yes	program	
+join	fputc	PICOLIBC	yes	program	
+join	fputs	PICOLIBC	yes	program	
+join	free	KIT	yes	program	allocation adapter
+join	fwrite	PICOLIBC	yes	program	
+join	getline	PICOLIBC	yes	program	
+join	memchr	PICOLIBC	yes	program	
+join	memcmp	PICOLIBC	yes	program	as memcpy
+join	perror	PICOLIBC	yes	program	as strerror
+join	realloc	KIT	yes	program	allocation adapter
+join	stderr	PICOLIBC	yes	program	
+join	stdin	PICOLIBC	yes	program	
+join	stdout	PICOLIBC	yes	program	
+join	strcmp	PICOLIBC	yes	program	
+join	strlen	PICOLIBC	yes	program	
+join	strncmp	PICOLIBC	yes	program	
+join	strpbrk	PICOLIBC	yes	program	
+join	strtoll	PICOLIBC	yes	program	
+join	tolower	PICOLIBC	yes	program	
+join	vfprintf	PICOLIBC	yes	program	
+kill	_ctype_b	PICOLIBC	yes	program	
+kill	errno	PICOLIBC	yes	program	
+kill	exit	PICOLIBC	yes	program	
+kill	fclose	PICOLIBC	yes	program	
+kill	fflush	PICOLIBC	yes	program	
+kill	fprintf	PICOLIBC	yes	program	
+kill	fputc	PICOLIBC	yes	program	
+kill	kill	KIT	yes	program	
+kill	perror	PICOLIBC	yes	program	as strerror
+kill	puts	PICOLIBC	yes	program	
+kill	stderr	PICOLIBC	yes	program	
+kill	stdout	PICOLIBC	yes	program	
+kill	strcasecmp	PICOLIBC	yes	program	
+kill	strcmp	PICOLIBC	yes	program	
+kill	strlen	PICOLIBC	yes	program	
+kill	strncmp	PICOLIBC	yes	program	
+kill	strtoll	PICOLIBC	yes	program	
+kill	vfprintf	PICOLIBC	yes	program	
+link	exit	PICOLIBC	yes	program	
+link	fprintf	PICOLIBC	yes	program	
+link	fputc	PICOLIBC	yes	program	
+link	link	MISSING	no	program	no archive defines it
+link	perror	PICOLIBC	yes	program	as strerror
+link	stderr	PICOLIBC	yes	program	
+link	strlen	PICOLIBC	yes	program	
+link	strncmp	PICOLIBC	yes	program	
+link	vfprintf	PICOLIBC	yes	program	
+ln	basename	PICOLIBC	yes	program	
+ln	errno	PICOLIBC	yes	program	
+ln	exit	PICOLIBC	yes	program	
+ln	fprintf	PICOLIBC	yes	program	
+ln	fputc	PICOLIBC	yes	program	
+ln	fstatat	MISSING	no	program	no archive defines it
+ln	linkat	MISSING	no	program	no archive defines it
+ln	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+ln	perror	PICOLIBC	yes	program	as strerror
+ln	stat	ADAPTER	yes	program	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+ln	stderr	PICOLIBC	yes	program	
+ln	strlen	PICOLIBC	yes	program	
+ln	strncmp	PICOLIBC	yes	program	
+ln	symlinkat	MISSING	no	program	no archive defines it
+ln	unlinkat	MISSING	no	program	no archive defines it
+ln	vfprintf	PICOLIBC	yes	program	
+logname	exit	PICOLIBC	yes	program	
+logname	fclose	PICOLIBC	yes	program	
+logname	fflush	PICOLIBC	yes	program	
+logname	fprintf	PICOLIBC	yes	program	
+logname	fputc	PICOLIBC	yes	program	
+logname	getlogin	PICOLIBC	yes	program	
+logname	perror	PICOLIBC	yes	program	as strerror
+logname	puts	PICOLIBC	yes	program	
+logname	stderr	PICOLIBC	yes	program	
+logname	stdout	PICOLIBC	yes	program	
+logname	strlen	PICOLIBC	yes	program	
+logname	strncmp	PICOLIBC	yes	program	
+logname	vfprintf	PICOLIBC	yes	program	
+ls	bsearch	PICOLIBC	yes	program	
+ls	calloc	KIT	yes	program	allocation adapter
+ls	chdir	ADAPTER	yes	program	__absd_std_chdir
+ls	closedir	ADAPTER	yes	program	as opendir
+ls	errno	PICOLIBC	yes	program	
+ls	exit	PICOLIBC	yes	program	
+ls	fclose	PICOLIBC	yes	program	
+ls	fflush	PICOLIBC	yes	program	
+ls	fprintf	PICOLIBC	yes	program	
+ls	fputc	PICOLIBC	yes	program	
+ls	fputs	PICOLIBC	yes	program	
+ls	free	KIT	yes	program	allocation adapter
+ls	fwrite	PICOLIBC	yes	program	
+ls	getcwd	ADAPTER	yes	program	__absd_std_getcwd
+ls	getgrgid	PICOLIBC	yes	program	
+ls	getpwuid	PICOLIBC	yes	program	reads /etc/passwd through stdio; absent on ABSD, so NULL; shell falls back to $HOME
+ls	localtime	PICOLIBC	yes	program	no time-zone database: UTC (CPA-019)
+ls	lstat	ADAPTER	yes	program	== stat: the platform has exactly two object kinds, file and directory (A13 invariant, ADAPTER-DESIGN.md 6.2)
+ls	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+ls	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+ls	opendir	ADAPTER	yes	program	__absd_std_fs_readdir by index; the file server snapshots the listing at index 0
+ls	perror	PICOLIBC	yes	program	as strerror
+ls	printf	PICOLIBC	yes	program	
+ls	puts	PICOLIBC	yes	program	
+ls	qsort	PICOLIBC	yes	program	
+ls	readdir	ADAPTER	yes	program	as opendir
+ls	readlink	ADAPTER	yes	program	EINVAL for every existing path (nothing is a symlink); ENOENT when absent
+ls	realloc	KIT	yes	program	allocation adapter
+ls	snprintf	PICOLIBC	yes	program	
+ls	stat	ADAPTER	yes	program	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+ls	stderr	PICOLIBC	yes	program	
+ls	stdout	PICOLIBC	yes	program	
+ls	strcmp	PICOLIBC	yes	program	
+ls	strdup	PICOLIBC	yes	program	
+ls	strftime	PICOLIBC	yes	program	as localtime
+ls	strlen	PICOLIBC	yes	program	
+ls	strncmp	PICOLIBC	yes	program	
+ls	strndup	PICOLIBC	yes	program	
+ls	time	PICOLIBC	yes	program	gettimeofday
+ls	vfprintf	PICOLIBC	yes	program	
+md5sum	close	KIT	yes	program	descriptor table
+md5sum	exit	PICOLIBC	yes	program	
+md5sum	fclose	PICOLIBC	yes	program	
+md5sum	fflush	PICOLIBC	yes	program	
+md5sum	fopen	PICOLIBC	yes	program	
+md5sum	fprintf	PICOLIBC	yes	program	
+md5sum	fputc	PICOLIBC	yes	program	
+md5sum	free	KIT	yes	program	allocation adapter
+md5sum	getline	PICOLIBC	yes	program	
+md5sum	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+md5sum	memset	PICOLIBC	yes	program	as memcpy
+md5sum	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+md5sum	perror	PICOLIBC	yes	program	as strerror
+md5sum	printf	PICOLIBC	yes	program	
+md5sum	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+md5sum	stderr	PICOLIBC	yes	program	
+md5sum	stdin	PICOLIBC	yes	program	
+md5sum	stdout	PICOLIBC	yes	program	
+md5sum	strlen	PICOLIBC	yes	program	
+md5sum	strncmp	PICOLIBC	yes	program	
+md5sum	strstr	PICOLIBC	yes	program	
+md5sum	vfprintf	PICOLIBC	yes	program	
+mkdir	abort	PICOLIBC	yes	program	
+mkdir	errno	PICOLIBC	yes	program	
+mkdir	exit	PICOLIBC	yes	program	
+mkdir	fprintf	PICOLIBC	yes	program	
+mkdir	fputc	PICOLIBC	yes	program	
+mkdir	mkdir	ADAPTER	yes	program	__absd_std_fs_mkdir; mode not applied (declared divergence CPA-014); mode without S_IWUSR EPERM
+mkdir	perror	PICOLIBC	yes	program	as strerror
+mkdir	stat	ADAPTER	yes	program	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+mkdir	stderr	PICOLIBC	yes	program	
+mkdir	strlen	PICOLIBC	yes	program	
+mkdir	strncmp	PICOLIBC	yes	program	
+mkdir	strtol	PICOLIBC	yes	program	
+mkdir	umask	MISSING	no	program	no archive defines it
+mkdir	vfprintf	PICOLIBC	yes	program	
+mkfifo	abort	PICOLIBC	yes	program	
+mkfifo	exit	PICOLIBC	yes	program	
+mkfifo	fprintf	PICOLIBC	yes	program	
+mkfifo	fputc	PICOLIBC	yes	program	
+mkfifo	mkfifo	MISSING	no	program	no archive defines it
+mkfifo	perror	PICOLIBC	yes	program	as strerror
+mkfifo	stderr	PICOLIBC	yes	program	
+mkfifo	strlen	PICOLIBC	yes	program	
+mkfifo	strncmp	PICOLIBC	yes	program	
+mkfifo	strtol	PICOLIBC	yes	program	
+mkfifo	umask	MISSING	no	program	no archive defines it
+mkfifo	vfprintf	PICOLIBC	yes	program	
+mktemp	abort	PICOLIBC	yes	program	
+mktemp	close	KIT	yes	program	descriptor table
+mktemp	dirname	PICOLIBC	yes	program	
+mktemp	exit	PICOLIBC	yes	program	
+mktemp	fclose	PICOLIBC	yes	program	
+mktemp	fflush	PICOLIBC	yes	program	
+mktemp	fprintf	PICOLIBC	yes	program	
+mktemp	fputc	PICOLIBC	yes	program	
+mktemp	getenv	PICOLIBC	yes	program	as setenv
+mktemp	mkdtemp	MISSING	no	program	no archive defines it
+mktemp	mkstemp	PICOLIBC	yes	program	open(O_CREAT|O_EXCL) in the named directory; lua-posix os.tmpname (CPA-045)
+mktemp	perror	PICOLIBC	yes	program	as strerror
+mktemp	puts	PICOLIBC	yes	program	
+mktemp	stderr	PICOLIBC	yes	program	
+mktemp	stdout	PICOLIBC	yes	program	
+mktemp	strlen	PICOLIBC	yes	program	
+mktemp	strncmp	PICOLIBC	yes	program	
+mktemp	unlink	KIT	yes	program	__absd_std_fs_unlink
+mktemp	vfprintf	PICOLIBC	yes	program	
+mv	basename	PICOLIBC	yes	program	
+mv	calloc	KIT	yes	program	allocation adapter
+mv	chmod	ADAPTER	yes	program	__absd_std_fs_set_readonly_path on files: 0444/0644 only; other modes and every directory EPERM (A14 audit)
+mv	chown	ADAPTER	yes	program	
+mv	close	KIT	yes	program	descriptor table
+mv	closedir	ADAPTER	yes	program	as opendir
+mv	creat	PICOLIBC	yes	program	
+mv	errno	PICOLIBC	yes	program	
+mv	exit	PICOLIBC	yes	program	
+mv	fdopendir	MISSING	no	program	no archive defines it
+mv	fprintf	PICOLIBC	yes	program	
+mv	fputc	PICOLIBC	yes	program	
+mv	free	KIT	yes	program	allocation adapter
+mv	fstatat	MISSING	no	program	no archive defines it
+mv	lchown	ADAPTER	yes	program	
+mv	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+mv	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+mv	mkdir	ADAPTER	yes	program	__absd_std_fs_mkdir; mode not applied (declared divergence CPA-014); mode without S_IWUSR EPERM
+mv	mknod	MISSING	no	program	no archive defines it
+mv	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+mv	openat	MISSING	no	program	no archive defines it
+mv	opendir	ADAPTER	yes	program	__absd_std_fs_readdir by index; the file server snapshots the listing at index 0
+mv	perror	PICOLIBC	yes	program	as strerror
+mv	printf	PICOLIBC	yes	program	
+mv	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+mv	readdir	ADAPTER	yes	program	as opendir
+mv	readlink	ADAPTER	yes	program	EINVAL for every existing path (nothing is a symlink); ENOENT when absent
+mv	realloc	KIT	yes	program	allocation adapter
+mv	rename	ADAPTER	yes	program	__absd_std_fs_rename(noreplace=0); not in Picolibc
+mv	snprintf	PICOLIBC	yes	program	
+mv	stat	ADAPTER	yes	program	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+mv	stderr	PICOLIBC	yes	program	
+mv	strcmp	PICOLIBC	yes	program	
+mv	strdup	PICOLIBC	yes	program	
+mv	strlen	PICOLIBC	yes	program	
+mv	strncmp	PICOLIBC	yes	program	
+mv	strndup	PICOLIBC	yes	program	
+mv	symlink	REFUSED	yes	program	-1/EPERM (the filesystem has no symlinks); shell writefile() only
+mv	unlink	KIT	yes	program	__absd_std_fs_unlink
+mv	unlinkat	MISSING	no	program	no archive defines it
+mv	utimensat	MISSING	no	program	no archive defines it
+mv	vfprintf	PICOLIBC	yes	program	
+mv	write	KIT	yes	program	descriptor table, 256-byte transfers looped
+nl	_ctype_b	PICOLIBC	yes	program	
+nl	abort	PICOLIBC	yes	program	
+nl	calloc	KIT	yes	program	allocation adapter
+nl	errno	PICOLIBC	yes	program	
+nl	exit	PICOLIBC	yes	program	
+nl	fclose	PICOLIBC	yes	program	
+nl	fflush	PICOLIBC	yes	program	
+nl	fopen	PICOLIBC	yes	program	
+nl	fprintf	PICOLIBC	yes	program	
+nl	fputc	PICOLIBC	yes	program	
+nl	free	KIT	yes	program	allocation adapter
+nl	fwrite	PICOLIBC	yes	program	
+nl	getline	PICOLIBC	yes	program	
+nl	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+nl	memcmp	PICOLIBC	yes	program	as memcpy
+nl	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+nl	memset	PICOLIBC	yes	program	as memcpy
+nl	perror	PICOLIBC	yes	program	as strerror
+nl	printf	PICOLIBC	yes	program	
+nl	realloc	KIT	yes	program	allocation adapter
+nl	regcomp	PICOLIBC	yes	program	
+nl	regerror	PICOLIBC	yes	program	
+nl	regexec	PICOLIBC	yes	program	
+nl	stderr	PICOLIBC	yes	program	
+nl	stdin	PICOLIBC	yes	program	
+nl	stdout	PICOLIBC	yes	program	
+nl	strchr	PICOLIBC	yes	program	
+nl	strcmp	PICOLIBC	yes	program	
+nl	strdup	PICOLIBC	yes	program	
+nl	strlen	PICOLIBC	yes	program	
+nl	strncmp	PICOLIBC	yes	program	
+nl	strndup	PICOLIBC	yes	program	
+nl	strrchr	PICOLIBC	yes	program	
+nl	strstr	PICOLIBC	yes	program	
+nl	strtoll	PICOLIBC	yes	program	
+nl	tolower	PICOLIBC	yes	program	
+nl	vfprintf	PICOLIBC	yes	program	
+nohup	_exit	KIT	yes	program	__absd_std_exit
+nohup	close	KIT	yes	program	descriptor table
+nohup	dup2	REFUSED	no	program	not provided (C-INTERFACE 10, CPA-036); classify.tsv ADAPTER: reached only through Picolibc's popen; not built (popen is refused)
+nohup	errno	PICOLIBC	yes	program	
+nohup	execve	REFUSED	no	via link	ENOSYS; as fork [no archive defines it: refused at link time]
+nohup	execvp	REFUSED	yes	program	exec*: not provided (C-INTERFACE 10)
+nohup	exit	PICOLIBC	yes	program	
+nohup	fprintf	PICOLIBC	yes	program	
+nohup	fputc	PICOLIBC	yes	program	
+nohup	isatty	KIT	yes	program	0 with ENOTTY for every descriptor (no terminals)
+nohup	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+nohup	perror	PICOLIBC	yes	program	as strerror
+nohup	signal	REFUSED	yes	program	SIG_ERR/ENOSYS for every signal: no signal source exists (CPA-004); replaces Picolibc's libos fallback, which registers handlers that nothing can deliver
+nohup	stderr	PICOLIBC	yes	program	
+nohup	strlen	PICOLIBC	yes	program	
+nohup	strncmp	PICOLIBC	yes	program	
+nohup	vfprintf	PICOLIBC	yes	program	
+od	_ctype_b	PICOLIBC	yes	program	
+od	abort	PICOLIBC	yes	program	
+od	calloc	KIT	yes	program	allocation adapter
+od	close	KIT	yes	program	descriptor table
+od	errno	PICOLIBC	yes	program	
+od	exit	PICOLIBC	yes	program	
+od	fclose	PICOLIBC	yes	program	
+od	fflush	PICOLIBC	yes	program	
+od	fprintf	PICOLIBC	yes	program	
+od	fputc	PICOLIBC	yes	program	
+od	free	KIT	yes	program	allocation adapter
+od	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+od	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+od	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+od	perror	PICOLIBC	yes	program	as strerror
+od	printf	PICOLIBC	yes	program	
+od	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+od	realloc	KIT	yes	program	allocation adapter
+od	stderr	PICOLIBC	yes	program	
+od	stdout	PICOLIBC	yes	program	
+od	strchr	PICOLIBC	yes	program	
+od	strcmp	PICOLIBC	yes	program	
+od	strdup	PICOLIBC	yes	program	
+od	strlen	PICOLIBC	yes	program	
+od	strncmp	PICOLIBC	yes	program	
+od	strndup	PICOLIBC	yes	program	
+od	strtol	PICOLIBC	yes	program	
+od	toupper	PICOLIBC	yes	program	
+od	vfprintf	PICOLIBC	yes	program	
+paste	_ctype_b	PICOLIBC	yes	program	
+paste	abort	PICOLIBC	yes	program	
+paste	errno	PICOLIBC	yes	program	
+paste	exit	PICOLIBC	yes	program	
+paste	fclose	PICOLIBC	yes	program	
+paste	fflush	PICOLIBC	yes	program	
+paste	fgetc	PICOLIBC	yes	program	
+paste	fopen	PICOLIBC	yes	program	
+paste	fprintf	PICOLIBC	yes	program	
+paste	fputc	PICOLIBC	yes	program	
+paste	fwrite	PICOLIBC	yes	program	
+paste	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+paste	perror	PICOLIBC	yes	program	as strerror
+paste	realloc	KIT	yes	program	allocation adapter
+paste	stderr	PICOLIBC	yes	program	
+paste	stdin	PICOLIBC	yes	program	
+paste	stdout	PICOLIBC	yes	program	
+paste	strchr	PICOLIBC	yes	program	
+paste	strcmp	PICOLIBC	yes	program	
+paste	strerror	PICOLIBC	yes	program	Picolibc's texts; byte comparison with glibc texts is a divergence class (CPA-020)
+paste	strlen	PICOLIBC	yes	program	
+paste	strncmp	PICOLIBC	yes	program	
+paste	strrchr	PICOLIBC	yes	program	
+paste	strstr	PICOLIBC	yes	program	
+paste	tolower	PICOLIBC	yes	program	
+paste	vfprintf	PICOLIBC	yes	program	
+pathchk	calloc	KIT	yes	program	allocation adapter
+pathchk	errno	PICOLIBC	yes	program	
+pathchk	exit	PICOLIBC	yes	program	
+pathchk	fprintf	PICOLIBC	yes	program	
+pathchk	fputc	PICOLIBC	yes	program	
+pathchk	lstat	ADAPTER	yes	program	== stat: the platform has exactly two object kinds, file and directory (A13 invariant, ADAPTER-DESIGN.md 6.2)
+pathchk	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+pathchk	perror	PICOLIBC	yes	program	as strerror
+pathchk	realloc	KIT	yes	program	allocation adapter
+pathchk	stderr	PICOLIBC	yes	program	
+pathchk	strchr	PICOLIBC	yes	program	
+pathchk	strdup	PICOLIBC	yes	program	
+pathchk	strlen	PICOLIBC	yes	program	
+pathchk	strncmp	PICOLIBC	yes	program	
+pathchk	strndup	PICOLIBC	yes	program	
+pathchk	strspn	PICOLIBC	yes	program	
+pathchk	strstr	PICOLIBC	yes	program	
+pathchk	vfprintf	PICOLIBC	yes	program	
+printenv	environ	KIT	yes	program	
+printenv	exit	PICOLIBC	yes	program	
+printenv	fclose	PICOLIBC	yes	program	
+printenv	fflush	PICOLIBC	yes	program	
+printenv	fprintf	PICOLIBC	yes	program	
+printenv	fputc	PICOLIBC	yes	program	
+printenv	getenv	PICOLIBC	yes	program	as setenv
+printenv	perror	PICOLIBC	yes	program	as strerror
+printenv	puts	PICOLIBC	yes	program	
+printenv	stderr	PICOLIBC	yes	program	
+printenv	stdout	PICOLIBC	yes	program	
+printenv	strlen	PICOLIBC	yes	program	
+printenv	strncmp	PICOLIBC	yes	program	
+printenv	vfprintf	PICOLIBC	yes	program	
+printf	_ctype_b	PICOLIBC	yes	program	
+printf	calloc	KIT	yes	program	allocation adapter
+printf	errno	PICOLIBC	yes	program	
+printf	exit	PICOLIBC	yes	program	
+printf	fclose	PICOLIBC	yes	program	
+printf	fflush	PICOLIBC	yes	program	
+printf	fprintf	PICOLIBC	yes	program	
+printf	fputc	PICOLIBC	yes	program	
+printf	free	KIT	yes	program	allocation adapter
+printf	fwrite	PICOLIBC	yes	program	
+printf	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+printf	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+printf	perror	PICOLIBC	yes	program	as strerror
+printf	printf	PICOLIBC	yes	program	
+printf	realloc	KIT	yes	program	allocation adapter
+printf	stderr	PICOLIBC	yes	program	
+printf	stdout	PICOLIBC	yes	program	
+printf	strchr	PICOLIBC	yes	program	
+printf	strdup	PICOLIBC	yes	program	
+printf	strerror	PICOLIBC	yes	program	Picolibc's texts; byte comparison with glibc texts is a divergence class (CPA-020)
+printf	strlen	PICOLIBC	yes	program	
+printf	strncmp	PICOLIBC	yes	program	
+printf	strndup	PICOLIBC	yes	program	
+printf	strrchr	PICOLIBC	yes	program	
+printf	strstr	PICOLIBC	yes	program	
+printf	strtod	PICOLIBC	yes	program	
+printf	strtol	PICOLIBC	yes	program	
+printf	strtoll	PICOLIBC	yes	program	
+printf	strtoul	PICOLIBC	yes	program	
+printf	tolower	PICOLIBC	yes	program	
+printf	vfprintf	PICOLIBC	yes	program	
+pwd	exit	PICOLIBC	yes	program	
+pwd	fclose	PICOLIBC	yes	program	
+pwd	fflush	PICOLIBC	yes	program	
+pwd	fprintf	PICOLIBC	yes	program	
+pwd	fputc	PICOLIBC	yes	program	
+pwd	getcwd	ADAPTER	yes	program	__absd_std_getcwd
+pwd	getenv	PICOLIBC	yes	program	as setenv
+pwd	perror	PICOLIBC	yes	program	as strerror
+pwd	puts	PICOLIBC	yes	program	
+pwd	stat	ADAPTER	yes	program	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+pwd	stderr	PICOLIBC	yes	program	
+pwd	stdout	PICOLIBC	yes	program	
+pwd	strlen	PICOLIBC	yes	program	
+pwd	strncmp	PICOLIBC	yes	program	
+pwd	vfprintf	PICOLIBC	yes	program	
+readlink	exit	PICOLIBC	yes	program	
+readlink	fclose	PICOLIBC	yes	program	
+readlink	fflush	PICOLIBC	yes	program	
+readlink	fprintf	PICOLIBC	yes	program	
+readlink	fputc	PICOLIBC	yes	program	
+readlink	fputs	PICOLIBC	yes	program	
+readlink	perror	PICOLIBC	yes	program	as strerror
+readlink	readlink	ADAPTER	yes	program	EINVAL for every existing path (nothing is a symlink); ENOENT when absent
+readlink	realpath	ADAPTER	yes	program	__absd_std_fs_canonical after cwd resolution; not in Picolibc
+readlink	stderr	PICOLIBC	yes	program	
+readlink	stdout	PICOLIBC	yes	program	
+readlink	strlen	PICOLIBC	yes	program	
+readlink	strncmp	PICOLIBC	yes	program	
+readlink	vfprintf	PICOLIBC	yes	program	
+rev	exit	PICOLIBC	yes	program	
+rev	fclose	PICOLIBC	yes	program	
+rev	fflush	PICOLIBC	yes	program	
+rev	fopen	PICOLIBC	yes	program	
+rev	fprintf	PICOLIBC	yes	program	
+rev	fputc	PICOLIBC	yes	program	
+rev	fwrite	PICOLIBC	yes	program	
+rev	getline	PICOLIBC	yes	program	
+rev	perror	PICOLIBC	yes	program	as strerror
+rev	stderr	PICOLIBC	yes	program	
+rev	stdin	PICOLIBC	yes	program	
+rev	stdout	PICOLIBC	yes	program	
+rev	strcmp	PICOLIBC	yes	program	
+rev	strlen	PICOLIBC	yes	program	
+rev	strncmp	PICOLIBC	yes	program	
+rev	vfprintf	PICOLIBC	yes	program	
+rm	calloc	KIT	yes	program	allocation adapter
+rm	closedir	ADAPTER	yes	program	as opendir
+rm	errno	PICOLIBC	yes	program	
+rm	exit	PICOLIBC	yes	program	
+rm	fdopendir	MISSING	no	program	no archive defines it
+rm	fprintf	PICOLIBC	yes	program	
+rm	fputc	PICOLIBC	yes	program	
+rm	free	KIT	yes	program	allocation adapter
+rm	fstatat	MISSING	no	program	no archive defines it
+rm	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+rm	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+rm	openat	MISSING	no	program	no archive defines it
+rm	perror	PICOLIBC	yes	program	as strerror
+rm	readdir	ADAPTER	yes	program	as opendir
+rm	realloc	KIT	yes	program	allocation adapter
+rm	stderr	PICOLIBC	yes	program	
+rm	strcmp	PICOLIBC	yes	program	
+rm	strdup	PICOLIBC	yes	program	
+rm	strlen	PICOLIBC	yes	program	
+rm	strncmp	PICOLIBC	yes	program	
+rm	strndup	PICOLIBC	yes	program	
+rm	unlinkat	MISSING	no	program	no archive defines it
+rm	vfprintf	PICOLIBC	yes	program	
+rmdir	dirname	PICOLIBC	yes	program	
+rmdir	exit	PICOLIBC	yes	program	
+rmdir	fprintf	PICOLIBC	yes	program	
+rmdir	fputc	PICOLIBC	yes	program	
+rmdir	perror	PICOLIBC	yes	program	as strerror
+rmdir	rmdir	ADAPTER	yes	program	__absd_std_fs_rmdir
+rmdir	stderr	PICOLIBC	yes	program	
+rmdir	strcmp	PICOLIBC	yes	program	
+rmdir	strlen	PICOLIBC	yes	program	
+rmdir	strncmp	PICOLIBC	yes	program	
+rmdir	vfprintf	PICOLIBC	yes	program	
+sed	_ctype_b	PICOLIBC	yes	program	
+sed	abort	PICOLIBC	yes	program	
+sed	bsearch	PICOLIBC	yes	program	
+sed	calloc	KIT	yes	program	allocation adapter
+sed	errno	PICOLIBC	yes	program	
+sed	exit	PICOLIBC	yes	program	
+sed	fclose	PICOLIBC	yes	program	
+sed	fflush	PICOLIBC	yes	program	
+sed	fgetc	PICOLIBC	yes	program	
+sed	fmemopen	PICOLIBC	yes	program	
+sed	fopen	PICOLIBC	yes	program	
+sed	fprintf	PICOLIBC	yes	program	
+sed	fputc	PICOLIBC	yes	program	
+sed	fputs	PICOLIBC	yes	program	
+sed	free	KIT	yes	program	allocation adapter
+sed	fwrite	PICOLIBC	yes	program	
+sed	getline	PICOLIBC	yes	program	
+sed	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+sed	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+sed	memmove	PICOLIBC	yes	program	as memcpy
+sed	memset	PICOLIBC	yes	program	as memcpy
+sed	perror	PICOLIBC	yes	program	as strerror
+sed	printf	PICOLIBC	yes	program	
+sed	realloc	KIT	yes	program	allocation adapter
+sed	regcomp	PICOLIBC	yes	program	
+sed	regerror	PICOLIBC	yes	program	
+sed	regexec	PICOLIBC	yes	program	
+sed	regfree	PICOLIBC	yes	program	
+sed	stderr	PICOLIBC	yes	program	
+sed	stdin	PICOLIBC	yes	program	
+sed	stdout	PICOLIBC	yes	program	
+sed	strcat	PICOLIBC	yes	program	
+sed	strchr	PICOLIBC	yes	program	
+sed	strcmp	PICOLIBC	yes	program	
+sed	strcpy	PICOLIBC	yes	program	
+sed	strcspn	PICOLIBC	yes	program	
+sed	strdup	PICOLIBC	yes	program	
+sed	strerror	PICOLIBC	yes	program	Picolibc's texts; byte comparison with glibc texts is a divergence class (CPA-020)
+sed	strlen	PICOLIBC	yes	program	
+sed	strncmp	PICOLIBC	yes	program	
+sed	strndup	PICOLIBC	yes	program	
+sed	strpbrk	PICOLIBC	yes	program	
+sed	strrchr	PICOLIBC	yes	program	
+sed	strstr	PICOLIBC	yes	program	
+sed	strtol	PICOLIBC	yes	program	
+sed	ungetc	PICOLIBC	yes	program	
+sed	vfprintf	PICOLIBC	yes	program	
+seq	abort	PICOLIBC	yes	program	
+seq	errno	PICOLIBC	yes	program	
+seq	exit	PICOLIBC	yes	program	
+seq	fclose	PICOLIBC	yes	program	
+seq	fflush	PICOLIBC	yes	program	
+seq	fprintf	PICOLIBC	yes	program	
+seq	fputc	PICOLIBC	yes	program	
+seq	fputs	PICOLIBC	yes	program	
+seq	perror	PICOLIBC	yes	program	as strerror
+seq	printf	PICOLIBC	yes	program	
+seq	snprintf	PICOLIBC	yes	program	
+seq	stderr	PICOLIBC	yes	program	
+seq	stdout	PICOLIBC	yes	program	
+seq	strchr	PICOLIBC	yes	program	
+seq	strlen	PICOLIBC	yes	program	
+seq	strncmp	PICOLIBC	yes	program	
+seq	strpbrk	PICOLIBC	yes	program	
+seq	strspn	PICOLIBC	yes	program	
+seq	strtod	PICOLIBC	yes	program	
+seq	strtoll	PICOLIBC	yes	program	
+seq	vfprintf	PICOLIBC	yes	program	
+setsid	_exit	KIT	yes	program	__absd_std_exit
+setsid	errno	PICOLIBC	yes	program	
+setsid	execve	REFUSED	no	via link	ENOSYS; as fork [no archive defines it: refused at link time]
+setsid	execvp	REFUSED	yes	program	exec*: not provided (C-INTERFACE 10)
+setsid	exit	PICOLIBC	yes	program	
+setsid	fork	REFUSED	no	program	ENOSYS; reached only through Picolibc's popen/system, which the adapter replaces [no archive defines it: refused at link time]
+setsid	fprintf	PICOLIBC	yes	program	
+setsid	fputc	PICOLIBC	yes	program	
+setsid	getpgrp	MISSING	no	program	no archive defines it
+setsid	getpid	KIT	yes	program	__absd_std_getpid; overrides Picolibc's libos fallback (which returns 1)
+setsid	perror	PICOLIBC	yes	program	as strerror
+setsid	setsid	MISSING	no	program	no archive defines it
+setsid	stderr	PICOLIBC	yes	program	
+setsid	strlen	PICOLIBC	yes	program	
+setsid	strncmp	PICOLIBC	yes	program	
+setsid	vfprintf	PICOLIBC	yes	program	
+sha1sum	close	KIT	yes	program	descriptor table
+sha1sum	exit	PICOLIBC	yes	program	
+sha1sum	fclose	PICOLIBC	yes	program	
+sha1sum	fflush	PICOLIBC	yes	program	
+sha1sum	fopen	PICOLIBC	yes	program	
+sha1sum	fprintf	PICOLIBC	yes	program	
+sha1sum	fputc	PICOLIBC	yes	program	
+sha1sum	free	KIT	yes	program	allocation adapter
+sha1sum	getline	PICOLIBC	yes	program	
+sha1sum	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+sha1sum	memset	PICOLIBC	yes	program	as memcpy
+sha1sum	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+sha1sum	perror	PICOLIBC	yes	program	as strerror
+sha1sum	printf	PICOLIBC	yes	program	
+sha1sum	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+sha1sum	stderr	PICOLIBC	yes	program	
+sha1sum	stdin	PICOLIBC	yes	program	
+sha1sum	stdout	PICOLIBC	yes	program	
+sha1sum	strlen	PICOLIBC	yes	program	
+sha1sum	strncmp	PICOLIBC	yes	program	
+sha1sum	strstr	PICOLIBC	yes	program	
+sha1sum	vfprintf	PICOLIBC	yes	program	
+sha224sum	close	KIT	yes	program	descriptor table
+sha224sum	exit	PICOLIBC	yes	program	
+sha224sum	fclose	PICOLIBC	yes	program	
+sha224sum	fflush	PICOLIBC	yes	program	
+sha224sum	fopen	PICOLIBC	yes	program	
+sha224sum	fprintf	PICOLIBC	yes	program	
+sha224sum	fputc	PICOLIBC	yes	program	
+sha224sum	free	KIT	yes	program	allocation adapter
+sha224sum	getline	PICOLIBC	yes	program	
+sha224sum	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+sha224sum	memset	PICOLIBC	yes	program	as memcpy
+sha224sum	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+sha224sum	perror	PICOLIBC	yes	program	as strerror
+sha224sum	printf	PICOLIBC	yes	program	
+sha224sum	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+sha224sum	stderr	PICOLIBC	yes	program	
+sha224sum	stdin	PICOLIBC	yes	program	
+sha224sum	stdout	PICOLIBC	yes	program	
+sha224sum	strlen	PICOLIBC	yes	program	
+sha224sum	strncmp	PICOLIBC	yes	program	
+sha224sum	strstr	PICOLIBC	yes	program	
+sha224sum	vfprintf	PICOLIBC	yes	program	
+sha256sum	close	KIT	yes	program	descriptor table
+sha256sum	exit	PICOLIBC	yes	program	
+sha256sum	fclose	PICOLIBC	yes	program	
+sha256sum	fflush	PICOLIBC	yes	program	
+sha256sum	fopen	PICOLIBC	yes	program	
+sha256sum	fprintf	PICOLIBC	yes	program	
+sha256sum	fputc	PICOLIBC	yes	program	
+sha256sum	free	KIT	yes	program	allocation adapter
+sha256sum	getline	PICOLIBC	yes	program	
+sha256sum	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+sha256sum	memset	PICOLIBC	yes	program	as memcpy
+sha256sum	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+sha256sum	perror	PICOLIBC	yes	program	as strerror
+sha256sum	printf	PICOLIBC	yes	program	
+sha256sum	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+sha256sum	stderr	PICOLIBC	yes	program	
+sha256sum	stdin	PICOLIBC	yes	program	
+sha256sum	stdout	PICOLIBC	yes	program	
+sha256sum	strlen	PICOLIBC	yes	program	
+sha256sum	strncmp	PICOLIBC	yes	program	
+sha256sum	strstr	PICOLIBC	yes	program	
+sha256sum	vfprintf	PICOLIBC	yes	program	
+sha384sum	close	KIT	yes	program	descriptor table
+sha384sum	exit	PICOLIBC	yes	program	
+sha384sum	fclose	PICOLIBC	yes	program	
+sha384sum	fflush	PICOLIBC	yes	program	
+sha384sum	fopen	PICOLIBC	yes	program	
+sha384sum	fprintf	PICOLIBC	yes	program	
+sha384sum	fputc	PICOLIBC	yes	program	
+sha384sum	free	KIT	yes	program	allocation adapter
+sha384sum	getline	PICOLIBC	yes	program	
+sha384sum	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+sha384sum	memset	PICOLIBC	yes	program	as memcpy
+sha384sum	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+sha384sum	perror	PICOLIBC	yes	program	as strerror
+sha384sum	printf	PICOLIBC	yes	program	
+sha384sum	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+sha384sum	stderr	PICOLIBC	yes	program	
+sha384sum	stdin	PICOLIBC	yes	program	
+sha384sum	stdout	PICOLIBC	yes	program	
+sha384sum	strlen	PICOLIBC	yes	program	
+sha384sum	strncmp	PICOLIBC	yes	program	
+sha384sum	strstr	PICOLIBC	yes	program	
+sha384sum	vfprintf	PICOLIBC	yes	program	
+sha512sum	close	KIT	yes	program	descriptor table
+sha512sum	exit	PICOLIBC	yes	program	
+sha512sum	fclose	PICOLIBC	yes	program	
+sha512sum	fflush	PICOLIBC	yes	program	
+sha512sum	fopen	PICOLIBC	yes	program	
+sha512sum	fprintf	PICOLIBC	yes	program	
+sha512sum	fputc	PICOLIBC	yes	program	
+sha512sum	free	KIT	yes	program	allocation adapter
+sha512sum	getline	PICOLIBC	yes	program	
+sha512sum	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+sha512sum	memset	PICOLIBC	yes	program	as memcpy
+sha512sum	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+sha512sum	perror	PICOLIBC	yes	program	as strerror
+sha512sum	printf	PICOLIBC	yes	program	
+sha512sum	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+sha512sum	stderr	PICOLIBC	yes	program	
+sha512sum	stdin	PICOLIBC	yes	program	
+sha512sum	stdout	PICOLIBC	yes	program	
+sha512sum	strlen	PICOLIBC	yes	program	
+sha512sum	strncmp	PICOLIBC	yes	program	
+sha512sum	strstr	PICOLIBC	yes	program	
+sha512sum	vfprintf	PICOLIBC	yes	program	
+sha512-224sum	close	KIT	yes	program	descriptor table
+sha512-224sum	exit	PICOLIBC	yes	program	
+sha512-224sum	fclose	PICOLIBC	yes	program	
+sha512-224sum	fflush	PICOLIBC	yes	program	
+sha512-224sum	fopen	PICOLIBC	yes	program	
+sha512-224sum	fprintf	PICOLIBC	yes	program	
+sha512-224sum	fputc	PICOLIBC	yes	program	
+sha512-224sum	free	KIT	yes	program	allocation adapter
+sha512-224sum	getline	PICOLIBC	yes	program	
+sha512-224sum	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+sha512-224sum	memset	PICOLIBC	yes	program	as memcpy
+sha512-224sum	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+sha512-224sum	perror	PICOLIBC	yes	program	as strerror
+sha512-224sum	printf	PICOLIBC	yes	program	
+sha512-224sum	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+sha512-224sum	stderr	PICOLIBC	yes	program	
+sha512-224sum	stdin	PICOLIBC	yes	program	
+sha512-224sum	stdout	PICOLIBC	yes	program	
+sha512-224sum	strlen	PICOLIBC	yes	program	
+sha512-224sum	strncmp	PICOLIBC	yes	program	
+sha512-224sum	strstr	PICOLIBC	yes	program	
+sha512-224sum	vfprintf	PICOLIBC	yes	program	
+sha512-256sum	close	KIT	yes	program	descriptor table
+sha512-256sum	exit	PICOLIBC	yes	program	
+sha512-256sum	fclose	PICOLIBC	yes	program	
+sha512-256sum	fflush	PICOLIBC	yes	program	
+sha512-256sum	fopen	PICOLIBC	yes	program	
+sha512-256sum	fprintf	PICOLIBC	yes	program	
+sha512-256sum	fputc	PICOLIBC	yes	program	
+sha512-256sum	free	KIT	yes	program	allocation adapter
+sha512-256sum	getline	PICOLIBC	yes	program	
+sha512-256sum	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+sha512-256sum	memset	PICOLIBC	yes	program	as memcpy
+sha512-256sum	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+sha512-256sum	perror	PICOLIBC	yes	program	as strerror
+sha512-256sum	printf	PICOLIBC	yes	program	
+sha512-256sum	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+sha512-256sum	stderr	PICOLIBC	yes	program	
+sha512-256sum	stdin	PICOLIBC	yes	program	
+sha512-256sum	stdout	PICOLIBC	yes	program	
+sha512-256sum	strlen	PICOLIBC	yes	program	
+sha512-256sum	strncmp	PICOLIBC	yes	program	
+sha512-256sum	strstr	PICOLIBC	yes	program	
+sha512-256sum	vfprintf	PICOLIBC	yes	program	
+sleep	errno	PICOLIBC	yes	program	
+sleep	exit	PICOLIBC	yes	program	
+sleep	fprintf	PICOLIBC	yes	program	
+sleep	fputc	PICOLIBC	yes	program	
+sleep	perror	PICOLIBC	yes	program	as strerror
+sleep	sleep	KIT	yes	program	
+sleep	stderr	PICOLIBC	yes	program	
+sleep	strlen	PICOLIBC	yes	program	
+sleep	strncmp	PICOLIBC	yes	program	
+sleep	strtoll	PICOLIBC	yes	program	
+sleep	vfprintf	PICOLIBC	yes	program	
+sort	_ctype_b	PICOLIBC	yes	program	
+sort	abort	PICOLIBC	yes	program	
+sort	bsearch	PICOLIBC	yes	program	
+sort	calloc	KIT	yes	program	allocation adapter
+sort	errno	PICOLIBC	yes	program	
+sort	exit	PICOLIBC	yes	program	
+sort	fclose	PICOLIBC	yes	program	
+sort	fflush	PICOLIBC	yes	program	
+sort	fopen	PICOLIBC	yes	program	
+sort	fprintf	PICOLIBC	yes	program	
+sort	fputc	PICOLIBC	yes	program	
+sort	free	KIT	yes	program	allocation adapter
+sort	fwrite	PICOLIBC	yes	program	
+sort	getline	PICOLIBC	yes	program	
+sort	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+sort	memchr	PICOLIBC	yes	program	
+sort	memcmp	PICOLIBC	yes	program	as memcpy
+sort	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+sort	perror	PICOLIBC	yes	program	as strerror
+sort	qsort	PICOLIBC	yes	program	
+sort	realloc	KIT	yes	program	allocation adapter
+sort	stderr	PICOLIBC	yes	program	
+sort	stdin	PICOLIBC	yes	program	
+sort	stdout	PICOLIBC	yes	program	
+sort	strcmp	PICOLIBC	yes	program	
+sort	strdup	PICOLIBC	yes	program	
+sort	strlen	PICOLIBC	yes	program	
+sort	strncmp	PICOLIBC	yes	program	
+sort	strndup	PICOLIBC	yes	program	
+sort	strtod	PICOLIBC	yes	program	
+sort	strtol	PICOLIBC	yes	program	
+sort	tolower	PICOLIBC	yes	program	
+sort	vfprintf	PICOLIBC	yes	program	
+split	_ctype_b	PICOLIBC	yes	program	
+split	abort	PICOLIBC	yes	program	
+split	errno	PICOLIBC	yes	program	
+split	exit	PICOLIBC	yes	program	
+split	fclose	PICOLIBC	yes	program	
+split	fflush	PICOLIBC	yes	program	
+split	fopen	PICOLIBC	yes	program	
+split	fprintf	PICOLIBC	yes	program	
+split	fputc	PICOLIBC	yes	program	
+split	getc	PICOLIBC	yes	program	
+split	perror	PICOLIBC	yes	program	as strerror
+split	stderr	PICOLIBC	yes	program	
+split	stdin	PICOLIBC	yes	program	
+split	stdout	PICOLIBC	yes	program	
+split	strcmp	PICOLIBC	yes	program	
+split	strlen	PICOLIBC	yes	program	
+split	strncmp	PICOLIBC	yes	program	
+split	strtol	PICOLIBC	yes	program	
+split	strtoll	PICOLIBC	yes	program	
+split	toupper	PICOLIBC	yes	program	
+split	vfprintf	PICOLIBC	yes	program	
+sponge	creat	PICOLIBC	yes	program	
+sponge	exit	PICOLIBC	yes	program	
+sponge	fprintf	PICOLIBC	yes	program	
+sponge	fputc	PICOLIBC	yes	program	
+sponge	lseek	KIT	yes	program	userspace position; ESPIPE on pipes (zlib gz_open probes it on stdin)
+sponge	mkstemp	PICOLIBC	yes	program	open(O_CREAT|O_EXCL) in the named directory; lua-posix os.tmpname (CPA-045)
+sponge	perror	PICOLIBC	yes	program	as strerror
+sponge	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+sponge	stderr	PICOLIBC	yes	program	
+sponge	strlen	PICOLIBC	yes	program	
+sponge	strncmp	PICOLIBC	yes	program	
+sponge	unlink	KIT	yes	program	__absd_std_fs_unlink
+sponge	vfprintf	PICOLIBC	yes	program	
+sponge	write	KIT	yes	program	descriptor table, 256-byte transfers looped
+strings	abort	PICOLIBC	yes	program	
+strings	bsearch	PICOLIBC	yes	program	
+strings	calloc	KIT	yes	program	allocation adapter
+strings	errno	PICOLIBC	yes	program	
+strings	exit	PICOLIBC	yes	program	
+strings	fclose	PICOLIBC	yes	program	
+strings	fflush	PICOLIBC	yes	program	
+strings	fgetc	PICOLIBC	yes	program	
+strings	fopen	PICOLIBC	yes	program	
+strings	fprintf	PICOLIBC	yes	program	
+strings	fputc	PICOLIBC	yes	program	
+strings	free	KIT	yes	program	allocation adapter
+strings	fwrite	PICOLIBC	yes	program	
+strings	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+strings	perror	PICOLIBC	yes	program	as strerror
+strings	printf	PICOLIBC	yes	program	
+strings	realloc	KIT	yes	program	allocation adapter
+strings	stderr	PICOLIBC	yes	program	
+strings	stdin	PICOLIBC	yes	program	
+strings	stdout	PICOLIBC	yes	program	
+strings	strcmp	PICOLIBC	yes	program	
+strings	strdup	PICOLIBC	yes	program	
+strings	strerror	PICOLIBC	yes	program	Picolibc's texts; byte comparison with glibc texts is a divergence class (CPA-020)
+strings	strlen	PICOLIBC	yes	program	
+strings	strncmp	PICOLIBC	yes	program	
+strings	strndup	PICOLIBC	yes	program	
+strings	strtoll	PICOLIBC	yes	program	
+strings	vfprintf	PICOLIBC	yes	program	
+sync	exit	PICOLIBC	yes	program	
+sync	fprintf	PICOLIBC	yes	program	
+sync	fputc	PICOLIBC	yes	program	
+sync	perror	PICOLIBC	yes	program	as strerror
+sync	stderr	PICOLIBC	yes	program	
+sync	strlen	PICOLIBC	yes	program	
+sync	strncmp	PICOLIBC	yes	program	
+sync	sync	MISSING	no	program	no archive defines it
+sync	vfprintf	PICOLIBC	yes	program	
+tail	abort	PICOLIBC	yes	program	
+tail	calloc	KIT	yes	program	allocation adapter
+tail	close	KIT	yes	program	descriptor table
+tail	errno	PICOLIBC	yes	program	
+tail	exit	PICOLIBC	yes	program	
+tail	fprintf	PICOLIBC	yes	program	
+tail	fputc	PICOLIBC	yes	program	
+tail	fstat	KIT	yes	program	__absd_std_fs_fstat through the kit's absd_stat_from_attr (R7 accepted); st_mtime 0 until R3 (deferred)
+tail	llabs	PICOLIBC	yes	program	
+tail	lseek	KIT	yes	program	userspace position; ESPIPE on pipes (zlib gz_open probes it on stdin)
+tail	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+tail	memmove	PICOLIBC	yes	program	as memcpy
+tail	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+tail	perror	PICOLIBC	yes	program	as strerror
+tail	printf	PICOLIBC	yes	program	
+tail	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+tail	realloc	KIT	yes	program	allocation adapter
+tail	sleep	KIT	yes	program	
+tail	stderr	PICOLIBC	yes	program	
+tail	strchr	PICOLIBC	yes	program	
+tail	strcmp	PICOLIBC	yes	program	
+tail	strdup	PICOLIBC	yes	program	
+tail	strlen	PICOLIBC	yes	program	
+tail	strncmp	PICOLIBC	yes	program	
+tail	strndup	PICOLIBC	yes	program	
+tail	strtoll	PICOLIBC	yes	program	
+tail	vfprintf	PICOLIBC	yes	program	
+tail	write	KIT	yes	program	descriptor table, 256-byte transfers looped
+tee	calloc	KIT	yes	program	allocation adapter
+tee	exit	PICOLIBC	yes	program	
+tee	fprintf	PICOLIBC	yes	program	
+tee	fputc	PICOLIBC	yes	program	
+tee	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+tee	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+tee	perror	PICOLIBC	yes	program	as strerror
+tee	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+tee	realloc	KIT	yes	program	allocation adapter
+tee	signal	REFUSED	yes	program	SIG_ERR/ENOSYS for every signal: no signal source exists (CPA-004); replaces Picolibc's libos fallback, which registers handlers that nothing can deliver
+tee	stderr	PICOLIBC	yes	program	
+tee	strdup	PICOLIBC	yes	program	
+tee	strlen	PICOLIBC	yes	program	
+tee	strncmp	PICOLIBC	yes	program	
+tee	strndup	PICOLIBC	yes	program	
+tee	vfprintf	PICOLIBC	yes	program	
+tee	write	KIT	yes	program	descriptor table, 256-byte transfers looped
+test	_ctype_b	PICOLIBC	yes	program	
+test	errno	PICOLIBC	yes	program	
+test	exit	PICOLIBC	yes	program	
+test	faccessat	MISSING	no	program	no archive defines it
+test	fprintf	PICOLIBC	yes	program	
+test	fputc	PICOLIBC	yes	program	
+test	isatty	KIT	yes	program	0 with ENOTTY for every descriptor (no terminals)
+test	lstat	ADAPTER	yes	program	== stat: the platform has exactly two object kinds, file and directory (A13 invariant, ADAPTER-DESIGN.md 6.2)
+test	perror	PICOLIBC	yes	program	as strerror
+test	stat	ADAPTER	yes	program	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+test	stderr	PICOLIBC	yes	program	
+test	strcmp	PICOLIBC	yes	program	
+test	strlen	PICOLIBC	yes	program	
+test	strncmp	PICOLIBC	yes	program	
+test	strtoll	PICOLIBC	yes	program	
+test	vfprintf	PICOLIBC	yes	program	
+time	_exit	KIT	yes	program	__absd_std_exit
+time	errno	PICOLIBC	yes	program	
+time	execve	REFUSED	no	via link	ENOSYS; as fork [no archive defines it: refused at link time]
+time	execvp	REFUSED	yes	program	exec*: not provided (C-INTERFACE 10)
+time	exit	PICOLIBC	yes	program	
+time	fork	REFUSED	no	program	ENOSYS; reached only through Picolibc's popen/system, which the adapter replaces [no archive defines it: refused at link time]
+time	fprintf	PICOLIBC	yes	program	
+time	fputc	PICOLIBC	yes	program	
+time	perror	PICOLIBC	yes	program	as strerror
+time	stderr	PICOLIBC	yes	program	
+time	strlen	PICOLIBC	yes	program	
+time	strncmp	PICOLIBC	yes	program	
+time	sysconf	KIT	yes	program	kit-owned explicit values or refusals (R4 accepted), replacing Picolibc's libos fallback; WAL variant only (getpagesize) (CPA-006)
+time	times	KIT	yes	program	ticks; elapsed, not CPU time (catalog CPA-018)
+time	vfprintf	PICOLIBC	yes	program	
+time	waitpid	REFUSED	no	program	wait*: not provided (C-INTERFACE 10); classify.tsv ADAPTER: reached only through Picolibc's popen/system; not built
+tr	_ctype_b	PICOLIBC	yes	program	
+tr	bsearch	PICOLIBC	yes	program	
+tr	errno	PICOLIBC	yes	program	
+tr	exit	PICOLIBC	yes	program	
+tr	fclose	PICOLIBC	yes	program	
+tr	fflush	PICOLIBC	yes	program	
+tr	fgetc	PICOLIBC	yes	program	
+tr	fprintf	PICOLIBC	yes	program	
+tr	fputc	PICOLIBC	yes	program	
+tr	free	KIT	yes	program	allocation adapter
+tr	fwrite	PICOLIBC	yes	program	
+tr	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+tr	perror	PICOLIBC	yes	program	as strerror
+tr	realloc	KIT	yes	program	allocation adapter
+tr	stderr	PICOLIBC	yes	program	
+tr	stdin	PICOLIBC	yes	program	
+tr	stdout	PICOLIBC	yes	program	
+tr	strchr	PICOLIBC	yes	program	
+tr	strerror	PICOLIBC	yes	program	Picolibc's texts; byte comparison with glibc texts is a divergence class (CPA-020)
+tr	strlen	PICOLIBC	yes	program	
+tr	strncmp	PICOLIBC	yes	program	
+tr	strrchr	PICOLIBC	yes	program	
+tr	strstr	PICOLIBC	yes	program	
+tr	tolower	PICOLIBC	yes	program	
+tr	vfprintf	PICOLIBC	yes	program	
+tsort	_ctype_b	PICOLIBC	yes	program	
+tsort	calloc	KIT	yes	program	allocation adapter
+tsort	exit	PICOLIBC	yes	program	
+tsort	fclose	PICOLIBC	yes	program	
+tsort	fflush	PICOLIBC	yes	program	
+tsort	fopen	PICOLIBC	yes	program	
+tsort	fprintf	PICOLIBC	yes	program	
+tsort	fputc	PICOLIBC	yes	program	
+tsort	free	KIT	yes	program	allocation adapter
+tsort	getline	PICOLIBC	yes	program	
+tsort	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+tsort	memset	PICOLIBC	yes	program	as memcpy
+tsort	perror	PICOLIBC	yes	program	as strerror
+tsort	printf	PICOLIBC	yes	program	
+tsort	realloc	KIT	yes	program	allocation adapter
+tsort	stderr	PICOLIBC	yes	program	
+tsort	stdin	PICOLIBC	yes	program	
+tsort	stdout	PICOLIBC	yes	program	
+tsort	strcmp	PICOLIBC	yes	program	
+tsort	strdup	PICOLIBC	yes	program	
+tsort	strlen	PICOLIBC	yes	program	
+tsort	strncmp	PICOLIBC	yes	program	
+tsort	strndup	PICOLIBC	yes	program	
+tsort	vfprintf	PICOLIBC	yes	program	
+tty	exit	PICOLIBC	yes	program	
+tty	fclose	PICOLIBC	yes	program	
+tty	fflush	PICOLIBC	yes	program	
+tty	fprintf	PICOLIBC	yes	program	
+tty	fputc	PICOLIBC	yes	program	
+tty	perror	PICOLIBC	yes	program	as strerror
+tty	puts	PICOLIBC	yes	program	
+tty	stderr	PICOLIBC	yes	program	
+tty	stdout	PICOLIBC	yes	program	
+tty	strlen	PICOLIBC	yes	program	
+tty	strncmp	PICOLIBC	yes	program	
+tty	ttyname	MISSING	no	program	no archive defines it
+tty	vfprintf	PICOLIBC	yes	program	
+unexpand	abort	PICOLIBC	yes	program	
+unexpand	calloc	KIT	yes	program	allocation adapter
+unexpand	errno	PICOLIBC	yes	program	
+unexpand	exit	PICOLIBC	yes	program	
+unexpand	fclose	PICOLIBC	yes	program	
+unexpand	fflush	PICOLIBC	yes	program	
+unexpand	fgetc	PICOLIBC	yes	program	
+unexpand	fopen	PICOLIBC	yes	program	
+unexpand	fprintf	PICOLIBC	yes	program	
+unexpand	fputc	PICOLIBC	yes	program	
+unexpand	fwrite	PICOLIBC	yes	program	
+unexpand	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+unexpand	perror	PICOLIBC	yes	program	as strerror
+unexpand	realloc	KIT	yes	program	allocation adapter
+unexpand	stderr	PICOLIBC	yes	program	
+unexpand	stdin	PICOLIBC	yes	program	
+unexpand	stdout	PICOLIBC	yes	program	
+unexpand	strcmp	PICOLIBC	yes	program	
+unexpand	strcspn	PICOLIBC	yes	program	
+unexpand	strdup	PICOLIBC	yes	program	
+unexpand	strerror	PICOLIBC	yes	program	Picolibc's texts; byte comparison with glibc texts is a divergence class (CPA-020)
+unexpand	strlen	PICOLIBC	yes	program	
+unexpand	strncmp	PICOLIBC	yes	program	
+unexpand	strndup	PICOLIBC	yes	program	
+unexpand	strtoll	PICOLIBC	yes	program	
+unexpand	vfprintf	PICOLIBC	yes	program	
+uniq	_ctype_b	PICOLIBC	yes	program	
+uniq	abort	PICOLIBC	yes	program	
+uniq	calloc	KIT	yes	program	allocation adapter
+uniq	errno	PICOLIBC	yes	program	
+uniq	exit	PICOLIBC	yes	program	
+uniq	fclose	PICOLIBC	yes	program	
+uniq	fflush	PICOLIBC	yes	program	
+uniq	fopen	PICOLIBC	yes	program	
+uniq	fprintf	PICOLIBC	yes	program	
+uniq	fputc	PICOLIBC	yes	program	
+uniq	fwrite	PICOLIBC	yes	program	
+uniq	getline	PICOLIBC	yes	program	
+uniq	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+uniq	memcmp	PICOLIBC	yes	program	as memcpy
+uniq	memcpy	PICOLIBC	yes	program	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+uniq	perror	PICOLIBC	yes	program	as strerror
+uniq	realloc	KIT	yes	program	allocation adapter
+uniq	stderr	PICOLIBC	yes	program	
+uniq	stdin	PICOLIBC	yes	program	
+uniq	stdout	PICOLIBC	yes	program	
+uniq	strcmp	PICOLIBC	yes	program	
+uniq	strdup	PICOLIBC	yes	program	
+uniq	strlen	PICOLIBC	yes	program	
+uniq	strncmp	PICOLIBC	yes	program	
+uniq	strndup	PICOLIBC	yes	program	
+uniq	strtoll	PICOLIBC	yes	program	
+uniq	vfprintf	PICOLIBC	yes	program	
+unlink	exit	PICOLIBC	yes	program	
+unlink	fprintf	PICOLIBC	yes	program	
+unlink	fputc	PICOLIBC	yes	program	
+unlink	perror	PICOLIBC	yes	program	as strerror
+unlink	stderr	PICOLIBC	yes	program	
+unlink	strlen	PICOLIBC	yes	program	
+unlink	strncmp	PICOLIBC	yes	program	
+unlink	unlink	KIT	yes	program	__absd_std_fs_unlink
+unlink	vfprintf	PICOLIBC	yes	program	
+uudecode	abort	PICOLIBC	yes	program	
+uudecode	chmod	ADAPTER	yes	program	__absd_std_fs_set_readonly_path on files: 0444/0644 only; other modes and every directory EPERM (A14 audit)
+uudecode	errno	PICOLIBC	yes	program	
+uudecode	exit	PICOLIBC	yes	program	
+uudecode	fclose	PICOLIBC	yes	program	
+uudecode	fflush	PICOLIBC	yes	program	
+uudecode	fgets	PICOLIBC	yes	program	
+uudecode	fopen	PICOLIBC	yes	program	
+uudecode	fprintf	PICOLIBC	yes	program	
+uudecode	fputc	PICOLIBC	yes	program	
+uudecode	fread	PICOLIBC	yes	program	
+uudecode	free	KIT	yes	program	allocation adapter
+uudecode	fwrite	PICOLIBC	yes	program	
+uudecode	getline	PICOLIBC	yes	program	
+uudecode	lstat	ADAPTER	yes	program	== stat: the platform has exactly two object kinds, file and directory (A13 invariant, ADAPTER-DESIGN.md 6.2)
+uudecode	perror	PICOLIBC	yes	program	as strerror
+uudecode	stderr	PICOLIBC	yes	program	
+uudecode	stdin	PICOLIBC	yes	program	
+uudecode	stdout	PICOLIBC	yes	program	
+uudecode	strchr	PICOLIBC	yes	program	
+uudecode	strcmp	PICOLIBC	yes	program	
+uudecode	strlen	PICOLIBC	yes	program	
+uudecode	strncmp	PICOLIBC	yes	program	
+uudecode	strtol	PICOLIBC	yes	program	
+uudecode	umask	MISSING	no	program	no archive defines it
+uudecode	vfprintf	PICOLIBC	yes	program	
+uuencode	exit	PICOLIBC	yes	program	
+uuencode	fclose	PICOLIBC	yes	program	
+uuencode	fflush	PICOLIBC	yes	program	
+uuencode	fileno	PICOLIBC	yes	program	
+uuencode	fopen	PICOLIBC	yes	program	
+uuencode	fprintf	PICOLIBC	yes	program	
+uuencode	fputc	PICOLIBC	yes	program	
+uuencode	fread	PICOLIBC	yes	program	
+uuencode	fstat	KIT	yes	program	__absd_std_fs_fstat through the kit's absd_stat_from_attr (R7 accepted); st_mtime 0 until R3 (deferred)
+uuencode	fwrite	PICOLIBC	yes	program	
+uuencode	perror	PICOLIBC	yes	program	as strerror
+uuencode	printf	PICOLIBC	yes	program	
+uuencode	puts	PICOLIBC	yes	program	
+uuencode	stderr	PICOLIBC	yes	program	
+uuencode	stdin	PICOLIBC	yes	program	
+uuencode	stdout	PICOLIBC	yes	program	
+uuencode	strcmp	PICOLIBC	yes	program	
+uuencode	strlen	PICOLIBC	yes	program	
+uuencode	strncmp	PICOLIBC	yes	program	
+uuencode	vfprintf	PICOLIBC	yes	program	
+wc	bsearch	PICOLIBC	yes	program	
+wc	errno	PICOLIBC	yes	program	
+wc	exit	PICOLIBC	yes	program	
+wc	fclose	PICOLIBC	yes	program	
+wc	fflush	PICOLIBC	yes	program	
+wc	fgetc	PICOLIBC	yes	program	
+wc	fopen	PICOLIBC	yes	program	
+wc	fprintf	PICOLIBC	yes	program	
+wc	fputc	PICOLIBC	yes	program	
+wc	perror	PICOLIBC	yes	program	as strerror
+wc	printf	PICOLIBC	yes	program	
+wc	stderr	PICOLIBC	yes	program	
+wc	stdin	PICOLIBC	yes	program	
+wc	stdout	PICOLIBC	yes	program	
+wc	strcmp	PICOLIBC	yes	program	
+wc	strerror	PICOLIBC	yes	program	Picolibc's texts; byte comparison with glibc texts is a divergence class (CPA-020)
+wc	strlen	PICOLIBC	yes	program	
+wc	strncmp	PICOLIBC	yes	program	
+wc	vfprintf	PICOLIBC	yes	program	
+which	calloc	KIT	yes	program	allocation adapter
+which	close	KIT	yes	program	descriptor table
+which	exit	PICOLIBC	yes	program	
+which	faccessat	MISSING	no	program	no archive defines it
+which	fprintf	PICOLIBC	yes	program	
+which	fputc	PICOLIBC	yes	program	
+which	fputs	PICOLIBC	yes	program	
+which	free	KIT	yes	program	allocation adapter
+which	fstatat	MISSING	no	program	no archive defines it
+which	getenv	PICOLIBC	yes	program	as setenv
+which	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+which	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+which	perror	PICOLIBC	yes	program	as strerror
+which	puts	PICOLIBC	yes	program	
+which	realloc	KIT	yes	program	allocation adapter
+which	stderr	PICOLIBC	yes	program	
+which	stdout	PICOLIBC	yes	program	
+which	strchr	PICOLIBC	yes	program	
+which	strdup	PICOLIBC	yes	program	
+which	strlen	PICOLIBC	yes	program	
+which	strncmp	PICOLIBC	yes	program	
+which	strndup	PICOLIBC	yes	program	
+which	vfprintf	PICOLIBC	yes	program	
+whoami	errno	PICOLIBC	yes	program	
+whoami	exit	PICOLIBC	yes	program	
+whoami	fclose	PICOLIBC	yes	program	
+whoami	fflush	PICOLIBC	yes	program	
+whoami	fprintf	PICOLIBC	yes	program	
+whoami	fputc	PICOLIBC	yes	program	
+whoami	geteuid	ADAPTER	yes	program	as getuid
+whoami	getpwuid	PICOLIBC	yes	program	reads /etc/passwd through stdio; absent on ABSD, so NULL; shell falls back to $HOME
+whoami	perror	PICOLIBC	yes	program	as strerror
+whoami	puts	PICOLIBC	yes	program	
+whoami	stderr	PICOLIBC	yes	program	
+whoami	stdout	PICOLIBC	yes	program	
+whoami	strlen	PICOLIBC	yes	program	
+whoami	strncmp	PICOLIBC	yes	program	
+whoami	vfprintf	PICOLIBC	yes	program	
+xargs	_exit	KIT	yes	program	__absd_std_exit
+xargs	abort	PICOLIBC	yes	program	
+xargs	calloc	KIT	yes	program	allocation adapter
+xargs	errno	PICOLIBC	yes	program	
+xargs	execve	REFUSED	no	via link	ENOSYS; as fork [no archive defines it: refused at link time]
+xargs	execvp	REFUSED	yes	program	exec*: not provided (C-INTERFACE 10)
+xargs	exit	PICOLIBC	yes	program	
+xargs	fclose	PICOLIBC	yes	program	
+xargs	fflush	PICOLIBC	yes	program	
+xargs	fork	REFUSED	no	program	ENOSYS; reached only through Picolibc's popen/system, which the adapter replaces [no archive defines it: refused at link time]
+xargs	fprintf	PICOLIBC	yes	program	
+xargs	fputc	PICOLIBC	yes	program	
+xargs	fputs	PICOLIBC	yes	program	
+xargs	free	KIT	yes	program	allocation adapter
+xargs	getc	PICOLIBC	yes	program	
+xargs	malloc	KIT	yes	program	allocation adapter over __absd_std_alloc
+xargs	perror	PICOLIBC	yes	program	as strerror
+xargs	realloc	KIT	yes	program	allocation adapter
+xargs	snprintf	PICOLIBC	yes	program	
+xargs	stderr	PICOLIBC	yes	program	
+xargs	stdin	PICOLIBC	yes	program	
+xargs	stdout	PICOLIBC	yes	program	
+xargs	strcmp	PICOLIBC	yes	program	
+xargs	strdup	PICOLIBC	yes	program	
+xargs	strlen	PICOLIBC	yes	program	
+xargs	strncmp	PICOLIBC	yes	program	
+xargs	strndup	PICOLIBC	yes	program	
+xargs	strstr	PICOLIBC	yes	program	
+xargs	strtoll	PICOLIBC	yes	program	
+xargs	sysconf	KIT	yes	program	kit-owned explicit values or refusals (R4 accepted), replacing Picolibc's libos fallback; WAL variant only (getpagesize) (CPA-006)
+xargs	ungetc	PICOLIBC	yes	program	
+xargs	vfprintf	PICOLIBC	yes	program	
+xargs	wait	REFUSED	yes	program	wait*: not provided (C-INTERFACE 10)
+xargs	waitpid	REFUSED	no	via link	wait*: not provided (C-INTERFACE 10); classify.tsv ADAPTER: reached only through Picolibc's popen/system; not built
+xinstall	abort	PICOLIBC	yes	program	
+xinstall	basename	PICOLIBC	yes	program	
+xinstall	close	KIT	yes	program	descriptor table
+xinstall	creat	PICOLIBC	yes	program	
+xinstall	errno	PICOLIBC	yes	program	
+xinstall	exit	PICOLIBC	yes	program	
+xinstall	fchmod	ADAPTER	yes	program	__absd_std_fs_set_readonly; as chmod
+xinstall	fchown	ADAPTER	yes	program	always EPERM (SPEC A8: no ownership; setuid/setgid/chown family refused)
+xinstall	fprintf	PICOLIBC	yes	program	
+xinstall	fputc	PICOLIBC	yes	program	
+xinstall	getgid	ADAPTER	yes	program	
+xinstall	getgrnam	PICOLIBC	yes	program	
+xinstall	getpwnam	PICOLIBC	yes	program	
+xinstall	getuid	ADAPTER	yes	program	synthetic 1000 (SPEC A8), same as st_uid; conveys no authority
+xinstall	lchown	ADAPTER	yes	program	
+xinstall	memmove	PICOLIBC	yes	program	as memcpy
+xinstall	mkdir	ADAPTER	yes	program	__absd_std_fs_mkdir; mode not applied (declared divergence CPA-014); mode without S_IWUSR EPERM
+xinstall	open	KIT	yes	program	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+xinstall	perror	PICOLIBC	yes	program	as strerror
+xinstall	read	KIT	yes	program	descriptor table, 256-byte transfers looped
+xinstall	snprintf	PICOLIBC	yes	program	
+xinstall	stat	ADAPTER	yes	program	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+xinstall	stderr	PICOLIBC	yes	program	
+xinstall	strchr	PICOLIBC	yes	program	
+xinstall	strlen	PICOLIBC	yes	program	
+xinstall	strncmp	PICOLIBC	yes	program	
+xinstall	strrchr	PICOLIBC	yes	program	
+xinstall	strtol	PICOLIBC	yes	program	
+xinstall	strtoll	PICOLIBC	yes	program	
+xinstall	umask	MISSING	no	program	no archive defines it
+xinstall	unlink	KIT	yes	program	__absd_std_fs_unlink
+xinstall	vfprintf	PICOLIBC	yes	program	
+xinstall	write	KIT	yes	program	descriptor table, 256-byte transfers looped
+yes	exit	PICOLIBC	yes	program	
+yes	fprintf	PICOLIBC	yes	program	
+yes	fputc	PICOLIBC	yes	program	
+yes	perror	PICOLIBC	yes	program	as strerror
+yes	puts	PICOLIBC	yes	program	
+yes	stderr	PICOLIBC	yes	program	
+yes	strlen	PICOLIBC	yes	program	
+yes	strncmp	PICOLIBC	yes	program	
+yes	vfprintf	PICOLIBC	yes	program	

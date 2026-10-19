@@ -1,0 +1,4 @@
+status 1
+--- stdout
+--- stderr
+usage: tar [-C dir] [-v] [-m] -c|-t|-x [-f archive] [file ...]

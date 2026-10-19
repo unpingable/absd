@@ -1,0 +1,77 @@
+# The VM operator deployment (afterboot(8), scripts/operator_image.py): a
+# boot ISO (GRUB, the kernel, `net fsd served`) plus a separate, writable
+# 64 MiB ABSD filesystem disk and MANIFEST, as U1-b ran them. Built by
+# `media.py operator-image` from an already-built platform tree and a
+# disposable kernel checkout of the frozen pair.
+kind = "operator"
+
+[identity]
+# The ISO's dates, the GRUB volume UUID and the hybrid GPT GUIDs all derive
+# from this epoch: the platform commit's committer time.
+epoch = "platform-commit"
+
+[iso]
+# grub-mkrescue (GRUB 2.12) stamps the ISO with the wall clock, copies the
+# host's GRUB translations (language packs add files), and its mformat writes
+# uninitialised memory into the EFI FAT image. The recipe below removes all
+# three: a frozen clock with address randomisation off, no locales, fixed
+# file dates, then a normalised EFI image (serial derived, free space zero).
+locales = ""
+efi_serial_prefix = "ab5d"
+
+[iso.grub]
+# What grub-mkrescue puts under /boot/grub, exactly. Every file of the host
+# module directories is copied except `not_copied`; `generated` files are
+# made by grub-mkrescue (bound by the ISO digest); the font is the host's
+# unicode.pf2; roms/ and locale/ are empty; subdirectories of the module
+# directories (x86_64-efi/monolithic) are not copied. operator-validate refuses any
+# extra, missing or changed entry.
+top_level = ["fonts", "grub.cfg", "i386-pc", "locale", "roms", "x86_64-efi"]
+generated = ["i386-pc/eltorito.img"]
+font = "/usr/share/grub/unicode.pf2"
+not_copied = [
+  "i386-pc/boot.img", "i386-pc/boot_hybrid.img", "i386-pc/cdboot.img", "i386-pc/config.h",
+  "i386-pc/diskboot.img", "i386-pc/fdt.lst", "i386-pc/g2hdr.bin", "i386-pc/g2hdr.img", "i386-pc/g2ldr.img",
+  "i386-pc/g2ldr.mbr", "i386-pc/grldr.img", "i386-pc/grub-bios-setup", "i386-pc/grub-ntldr-img",
+  "i386-pc/kernel.img", "i386-pc/lnxboot.img", "i386-pc/lzma_decompress.img", "i386-pc/pxeboot.img",
+  "x86_64-efi/config.h", "x86_64-efi/fdt.lst", "x86_64-efi/kernel.img",
+]
+
+[expect]
+# The ISO's GRUB entry, as the kernel's durable-iso target writes it for the
+# served boot (DURABLE_STEP=0, DURABLE_OPTIONS="net fsd served").
+grub_entry = "multiboot2 /boot/absd-kernel durable=0 net fsd served nvme-write=absd"
+iso_files = ["boot/absd-kernel", "boot/grub/grub.cfg"]
+
+[kernel]
+# The kernel checkout's path, remapped in every compiled path string so two
+# checkouts at different paths give the same kernel (media.py does the same
+# for z2-usb). This makes the ISO's kernel differ from U1-b's, which was
+# built unremapped.
+remap_root = "/absd/kernel-run"
+
+[pins]
+# Checked before anything is built and again by operator-validate. These
+# shape the ISO bytes (GRUB, xorriso, mtools, faketime, setarch), compile or
+# link the kernel (gcc-13, binutils), check the EFI image (dosfstools), or
+# write the disk (QEMU runs the importer boots).
+[pins.packages]
+binutils = "2.42-4ubuntu2.10"
+dosfstools = "4.2-1.1build1"
+gcc-13 = "13.3.0-6ubuntu2~24.04.1"
+grub-common = "2.12-1ubuntu7.3"
+grub-pc-bin = "2.12-1ubuntu7.3"
+grub-efi-amd64-bin = "2.12-1ubuntu7.3"
+xorriso = "1:1.5.6-1.1ubuntu3"
+mtools = "4.0.43-1build1"
+faketime = "0.9.10-2.1"
+util-linux = "2.39.3-9ubuntu6.6"
+qemu-system-x86 = "1:8.2.2+ds-0ubuntu1.18"
+
+[pins.rust]
+# The kernel's toolchain for the served-boot ISO (make durable-iso), from
+# this location only, each binary at the pinned SHA-256.
+rustup_home = "~/.rustup"
+toolchain = "1.98.0-x86_64-unknown-linux-gnu"
+rustc_sha256 = "3690cc576ede140504698405d5d8fa3826aaadbe71699c6c4ed0a565d6f493e2"
+cargo_sha256 = "ff3022fcbd13b08434ea7afde9a0ef9d5b3f5c17b5fc7a40031be3ee000a6a24"

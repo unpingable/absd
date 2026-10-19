@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "capture": "native-dhcp.pcap (development capture not included)",
+  "capture_sha256": "fc2c88865999ee230df09a026dc3405670f3fdc1d9d164f1a726fd76aefd5fc0",
+  "source": "Verbatim client DHCP datagrams from accepted46771 positive proof; shared golden inputs for Python artifact controls only.",
+  "vectors": [
+    {
+      "name": "captured-discover",
+      "zero_based_frame_index": 0,
+      "frame_sha256": "9192e229aea44e3df410871f91472d1117488ae49a139a723da728f12c155b49",
+      "payload_bytes": 262,
+      "payload_sha256": "c40c208681dac4961ca384f22b4753daa32ed5acea4d5bc2ef9e34ea6348455d"
+    },
+    {
+      "name": "captured-request",
+      "zero_based_frame_index": 2,
+      "frame_sha256": "b7fa2253661a52d92ed4a99907d2832f342d1ff86a2257a1d084fc00cb23a94a",
+      "payload_bytes": 274,
+      "payload_sha256": "12959d23a1f312c0d3d1cfbf1fb6618014f814b8aca4220cf8b1aea8cd7882dc"
+    }
+  ]
+}

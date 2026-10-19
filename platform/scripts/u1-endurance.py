@@ -62,9 +62,12 @@ import subprocess
 import sys
 import time
 
+
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import operator_image as oi  # noqa: E402
+from served_ram import served_qemu
+from e1000_rx import wait_rx_setup
 import ssh_absd  # noqa: E402
 
 SSH = "/usr/bin/ssh"
@@ -296,8 +299,6 @@ def qemu_argv(profile, run, port, guest, guest_port, memory):
     argv += ["-cpu", p["cpu"]]
     if p["vcpus"] != 1:
         argv += ["-smp", str(p["vcpus"])]
-    if memory:
-        argv += ["-m", memory]
     argv += ["-rtc", "base=utc", "-cdrom", str(run / oi.ISO)]
     image = str(run / oi.IMAGE)
     if p["storage"] == "ata":
@@ -309,7 +310,7 @@ def qemu_argv(profile, run, port, guest, guest_port, memory):
              "-device", "e1000,netdev=n0", "-display", "none", "-serial", f"file:{run / 'console.log'}",
              "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
              "-pidfile", str(run / "qemu.pid"), "-name", f"guest=u1-{run.parent.name},process=u1-{run.parent.name}"]
-    return argv
+    return served_qemu(argv, memory=memory)
 
 
 def free_port():
@@ -357,7 +358,7 @@ def launch(args):
     manifest = {
         "run_id": run_id, "guest": args.guest, "profile": args.profile, "profile_detail": profile,
         "launched": now(), "host": socket.gethostname(), "host_port": port, "guest_endpoint": f"{guest}:{guest_port}",
-        "memory": args.memory or "qemu default", "qemu": argv,
+        "memory": argv[argv.index("-m") + 1], "qemu": argv,
         "qemu_version": subprocess.run([QEMU, "--version"], capture_output=True, text=True).stdout.split("\n")[0],
         "identity": str(identity), "identity_fingerprint": fingerprint_line,
         "image_source": str(image_out), "image_lineage": lineage,
@@ -391,6 +392,8 @@ echo $? > {shlex.quote(str(run / 'qemu.status'))}
         time.sleep(1)
     else:
         raise SystemExit(f"no SSH LISTENING within {args.ready_timeout} s; see {run / 'console.log'}")
+    wait_rx_setup(lambda: (run / 'console.log').read_bytes(),
+                  lambda: r.exit_status() is None, deadline)
     (run / "known_hosts").write_text(f"[127.0.0.1]:{port} {publics[0]}\n")
     fingerprint = re.findall(r"(?m)^sshd: host key (256 SHA256:\S+ \(ED25519\))$", text)
     # First contact: the boot id, and the anchor the run will verify forever.
@@ -839,7 +842,7 @@ def main():
     l.add_argument("--identity", required=True, help="the operator's private key the image authorizes")
     l.add_argument("--profile", default="A")
     l.add_argument("--port", type=int, help="host port to forward (default: a free one)")
-    l.add_argument("--memory", help="QEMU -m (default: QEMU's default, as boot-operator.sh)")
+    l.add_argument("--memory", help="QEMU -m (minimum/default 256M; ABSD_GUEST_RAM may raise it)")
     l.add_argument("--reuse-image", help="continue from an existing image file (a new run, lineage recorded)")
     l.add_argument("--unqualified", action="store_true")
     l.add_argument("--ready-timeout", type=int, default=600)

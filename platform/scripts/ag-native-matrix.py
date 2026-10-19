@@ -59,6 +59,8 @@ import time
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
+from served_ram import served_qemu
+from served_kernel import kernel_make
 import absd_fs  # noqa: E402
 
 spec = importlib.util.spec_from_file_location("nightshift_matrix", here / "nightshift-matrix.py")
@@ -360,13 +362,13 @@ def import_image(m, name, files, step, image):
     input_path.write_bytes(stream)
     variables = [f"DURABLE_STEP={step}", f"EXTERNAL_USER_ELF={m.importer}", f"EXTERNAL_INPUT={input_path}",
                  "EXTERNAL_READER_ELF=", "EXTERNAL_READER_INPUT=", "BROKER_POLICY=", "OWNER_1_ELF="]
-    subprocess.run(["make", "--no-print-directory", "-C", str(m.kernel), "durable-iso", *variables],
+    subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(m.kernel), "durable-iso", *variables],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     iso = m.kernel / "build" / "durable" / f"absd-durable-{step}.iso"
     m.boots += 1
     log = m.work / f"{name}.import-{m.boots:02d}-step{step}.serial.log"
     result = subprocess.run([str(m.kernel / "scripts" / "durable-boot.sh"), str(iso), str(image), str(log),
-                             "1800", *m.qemu.split()], check=True, capture_output=True, text=True)
+                             "1800", *served_qemu(m.qemu)], check=True, capture_output=True, text=True)
     serial = log.read_bytes()
     captured = nm.dm.Harness.captured(serial)
     require(b"PANIC" not in serial and b"KERNEL FAULT" not in serial, f"{name}: kernel fault")
@@ -403,13 +405,13 @@ def boot(m, name, worker, image, policy=None, owner=None, reader_request=None):
     else:
         variables += ["EXTERNAL_READER_ELF=", "EXTERNAL_READER_INPUT="]
     variables += [f"BROKER_POLICY={policy or ''}", f"OWNER_1_ELF={owner or ''}"]
-    subprocess.run(["make", "--no-print-directory", "-C", str(m.kernel), "durable-iso", *variables],
+    subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(m.kernel), "durable-iso", *variables],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     iso = m.kernel / "build" / "durable" / "absd-durable-0.iso"
     log = m.work / f"{name}.serial.log"
     before = time.time()
     result = subprocess.run([str(m.kernel / "scripts" / "durable-boot.sh"), str(iso), str(image), str(log),
-                             "1800", *m.qemu.split()], check=True, capture_output=True, text=True)
+                             "1800", *served_qemu(m.qemu)], check=True, capture_output=True, text=True)
     after = time.time()
     serial = log.read_bytes()
     text = serial.decode(errors="replace")

@@ -13,6 +13,12 @@ Not everything in this tree is ABSD's own:
   files.
 - Libraries downloaded at build time keep theirs. Each component lists them
   per built image under `provenance/inventory/`.
+- `docs/rc1/notices/` carries verbatim third-party notice texts separately
+  from ABSD's license: Picolibc's complete copyright aggregate, FreeBSD's
+  `if_em.c` BSD-2-Clause notice, libm's LICENSE and retained per-file notices,
+  and the LLVM compiler-rt notice/Apache text. TEXT-PROVENANCE.json records
+  exact upstream identities and extraction scope. This directory also
+  contains ABSD's generated inventory and correspondence receipts.
 
 The boot images the build produces also contain GRUB (GPL-3.0-or-later) and a
 font from the host's GRUB package. The source tree does not carry them; a

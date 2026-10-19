@@ -1,5 +1,5 @@
 # The environment the README describes, as a container: Ubuntu 24.04, the
-# host packages, and the two pinned Rust toolchains. Used to check that a
+# host packages, and the pinned Rust toolchains. Used to check that a
 # clean clone builds; nothing in the build requires a container.
 #
 #   docker build -t absd-build -f tools/Containerfile tools
@@ -8,9 +8,13 @@
 FROM ubuntu:24.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl git make python3 xz-utils \
-        build-essential clang-18 clang llvm-18 lld-18 \
-        grub-common grub-pc-bin xorriso mtools \
-        qemu-system-x86 groff-base openssh-client python3-cryptography bubblewrap \
+        build-essential clang-18 clang llvm-18 lld-18 lld-17 libclang-rt-18-dev \
+        binutils=2.42-4ubuntu2.10 gcc-13=13.3.0-6ubuntu2~24.04.1 \
+        grub-common=2.12-1ubuntu7.3 grub-pc-bin=2.12-1ubuntu7.3 grub-efi-amd64-bin=2.12-1ubuntu7.3 \
+        xorriso=1:1.5.6-1.1ubuntu3 mtools=4.0.43-1build1 dosfstools=4.2-1.1build1 \
+        faketime=0.9.10-2.1 util-linux=2.39.3-9ubuntu6.6 \
+        qemu-system-x86=1:8.2.2+ds-0ubuntu1.18 \
+        groff-base openssh-client python3-cryptography python3-venv bubblewrap unzip xfonts-base \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd -m builder
 USER builder
@@ -18,4 +22,5 @@ ENV PATH=/home/builder/.cargo/bin:$PATH
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none \
     && rustup toolchain install 1.95.0 1.98.0 1.94.0 --profile minimal \
         --component rust-src --component rustfmt --component clippy \
+    && rustup target add --toolchain 1.98.0 aarch64-unknown-none aarch64-unknown-none-softfloat \
     && rustup default 1.95.0

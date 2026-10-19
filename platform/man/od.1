@@ -1,0 +1,56 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt OD 1
+.Os ABSD
+.Sh NAME
+.Nm od
+.Nd dump files in octal, hexadecimal and other formats (sbase)
+.Sh SYNOPSIS
+.Nm
+.Op Fl bdosvx
+.Op Fl A Ar addressformat
+.Op Fl E | Fl e
+.Op Fl j Ar skip
+.Op Fl t Ar outputformat
+.Op Ar file ...
+.Sh DESCRIPTION
+.Nm
+is sbase 0.1's
+.Nm od ,
+built unpatched for ABSD with the C kit; see
+.Xr sbase 7 .
+It writes the bytes of the named files, or of standard input, as octal,
+decimal, hexadecimal or character values, with
+.Fl t
+.Pq for example Ql -t x1 No or Ql -t c
+choosing the format and
+.Fl A
+the address base.
+For the conventional hexadecimal display modes, see
+.Xr hexdump 1 .
+.Sh UNSUPPORTED ON ABSD
+.Bl -tag -width Ds
+.It Fl c
+not in sbase 0.1: usage error, status 1;
+.Fl t Cm c
+works.
+.It messages
+prefixed with
+.Ql argv[0]
+as invoked;
+.Ql strerror
+texts are Picolibc's.
+.El
+.Pp
+Behaviour on ABSD is predicted until the guest qualification
+.Pq Xr sbase 7 .
+.Sh EXIT STATUS
+0 on success, 1 on an error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ od -A x -t x1 /home/operator/prog | head -n 4
+absd$ printf 'a\etb\en' | od -t c
+.Ed
+.Sh SEE ALSO
+.Xr cmp 1 ,
+.Xr sbase 7

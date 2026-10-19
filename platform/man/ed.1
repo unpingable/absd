@@ -1,0 +1,164 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt ED 1
+.Os ABSD
+.Sh NAME
+.Nm ed
+.Nd line editor (sbase)
+.Sh SYNOPSIS
+.Nm
+.Op Fl s
+.Op Fl p Ar string
+.Op Ar file
+.Sh DESCRIPTION
+.Nm
+is sbase 0.1's
+.Nm ed ,
+built for ABSD with the C kit and one declared patch
+.Pq Pa userland/patches/ed-absd.patch ;
+see
+.Xr sbase 7 .
+It is the base userland's editor.
+No screen editor can work in an ABSD session: the SSH terminal is a line
+discipline in
+.Nm sshd
+with no raw mode, terminal type or window size
+.Pq Xr absd-sh 1 .
+.Nm
+reads commands a line at a time from standard input, so it works there,
+and as
+.Ql ed FILE < script .
+.Pp
+Every editing command, undo, reads and writes, the
+.Ql \&?
+convention and the exit status are upstream's.
+Errors are
+.Ql \&? ,
+with the reason after
+.Ic h
+(or every time after
+.Ic H ) .
+.Fl p Ar string
+sets a prompt; without it there is none.
+.Pp
+What a person must know on ABSD:
+.Bl -bullet
+.It
+Start it in a writable directory.
+Its scratch file (the buffer's backing store) is
+.Pa ./ed.XXXXXX
+in the working directory; sessions start in read-only
+.Pa / ,
+so
+.Ql cd /home/operator
+or
+.Ql cd /tmp/session-N
+first.
+Otherwise
+.Nm
+exits at once with status 1:
+.Ql ed: cannot create scratch file ./ed.XXXXXX (start ed in a writable directory): <reason> .
+The file is removed on
+.Ic q ,
+.Ic Q
+or end of input.
+.It
+Leave with
+.Ic w
+then
+.Ic q .
+^D on an empty line closes the session's input for the whole session, and
+.Nm
+treats end of input as
+.Ic q
+without the modified-buffer warning: unsaved text is lost.
+.It
+^C loses the buffer.
+No signal is delivered on ABSD; ^C ends the pipeline and
+.Nm
+with it, unsaved text is lost, and the scratch file
+.Pa ./ed.XXXXXX
+stays behind in the directory (remove it with
+.Nm rm ;
+in
+.Pa /tmp/session-N
+it goes with the session).
+.It
+No shell escapes.
+.Ic !cmd
+and
+.Ic w !cmd
+answer
+.Ql \&? ;
+.Ic h
+shows
+.Ql shell commands are not supported on this system
+(no spawn right).
+.Ic r !cmd
+was never special in sbase 0.1: it reads a file named
+.Pa !cmd .
+.Ic !!
+with no earlier command answers
+.Ql no previous command
+first, as upstream.
+.El
+.Sh UNSUPPORTED ON ABSD
+.Bl -tag -width Ds
+.It Ic !cmd , Ic w !cmd
+.Ql \&? ;
+.Ic h :
+.Ql shell commands are not supported on this system ;
+nothing runs; status 1 at exit.
+.It scratch file
+.Pa ./ed.XXXXXX
+(or
+.Ev TMPDIR ,
+never set on ABSD); not creatable at start-up: status 1,
+.Ql ed: cannot create scratch file ./ed.XXXXXX (start ed in a writable directory): <strerror> .
+.It ^C, hang-up
+no handler (no signals): the process ends, the buffer is lost,
+.Pa ./ed.XXXXXX
+remains;
+.Pa ed.hup
+is never written.
+.It ^D on an empty line
+closes the session's input;
+.Nm
+quits as on
+.Ic q
+without the modified warning: unsaved text is lost.
+.It interactive prompt
+only with
+.Fl p Ar string ;
+no line editing beyond
+.Nm sshd Ns 's
+erase.
+.El
+.Pp
+Behaviour on ABSD is predicted until the guest qualification
+.Pq Xr sbase 7 .
+.Sh EXIT STATUS
+0, or 1 after any error, as upstream.
+.Sh EXAMPLES
+Write a file, in a terminal session:
+.Bd -literal -offset indent
+absd$ cd /home/operator
+absd$ ed -p '* '
+* a
+int main(void) { return 0; }
+\&.
+* w hello.c
+29
+* q
+.Ed
+.Pp
+Apply a script from the host:
+.Bd -literal -offset indent
+$ printf '1s/0/1/\enw\enq\en' | ssh -p 2222 operator@127.0.0.1 \e
+    'cd /home/operator && ed -s hello.c'
+.Ed
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr intro 1 ,
+.Xr sed 1 ,
+.Xr sbase 7

@@ -1,6 +1,8 @@
 //! Uncached kernel mappings for device memory.
 //!
-//! The boot page tables identity-map only the first GiB (write-back RAM).
+//! The boot page tables identity-map the first GiB and, above it, tracked
+//! RAM (`whole_ram`), all write-back; device ranges overlapping either are
+//! refused.
 //! A framebuffer or a PCI BAR can be anywhere in the physical address space
 //! (firmware often places 64-bit BARs far above 512 GiB), so device ranges
 //! are mapped into a kernel window at 256..260 GiB virtual: 2 MiB
@@ -9,7 +11,9 @@
 //! at that same PDPT, so the mapping is visible in every CR3 without
 //! copying. Page directories come from a small static pool; mappings are
 //! never removed, and a request inside a range already mapped with the same
-//! attributes returns the existing address.
+//! attributes returns the existing address. One exception is the firmware
+//! scratch view (`scratch_map`): two read-only write-back pages, taking no
+//! region slot, remapped per firmware-table read and unmapped afterwards.
 
 use crate::vm::ADDRESS_MASK;
 
@@ -53,6 +57,9 @@ pub enum MapError {
     Conflict,
     Empty,
     Frozen,
+    /// Part of the range is tracked RAM, direct-mapped write-back
+    /// (`whole_ram`); an uncached alias would conflict with it.
+    TrackedRam,
 }
 
 #[repr(C, align(4096))]
@@ -111,6 +118,108 @@ fn boot_pdpt() -> *mut u64 {
     (unsafe { core::ptr::read_volatile(pml4) } & ADDRESS_MASK) as *mut u64
 }
 
+/// Whether any device mapping covers part of physical `[start, end)`.
+pub fn overlaps(start: u64, end: u64) -> bool {
+    let regions = unsafe { &*core::ptr::addr_of!(MAPPED) };
+    regions
+        .iter()
+        .flatten()
+        .any(|region| start < region.end && region.physical < end)
+}
+
+/// Writes one 2 MiB page entry for `virtual_page` in the window, creating
+/// its page directory from the pool on first use, and flushes it.
+fn install(virtual_page: u64, value: u64) {
+    let pdpt = boot_pdpt();
+    let gib = virtual_page / ONE_GIB;
+    let slot = unsafe { pdpt.add(gib as usize) };
+    let mut entry = unsafe { core::ptr::read_volatile(slot) };
+    if entry & PRESENT == 0 {
+        // The kernel image is identity-mapped: the static's address is
+        // its physical address.
+        let directory =
+            unsafe { core::ptr::addr_of_mut!(POOL[(gib - WINDOW_FIRST_GIB) as usize]) } as *mut u64;
+        for index in 0..512 {
+            unsafe { core::ptr::write_volatile(directory.add(index), 0) };
+        }
+        entry = directory as u64 | PRESENT | WRITABLE;
+        unsafe { core::ptr::write_volatile(slot, entry) };
+    }
+    let directory = (entry & ADDRESS_MASK) as *mut u64;
+    let index = ((virtual_page % ONE_GIB) / TWO_MIB) as usize;
+    unsafe { core::ptr::write_volatile(directory.add(index), value) };
+    crate::invalidate_page(virtual_page);
+}
+
+/// Pages in the firmware scratch view.
+pub const SCRATCH_PAGES: u64 = 2;
+/// Virtual base of the scratch view once taken, else 0.
+static mut SCRATCH: u64 = 0;
+
+/// The one remappable firmware view (src/acpi_boot.rs): `pages` 2 MiB
+/// pages from the 2 MiB-aligned `physical`, present, read-only,
+/// write-back and non-executable, replacing whatever the view showed
+/// before. It takes `SCRATCH_PAGES` pages of window address space once and
+/// no region slot. The physical range must lie above the first GiB and
+/// must not overlap a device mapping (no cache-attribute alias).
+/// `scratch_clear` unmaps it; both refuse after `freeze`.
+pub fn scratch_map(physical: u64, pages: u64) -> Result<u64, MapError> {
+    if pages == 0 || pages > SCRATCH_PAGES || !physical.is_multiple_of(TWO_MIB) {
+        return Err(MapError::Empty);
+    }
+    let end = physical
+        .checked_add(pages * TWO_MIB)
+        .filter(|&end| end <= PHYSICAL_LIMIT)
+        .ok_or(MapError::AbovePhysicalLimit)?;
+    if physical < ONE_GIB {
+        return Err(MapError::InFirstGigabyte);
+    }
+    if FROZEN.load(core::sync::atomic::Ordering::Acquire) {
+        return Err(MapError::Frozen);
+    }
+    let regions = unsafe { &*core::ptr::addr_of!(MAPPED) };
+    if regions
+        .iter()
+        .flatten()
+        .any(|region| physical < region.end && region.physical < end)
+    {
+        return Err(MapError::Conflict);
+    }
+    let mut base = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(SCRATCH)) };
+    if base == 0 {
+        let next = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(NEXT)) };
+        let top = next
+            .checked_add(SCRATCH_PAGES * TWO_MIB)
+            .filter(|&top| top <= WINDOW_END)
+            .ok_or(MapError::WindowFull)?;
+        unsafe {
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(NEXT), top);
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(SCRATCH), next);
+        }
+        base = next;
+    }
+    for page in 0..SCRATCH_PAGES {
+        let value = if page < pages {
+            (physical + page * TWO_MIB) | PRESENT | HUGE | NO_EXECUTE
+        } else {
+            0
+        };
+        install(base + page * TWO_MIB, value);
+    }
+    Ok(base)
+}
+
+/// Unmaps the scratch view, if it was ever taken.
+pub fn scratch_clear() {
+    let base = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(SCRATCH)) };
+    if base == 0 || FROZEN.load(core::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    for page in 0..SCRATCH_PAGES {
+        install(base + page * TWO_MIB, 0);
+    }
+}
+
 /// Maps `[physical, physical + length)` and returns the virtual address of
 /// `physical`.
 pub fn map(physical: u64, length: u64, cache: Cache) -> Result<u64, MapError> {
@@ -126,6 +235,9 @@ pub fn map(physical: u64, length: u64, cache: Cache) -> Result<u64, MapError> {
     }
     let start = physical & !(TWO_MIB - 1);
     let end = end.next_multiple_of(TWO_MIB);
+    if crate::whole_ram::overlaps_direct_map(start, end) {
+        return Err(MapError::TrackedRam);
+    }
     let regions = unsafe { &mut *core::ptr::addr_of_mut!(MAPPED) };
     let overlapping = || {
         regions
@@ -162,29 +274,10 @@ pub fn map(physical: u64, length: u64, cache: Cache) -> Result<u64, MapError> {
             Cache::Uncached => CACHE_DISABLE | WRITE_THROUGH,
             Cache::UncachedMinus => CACHE_DISABLE,
         };
-    let pdpt = boot_pdpt();
     let mut page = start;
     let mut virtual_page = base;
     while page < end {
-        let gib = virtual_page / ONE_GIB;
-        let slot = unsafe { pdpt.add(gib as usize) };
-        let mut entry = unsafe { core::ptr::read_volatile(slot) };
-        if entry & PRESENT == 0 {
-            // The kernel image is identity-mapped: the static's address is
-            // its physical address.
-            let directory =
-                unsafe { core::ptr::addr_of_mut!(POOL[(gib - WINDOW_FIRST_GIB) as usize]) }
-                    as *mut u64;
-            for index in 0..512 {
-                unsafe { core::ptr::write_volatile(directory.add(index), 0) };
-            }
-            entry = directory as u64 | PRESENT | WRITABLE;
-            unsafe { core::ptr::write_volatile(slot, entry) };
-        }
-        let directory = (entry & ADDRESS_MASK) as *mut u64;
-        let index = ((virtual_page % ONE_GIB) / TWO_MIB) as usize;
-        unsafe { core::ptr::write_volatile(directory.add(index), page | attributes) };
-        crate::invalidate_page(virtual_page);
+        install(virtual_page, page | attributes);
         page += TWO_MIB;
         virtual_page += TWO_MIB;
     }

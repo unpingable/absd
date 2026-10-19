@@ -7,6 +7,8 @@
 //!   mounts                       the channel's mount list
 //!   read PATH                    read the whole file; bytes and time
 //!   write PATH BYTES             create/truncate and write a pattern; time
+//!   recovery-pending PATH BYTES  qualification: acknowledged overwrite,
+//!                                open and unsynced until VM interruption
 //!   stat-loop PATH N             N stats; time
 //!   hold PATH MILLIS             append a numbered line every 100 ms,
 //!                                syncing each, until MILLIS have passed
@@ -101,6 +103,33 @@ fn main() {
             match result {
                 Ok(()) => println!("write: {size} bytes {} ms", millis(start)),
                 Err(error) => fail(format!("write: {error}")),
+            }
+        }
+        "recovery-pending" => {
+            // Qualification boundary: WRITE_AT has answered, but this
+            // handle has not closed or synced. The host ends this VM after
+            // the marker, then boots the same disk with a new file server.
+            let size: usize = arg(2).parse().unwrap_or(0);
+            if size == 0 || size > 65536 {
+                fail("recovery-pending: size must be 1..65536".into());
+            }
+            let data: Vec<u8> = (0..size).map(|i| ((i + 17) % 251) as u8).collect();
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(arg(1))
+                .unwrap_or_else(|error| fail(format!("recovery-pending: open: {error}")));
+            let written = file
+                .write(&data)
+                .unwrap_or_else(|error| fail(format!("recovery-pending: write: {error}")));
+            if written != size {
+                fail(format!("recovery-pending: short write: {written}/{size}"));
+            }
+            println!("RECOVERY PENDING write_accepted bytes={size}");
+            std::io::stdout()
+                .flush()
+                .unwrap_or_else(|error| fail(format!("recovery-pending: marker: {error}")));
+            loop {
+                absd_runtime::sleep_ticks(1);
             }
         }
         "stat-loop" => {

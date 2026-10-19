@@ -12,6 +12,7 @@ Failure model actually exercised: abrupt loss of all guest state with every
 device-acknowledged sector retained. Host power loss is not modelled.
 """
 
+
 import argparse
 import os
 import pathlib
@@ -20,6 +21,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from served_ram import served_qemu
+from served_kernel import kernel_make
 import absd_image  # noqa: E402
 import absd_inputs  # noqa: E402
 
@@ -79,7 +82,7 @@ class Harness:
         if step not in self.isos:
             subprocess.run(
                 [
-                    "make", "--no-print-directory", "-C", str(self.kernel), "durable-iso",
+                    *kernel_make(), "--no-print-directory", "-C", str(self.kernel), "durable-iso",
                     f"DURABLE_STEP={step}", f"EXTERNAL_USER_ELF={self.elf}",
                     f"EXTERNAL_INPUT={self.empty_input}",
                 ],
@@ -93,7 +96,7 @@ class Harness:
         log = self.work / f"{name}.{self.boots:03d}.serial.log"
         result = subprocess.run(
             [str(self.kernel / "scripts" / "durable-boot.sh"), str(self.iso(step)), str(image),
-             str(log), "300", *self.qemu.split()],
+             str(log), "300", *served_qemu(self.qemu)],
             check=True, capture_output=True, text=True,
         )
         status = int(result.stdout.strip())

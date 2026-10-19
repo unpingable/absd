@@ -1,0 +1,10 @@
+# The C++ runtime's pinned upstream (scripts/stage-llvm.sh). Tab-separated:
+# NAME VERSION COMMIT URL SHA256 LICENSE. SHA256 is over the downloaded release
+# tarball and was recorded on 2026-10-12 from the first download, into an empty
+# directory, before the tarball was extracted or read (trust on first use: the
+# release publishes no digest; its size, 132067260 B, matches the GitHub release
+# asset record). COMMIT is the commit the llvmorg-18.1.8 tag names, recorded from
+# git ls-remote, not verified: the release tarball cannot show it.
+# LICENSE is the SPDX expression of llvm-project/LICENSE.TXT, carried verbatim as
+# cxx/llvm-project.LICENSE.
+llvm-project	18.1.8	3b5b5c1ec4a3095ab096dd780e84d7ab81f3d7ff	https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/llvm-project-18.1.8.src.tar.xz	0b58557a6d32ceee97c8d533a59b9212d87e0fc4d2833924eb6c611247db2f2a	Apache-2.0 WITH LLVM-exception

@@ -7,3 +7,11 @@ description = "ABSD file server: the wire protocol, mount lists, and the request
 [dependencies]
 absd-fs = { path = "../fs" }
 absd-release = { path = "../release" }
+
+[[test]]
+name = "heap_scenario_counting"
+harness = false
+
+[[test]]
+name = "heap_scenario_pool"
+harness = false

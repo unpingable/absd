@@ -1,0 +1,7 @@
+# Native Clang guest cases (scripts/clang-guest-matrix.py; docs/native-clang-20261012/GUEST-RUN.md).
+# NAME<TAB>KIND<TAB>WORDS... ; start: ARGV (ARGV[0] the image by absolute path, the session's first
+# command); split: SRC RSP (files beside this table, imported at /home/operator/clang-cases).
+# Pins: guest-expected/<NAME>.txt (stdout, --, stderr, --, status=), from the Linux twin.
+cl1-lld	start	/bin/lld	-flavor	ld.lld	--version
+cl1-cc1fe	start	/bin/cc1-fe-o0	-resource-dir	/share/absd-clang/lib/clang/18	-version
+cl2-split	split	hello.c	hello.cc1.rsp

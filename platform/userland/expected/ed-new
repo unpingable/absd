@@ -1,0 +1,8 @@
+status 0
+--- stdout
+60
+--- stderr
+--- files
+file hello.c 60
+#include <stdio.h>
+int main(void) { puts("hi"); return 0; }

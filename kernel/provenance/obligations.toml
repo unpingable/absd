@@ -67,8 +67,9 @@ title = "The I219 driver adapts Intel's BSD-3-Clause code from FreeBSD (kept, wi
 kind = "mechanical"
 applies_to = ["source", "binary", "site"]
 origin = "audit-20261010"
-status = "latent"
+status = "open"
 detect = { kind = "exists", path = "src/i219.rs" }
+note = "Carried onto the I219 development lane (lane/i219-dev-20261012) by merge: LICENSES/BSD-3-Clause.txt added and the provenance.toml rule for src/i219.rs confirmed unchanged. Still owed: Intel's notice in the image notices, and the absd.dev sentence revised."
 
 [[obligation]]
 id = "XHCI-LEGACY-MASKS-ON-MERGE"
@@ -76,7 +77,8 @@ title = "The xHCI legacy-handoff masks are structured like a Linux (GPL-2.0) hea
 kind = "mechanical"
 applies_to = ["source"]
 origin = "audit-20261010"
-status = "latent"
+status = "open"
+note = "2026-10-13: src/xhci_legacy.rs arrived by the merge of lane/xhci-hygiene-20261012 at 689ebd9 into steward kernel candidate 2; that lane's 297bb6f cites xHCI 1.2 section 7.1.1 Table 7-4 (USBLEGSUP) and section 7.1.2 Table 7-5 (USBLEGCTLSTS) beside the masks (comment only; docs/xhci-hw-readiness-20261010/RECORD.md section 14)."
 detect = { kind = "exists", path = "src/xhci_legacy.rs" }
 
 # ------------------------------------------------------------ binaries

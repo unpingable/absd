@@ -1,0 +1,23 @@
+global ctor value=41
+C++0 probe start global=41
+shape rect area=12
+shape square area=25
+shape shape area=21
+shapes=3 total=58
+ring count=4 sum=180 max=60
+vector unique=1000 front=0 back=1008 squares=339589992
+string absd-0-1-4-9-16 len=15 find=12 big=5001 sum=592600395265380198
+word apple=1
+word fig=2
+word pear=3
+new[] sum=32640
+aligned new align64=1 byte=171
+aligned new[] align64=1
+nothrow new ok=1
+counted live=50
+counted live=0 made=50
+local static init
+local static value=9 events=2
+shared use=2 second=three
+C++0 probe end
+global dtor value=41 events=2

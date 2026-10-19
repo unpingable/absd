@@ -3,7 +3,7 @@
 # lock is `ssh/Cargo.lock`. sunset 0.6.0 is the registry archive (checked
 # against the lock checksum by scripts/stage-ssh.sh) with
 # patches/sunset-server-channel.patch, staged beside this repository as
-# `../absd-std-staged-ssh/sunset`.
+# `../absd-std-staged-ssh/sunset` and reached as `tree/sunset` (below).
 #
 # The same sources build for Linux (development and the reference matrix,
 # scripts/ssh-linux-matrix.py) and for ABSD.
@@ -28,6 +28,12 @@ path = "src/sshtest.rs"
 name = "absd-fsd"
 path = "src/fsd_main.rs"
 
+# The worker of the dedicated enrollment image (slice A,
+# ABSD only): writes /ssh/authorized_keys once and nothing else.
+[[bin]]
+name = "absd-enroll"
+path = "src/enroll_main.rs"
+
 [dependencies]
 # `std` selects sunset's alloc-owned buffers, longer usernames and ML-KEM.
 sunset = { version = "=0.6.0", default-features = false, features = ["std"] }
@@ -40,19 +46,27 @@ base64 = "0.22"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# The tree's crates and the staged sunset are reached through tree/, symlinks
+# that scripts/stage-ssh.sh makes (untracked): tree/runtime -> ../../runtime,
+# and so for broker, fs, fsd, release and net, which runtime and net name by
+# relative path; tree/sunset -> ../../../absd-std-staged-ssh/sunset. Cargo
+# does not resolve them, so the crates sit inside this workspace's root and
+# Cargo hashes their paths relative to it (into -C metadata, so into every
+# symbol and the code laid out from them) instead of absolutely:
+# the programs do not depend on where the tree is checked out (N3).
 [target.'cfg(target_os = "absd")'.dependencies]
-absd-runtime = { path = "../runtime" }
+absd-runtime = { path = "tree/runtime" }
 # TCP/IP: smoltcp over the kernel NIC, in this process (sshd owns the NIC).
-absd-net = { path = "../net" }
+absd-net = { path = "tree/net" }
 # The file server's protocol and dispatcher (sshd binds slots; absd-fsd serves).
-absd-fs = { path = "../fs" }
-absd-fsd = { path = "../fsd" }
+absd-fs = { path = "tree/fs" }
+absd-fsd = { path = "tree/fsd" }
 # The compiled release identity the file server checks the selected
 # release record against (docs/RELEASE.md).
-absd-release = { path = "../release" }
+absd-release = { path = "tree/release" }
 
 [patch.crates-io]
-sunset = { path = "../../absd-std-staged-ssh/sunset" }
+sunset = { path = "tree/sunset" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("absd"))'] }

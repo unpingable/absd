@@ -22,6 +22,7 @@
 
 use core::sync::atomic::{Ordering, fence};
 
+use absd_kernel::nvme_ready;
 use absd_kernel::syscall::BLOCK_SECTOR_BYTES;
 
 use crate::{mmio, pci};
@@ -38,6 +39,7 @@ const REG_CSTS: u64 = 0x1c;
 const REG_AQA: u64 = 0x24;
 const REG_ASQ: u64 = 0x28;
 const REG_ACQ: u64 = 0x30;
+const REG_CRTO: u64 = 0x68;
 const DOORBELLS: u64 = 0x1000;
 
 const CC_ENABLE: u32 = 1;
@@ -190,6 +192,7 @@ struct Controller {
     /// Set by a timeout or a completion for the wrong command: the queue
     /// positions are no longer known, so every later command fails at once.
     failed: bool,
+    ready_limit: u64,
 }
 
 static mut CONTROLLER: Option<Controller> = None;
@@ -238,6 +241,7 @@ impl Controller {
     fn wait_ready(&self, ready: bool, limit: u64) -> Result<(), NvmeError> {
         crate::smp_startup::first_poll(crate::kernel_lock::WaitSite::Nvme);
         let start = ticks();
+        let mut reported = 0;
         loop {
             let status = self.read32(REG_CSTS);
             if status & CSTS_FATAL != 0 && ready {
@@ -246,11 +250,71 @@ impl Controller {
             if (status & CSTS_READY != 0) == ready {
                 return Ok(());
             }
-            if ticks().wrapping_sub(start) > limit {
+            let elapsed = ticks().wrapping_sub(start);
+            if elapsed > limit {
                 return Err(NvmeError::Timeout(if ready { "enable" } else { "disable" }));
+            }
+            if limit > 127_500 && elapsed.saturating_sub(reported) >= 30_000 {
+                let _ = core::fmt::write(
+                    &mut crate::serial::Serial,
+                    format_args!(
+                        "NVME READY WAIT target={} elapsed_ticks={elapsed} limit_ticks={limit} csts={status:08x}\n",
+                        u8::from(ready)
+                    ),
+                );
+                reported = elapsed;
             }
             crate::block::wait_for_interrupt(crate::kernel_lock::WaitSite::Nvme);
         }
+    }
+
+    /// Do not change EN while an inherited enable is still in progress.
+    /// Disabled-but-still-ready is also a transition: wait before page reuse.
+    fn disable_before_probe(&self, limits: nvme_ready::Timeouts) -> Result<(), NvmeError> {
+        let configuration = self.read32(REG_CC);
+        if configuration & CC_ENABLE != 0 {
+            self.wait_ready(true, limits.for_configuration(configuration))
+                .map_err(|error| match error {
+                    NvmeError::Timeout(_) => NvmeError::Timeout("inherited enable"),
+                    other => other,
+                })?;
+            let status = self.read32(REG_CSTS);
+            if !nvme_ready::may_clear_enable(configuration, status) {
+                return Err(NvmeError::Timeout("inherited enable"));
+            }
+            self.write32(REG_CC, 0);
+        }
+        self.wait_ready(false, limits.with_media)
+    }
+
+    /// A refused initialization never leaves new DMA enabled. Keep the
+    /// static queue/identify pages dedicated for this boot even if stop
+    /// cannot be confirmed: BME-off is not cancellation of pending DMA.
+    fn abandon_probe(&self, ready_limit: u64) {
+        // EN=1/RDY=0 may be enable-in-progress; clearing EN then has undefined
+        // results. Only request a reset after observing RDY=1. Otherwise
+        // contain new DMA and report that controller stop is unconfirmed.
+        let status = self.read32(REG_CSTS);
+        let stopped = if status & CSTS_READY != 0 {
+            self.write32(REG_CC, 0);
+            self.wait_ready(false, ready_limit).is_ok()
+        } else {
+            false
+        };
+        pci::disable_dma(self.identity.pci);
+        crate::serial::write("NVME PROBE CLEANUP csts=");
+        crate::serial::hex_digits(u64::from(status), 8);
+        crate::serial::write(if status & CSTS_READY != 0 {
+            " reset=requested stop="
+        } else {
+            " reset=skipped stop="
+        });
+        crate::serial::write(if stopped { "confirmed" } else { "unconfirmed" });
+        crate::serial::write(if pci::bus_master(self.identity.pci) {
+            " dma=on\n"
+        } else {
+            " dma=off\n"
+        });
     }
 
     /// Submits one command on `io` (or the admin queue) and polls for its
@@ -410,7 +474,10 @@ pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
             .map_err(|error| NvmeError::Refused(Refusal::Map { error, bar }))
     };
     let registers = map(DOORBELLS + 0x1000)?;
-    pci::enable_polled_dma(function);
+    // Firmware may have left commands and DMA descriptors active. Keep bus
+    // mastering off until the old controller has completed its disable.
+    pci::disable_dma(function);
+    pci::enable_memory(function);
     let mut found = Controller {
         registers,
         stride: 4,
@@ -440,6 +507,7 @@ pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
             writable: false,
         },
         failed: false,
+        ready_limit: 500,
     };
     let capabilities = found.read64(REG_CAP);
     if (capabilities >> 37) & 1 == 0 {
@@ -455,14 +523,19 @@ pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
     let entries = QUEUE_ENTRIES.min(((capabilities & 0xffff) as u16).saturating_add(1));
     found.admin.entries = entries;
     found.io.entries = entries;
-    // CAP.TO is in 500 ms units; the PIT ticks at about 1 kHz.
-    let ready_limit = (((capabilities >> 24) & 0xff) * 500).max(500);
     found.identity.version = found.read32(REG_VS);
+    let crto = if nvme_ready::uses_crto(found.identity.version, capabilities) {
+        Some(found.read32(REG_CRTO))
+    } else {
+        None
+    };
+    let limits = nvme_ready::Timeouts::from_registers(found.identity.version, capabilities, crto);
+    let ready_limit = limits.with_media;
+    found.ready_limit = ready_limit;
 
     // Reset: firmware may have left the controller enabled with its own
     // queues. Everything below is rebuilt from scratch.
-    found.write32(REG_CC, 0);
-    found.wait_ready(false, ready_limit)?;
+    found.disable_before_probe(limits)?;
     for page in [
         core::ptr::addr_of_mut!(ADMIN_SQ),
         core::ptr::addr_of_mut!(ADMIN_CQ),
@@ -477,80 +550,101 @@ pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
     found.write64(REG_ASQ, found.admin.submission);
     found.write64(REG_ACQ, found.admin.completion);
     fence(Ordering::SeqCst);
-    found.write32(REG_CC, CC_QUEUE_ENTRY_SIZES | CC_ENABLE);
-    found.wait_ready(true, ready_limit)?;
+    // One Result boundary owns every post-enable refusal, including ? and
+    // early returns. Publish only after initialization has succeeded.
+    let initialized = (|| -> Result<(), NvmeError> {
+        pci::enable_polled_dma(function);
+        found.write32(REG_CC, CC_QUEUE_ENTRY_SIZES | CC_ENABLE);
+        found.wait_ready(true, ready_limit)?;
 
-    let controller_data = found.identify(IDENTIFY_CONTROLLER, 0)?;
-    found
-        .identity
-        .serial
-        .copy_from_slice(&controller_data[4..24]);
-    found
-        .identity
-        .model
-        .copy_from_slice(&controller_data[24..64]);
-    found.identity.volatile_write_cache = controller_data[525] & 1 != 0;
+        let controller_data = found.identify(IDENTIFY_CONTROLLER, 0)?;
+        found
+            .identity
+            .serial
+            .copy_from_slice(&controller_data[4..24]);
+        found
+            .identity
+            .model
+            .copy_from_slice(&controller_data[24..64]);
+        found.identity.volatile_write_cache = controller_data[525] & 1 != 0;
 
-    // The first active namespace; controllers older than NVMe 1.1 may not
-    // list them, and then namespace 1 is tried.
-    let namespace = match found.identify(IDENTIFY_ACTIVE_NAMESPACES, 0) {
-        Ok(list) => u32::from_le_bytes([list[0], list[1], list[2], list[3]]),
-        Err(NvmeError::Command { .. }) => 1,
-        Err(other) => return Err(other),
-    };
-    if namespace == 0 {
-        return Err(NvmeError::Refused(Refusal::NoNamespace));
-    }
-    let data = found.identify(IDENTIFY_NAMESPACE, namespace)?;
-    let sectors = u64::from_le_bytes(data[0..8].try_into().unwrap_or([0; 8]));
-    if sectors == 0 {
-        return Err(NvmeError::Refused(Refusal::NoNamespace));
-    }
-    // FLBAS bits 3:0 select the format, and bits 6:5 extend the index when
-    // the namespace offers more than 16 formats (NLBAF is zero-based).
-    let flbas = data[26];
-    let format = usize::from(flbas & 0xf) | (usize::from((flbas >> 5) & 3) << 4);
-    if format > usize::from(data[25]) {
-        return Err(NvmeError::Refused(Refusal::LbaFormat {
-            lba_bytes: 0,
-            metadata_bytes: 0,
-        }));
-    }
-    let descriptor = 128 + 4 * format;
-    let metadata_bytes = u16::from_le_bytes([data[descriptor], data[descriptor + 1]]);
-    let lba_shift = data[descriptor + 2];
-    if lba_shift != 9 || metadata_bytes != 0 {
-        return Err(NvmeError::Refused(Refusal::LbaFormat {
-            lba_bytes: 1u64.checked_shl(u32::from(lba_shift)).unwrap_or(0),
-            metadata_bytes,
-        }));
-    }
-    found.identity.namespace = namespace;
-    found.identity.sectors = sectors;
+        // The first active namespace; controllers older than NVMe 1.1 may not
+        // list them, and then namespace 1 is tried.
+        let namespace = match found.identify(IDENTIFY_ACTIVE_NAMESPACES, 0) {
+            Ok(list) => u32::from_le_bytes([list[0], list[1], list[2], list[3]]),
+            Err(NvmeError::Command { .. }) => 1,
+            Err(other) => return Err(other),
+        };
+        if namespace == 0 {
+            return Err(NvmeError::Refused(Refusal::NoNamespace));
+        }
+        let data = found.identify(IDENTIFY_NAMESPACE, namespace)?;
+        let sectors = u64::from_le_bytes(data[0..8].try_into().unwrap_or([0; 8]));
+        if sectors == 0 {
+            return Err(NvmeError::Refused(Refusal::NoNamespace));
+        }
+        // FLBAS bits 3:0 select the format, and bits 6:5 extend the index when
+        // the namespace offers more than 16 formats (NLBAF is zero-based).
+        let flbas = data[26];
+        let format = usize::from(flbas & 0xf) | (usize::from((flbas >> 5) & 3) << 4);
+        if format > usize::from(data[25]) {
+            return Err(NvmeError::Refused(Refusal::LbaFormat {
+                lba_bytes: 0,
+                metadata_bytes: 0,
+            }));
+        }
+        let descriptor = 128 + 4 * format;
+        let metadata_bytes = u16::from_le_bytes([data[descriptor], data[descriptor + 1]]);
+        let lba_shift = data[descriptor + 2];
+        if lba_shift != 9 || metadata_bytes != 0 {
+            return Err(NvmeError::Refused(Refusal::LbaFormat {
+                lba_bytes: 1u64.checked_shl(u32::from(lba_shift)).unwrap_or(0),
+                metadata_bytes,
+            }));
+        }
+        found.identity.namespace = namespace;
+        found.identity.sectors = sectors;
 
-    let queue_size = u32::from(entries - 1) << 16;
-    let mut create = [0u32; 16];
-    create[0] = u32::from(ADMIN_CREATE_CQ);
-    create[6] = found.io.completion as u32;
-    create[7] = (found.io.completion >> 32) as u32;
-    create[10] = queue_size | u32::from(IO_QUEUE);
-    // Physically contiguous; interrupts disabled.
-    create[11] = 1;
-    found.execute(false, create)?;
-    create[0] = u32::from(ADMIN_CREATE_SQ);
-    create[6] = found.io.submission as u32;
-    create[7] = (found.io.submission >> 32) as u32;
-    create[11] = (u32::from(IO_QUEUE) << 16) | 1;
-    found.execute(false, create)?;
+        let queue_size = u32::from(entries - 1) << 16;
+        let mut create = [0u32; 16];
+        create[0] = u32::from(ADMIN_CREATE_CQ);
+        create[6] = found.io.completion as u32;
+        create[7] = (found.io.completion >> 32) as u32;
+        create[10] = queue_size | u32::from(IO_QUEUE);
+        // Physically contiguous; interrupts disabled.
+        create[11] = 1;
+        found.execute(false, create)?;
+        create[0] = u32::from(ADMIN_CREATE_SQ);
+        create[6] = found.io.submission as u32;
+        create[7] = (found.io.submission >> 32) as u32;
+        create[11] = (u32::from(IO_QUEUE) << 16) | 1;
+        found.execute(false, create)?;
 
-    // An empty option or an all-blank serial never selects a namespace.
-    found.identity.writable = crate::block::WRITES_BUILT
-        && write_serial.is_some_and(|name| !name.is_empty() && name == found.identity.serial());
+        // An empty option or an all-blank serial never selects a namespace.
+        found.identity.writable = crate::block::WRITES_BUILT
+            && write_serial.is_some_and(|name| !name.is_empty() && name == found.identity.serial());
+        Ok(())
+    })();
+    if let Err(error) = initialized {
+        found.abandon_probe(ready_limit);
+        return Err(error);
+    }
     let identity = found.identity;
     unsafe {
         *core::ptr::addr_of_mut!(CONTROLLER) = Some(found);
     }
     Ok(identity)
+}
+
+/// A proving read failed before the block backend became available. Withdraw
+/// the private controller first; retain its PCI claim and static DMA pages.
+pub fn withdraw_failed_probe() {
+    crate::kernel_lock::assert_bsp_device_access();
+    let previous = unsafe { (*core::ptr::addr_of_mut!(CONTROLLER)).take() };
+    if let Some(found) = previous {
+        found.abandon_probe(found.ready_limit);
+        crate::serial::write("NVME CONTROLLER WITHDRAWN reason=first-read\n");
+    }
 }
 
 /// The controller, once `bytes` worth of whole sectors from `lba` are

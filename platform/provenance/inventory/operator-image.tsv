@@ -154,7 +154,7 @@ intl_pluralrules	7.0.2	registry	linked	Apache-2.0/MIT	MIT	MISSING	ports	078ea7b7
 is_terminal_polyfill	1.70.2	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695
 itertools	0.14.0	registry	not-built		n/a			2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285
 itertools	0.15.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc
-itoa	1.0.18	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682
+itoa	1.0.18	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands,ports	8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682
 jobserver	0.1.35	registry	not-built		n/a			1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3
 js-sys	0.3.104	registry	not-built		n/a			0e0c1080212aad755ea003d18543e8768dd432c48819efd73a7bf1e39b7a5a3a
 keccak	0.2.2	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	d8f198d1db720e4940b5a493201d199d9f24f568f8f746bd13706243a2f71598
@@ -169,7 +169,7 @@ litemap	0.8.3	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	47d9d19d1d6e
 log	0.4.33	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad
 log	0.4.34	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6
 managed	0.8.0	registry	linked	0BSD	0BSD	LICENSE-0BSD.txt	sshd	0ca88d725a0a943b096803bd34e73a4437208b6077654cc4ecb2947a5f91618d
-memchr	2.8.3	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98
+memchr	2.8.3	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	commands,ports	cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98
 memmap2	0.9.11	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0
 miniz_oxide	0.8.9	registry	not-built		n/a			1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316
 miniz_oxide	0.9.1	registry	not-built		n/a			b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c
@@ -224,17 +224,27 @@ rustix	1.1.4	registry	not-built		n/a			b6fe4565b9518b83ef4f91bb47ce29620ca828bd3
 rustversion	1.0.23	registry	not-built		n/a			cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f
 ryu-js	0.2.2	registry	not-built		n/a			6518fc26bced4d53678a22d6e423e9d8716377def84545fe328236e3af070e7f
 same-file	1.0.6	registry	linked	Unlicense/MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502
+sbase-cmp	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 cmp.c
+sbase-ed	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 ed.c
+sbase-find	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 find.c
+sbase-grep	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 grep.c
+sbase-od	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 od.c
+sbase-printf	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 printf.c
+sbase-sed	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 sed.c
+sbase-sort	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 sort.c
+sbase-tar	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 tar.c
+sbase-test	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 test.c
 self_cell	1.3.0	registry	linked	Apache-2.0 OR GPL-2.0-only	Apache-2.0	LICENSE-APACHE,LICENSE-GPLv2	ports	2ab42ca02749e120097e328d91d415325bdf43b1c72c4c8badf37375fe40a813
 semver	1.0.28	registry	build-only		n/a		sshd	8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd
 serde	1.0.228	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e
 serde	1.0.229	registry	not-built		n/a			4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba
 serde_core	1.0.228	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad
-serde_core	1.0.229	registry	not-built		n/a			67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48
+serde_core	1.0.229	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands	67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48
 serde_derive	1.0.228	registry	not-built		n/a			d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79
 serde_derive	1.0.229	registry	not-built		n/a			e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348
 serde_jcs	0.2.0	registry	not-built		n/a			d3a60f3fda61525e439ef6d67422118f11e986566997d9021c56867ad814a0aa
 serde_json	1.0.150	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9
-serde_json	1.0.151	registry	not-built		n/a			c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14
+serde_json	1.0.151	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands	c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14
 sha2	0.10.9	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands,ports,sshd	a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283
 sha2	0.11.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4
 sha3	0.11.0	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1
@@ -277,6 +287,8 @@ tinystr	0.8.4	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	b1e27c914592
 toml_datetime	1.1.1+spec-1.1.0	registry	not-built		n/a			3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7
 toml_edit	0.25.13+spec-1.1.0	registry	not-built		n/a			6975367e4d2ef766d86af01ffad14b622fecc8d4357a998fbc4deb6e9bacaf9b
 toml_parser	1.1.3+spec-1.1.0	registry	not-built		n/a			1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56
+toybox-diff	0.8.15	upstream-tarball	linked	0BSD	0BSD	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz sha256:44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e toys/pending/diff.c
+toybox-hexdump	0.8.15	upstream-tarball	linked	0BSD	0BSD	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz sha256:44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e toys/pending/hexdump.c
 type-map	0.5.1	registry	linked	MIT/Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	cb30dbbd9036155e74adad6812e9898d03ec374946234fbcebd5dfc7b9187b90
 typenum	1.20.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE,LICENSE-APACHE,LICENSE-MIT	commands,ports,sshd	b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20
 unic-langid	0.9.6	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	a28ba52c9b05311f4f6e62d5d9d46f094bd6e84cb8df7b3ef952748d752a7d05
@@ -344,4 +356,4 @@ zerotrie	0.2.5	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	4ea269c3bd3
 zerovec	0.11.8	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	bb0464e17806c1d976d5cba29399c7f08e516e279e2ba493f63123b5fca67dd8
 zerovec-derive	0.11.6	registry	build-only		n/a		ports	34df6fc39dbd26ddc9c10e6a2984476e13acce22e64e4487636ef494369225da
 zlib-rs	0.6.7	registry	not-built		n/a			34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12
-zmij	1.0.23	registry	linked	MIT	MIT	LICENSE-MIT	ports	29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b
+zmij	1.0.23	registry	linked	MIT	MIT	LICENSE-MIT	commands,ports	29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b

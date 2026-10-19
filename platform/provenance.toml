@@ -27,6 +27,7 @@ path = [
     "fs/**",
     "fsd/**",
     "man/**",
+    "media/**",
     "net/**",
     "observe/**",
     "operator/**",
@@ -40,11 +41,189 @@ path = [
     "src/**",
     "ssh/**",
     "targets/**",
+    "tls/**",
+    "quic/**",
     "tests/**",
     "tools/**",
     "vendor/README.md",
 ]
 class = "first-party"
+license = "Apache-2.0"
+
+# The C application kit (c/: libabs, the POSIX adapter, absd-cc, headers,
+# tests and vectors) and the Stage 2 port harness (cports/), written for ABSD
+# by the C ecosystem campaign (docs/c-ecosystem-20261010). Lua, zlib, SQLite
+# and Picolibc are downloaded and verified by hash at build time
+# (cports/programs.tsv, c/picolibc/PIN), never vendored; only ABSD's own
+# build glue, expectations and records live here.
+[[files]]
+path = ["c/**", "cports/**"]
+class = "first-party"
+license = "Apache-2.0"
+
+# The enrollment key cases (slice A): authorized_keys inputs
+# written for ABSD, each named for its verdict, that both the enroll worker's
+# unit test and the helper's test read. Some are deliberately not text (NUL,
+# form feed, non-ASCII). The keys are made-up ed25519 blobs of repeated bytes.
+[[files]]
+path = "ssh/enroll-cases/*.keys"
+class = "first-party"
+license = "Apache-2.0"
+
+# Startup-record vectors: bytes the broker's encoder emits for the C kit's
+# contract tests (broker/src/tests.rs, emit_startup_vectors, written only
+# when ABSD_EMIT_VECTORS names the directory).
+[[files]]
+path = ["c/vectors/startup/*.bin", "c/vectors/startup/*.json"]
+class = "generated"
+generator = "broker/src/tests.rs emit_startup_vectors (cargo test with ABSD_EMIT_VECTORS)"
+license = "Apache-2.0"
+
+# Demand records of the Stage 2 ports: the symbols the upstream programs'
+# objects require (nm), what is left after a trial link against Picolibc,
+# and the compiler's diagnostics over the staged upstream sources named in
+# cports/programs.tsv. The .undef/.residual lists are symbol names only; the
+# compile logs are clang diagnostics, which quote the offending upstream
+# source lines (Lua 5.4.9 MIT, SQLite public domain) and the campaign
+# checkout path the development checkout — short
+# excerpts carried as diagnostics, not redistributed upstream sources.
+[[files]]
+path = ["cports/demand/*.undef.txt", "cports/demand/*.residual.txt", "cports/demand/*.compile.log"]
+class = "generated"
+generator = "cports/demand/collect.sh (clang -c, nm -u and a trial link over the staged upstream sources)"
+license = "Apache-2.0"
+
+# The base userland (userland/: the pin, the build glue, per-port patches,
+# demand records, expectations), written for ABSD by the base-userland lane
+# (DIRECTIVE-base-userland-20261012). As for Picolibc under c/**, the upstream
+# (sbase, MIT) is downloaded and verified by hash at build time
+# (userland/PIN, scripts/stage-userland.sh) and extracted beside the
+# repository, never vendored; only ABSD's own glue and records live here.
+[[files]]
+path = "userland/**"
+class = "first-party"
+license = "Apache-2.0"
+
+# Demand records of the base userland: symbol names each sbase utility's
+# objects require, their bucket and resolution, and per-utility compile/link/
+# gate outcomes; compile failures are quoted as one clang diagnostic line
+# naming an sbase file and line (no upstream source text beyond that line).
+[[files]]
+path = ["userland/DEMAND.tsv", "userland/DEMAND-SUMMARY.tsv"]
+class = "generated"
+generator = "scripts/userland-demand.py (absd-cc compile, nm, trial link and check-c-elf.py over the staged sbase tree named in userland/PIN)"
+license = "Apache-2.0"
+
+# The C++0 runtime lane (native-Clang campaign, DIRECTIVE-native-clang-20261012,
+# task T1): the pin, the CMake toolchain, the absd-c++ driver, the probe, its
+# expected output and the host check are first-party. As for Picolibc under
+# c/**, the upstream (LLVM 18.1.8: libc++, libc++abi, and later Clang and LLD;
+# Apache-2.0 WITH LLVM-exception) is downloaded and verified by hash
+# (cxx/PIN, scripts/stage-llvm.sh), extracted beside the repository and built
+# there (scripts/build-cxx-runtime.sh), never vendored; the archives and
+# headers it produces live outside the tree. A program absd-c++ links carries
+# libc++/libc++abi object code; the LLVM exception waives the notice
+# conditions (4(a), 4(b), 4(d)) for such embedded portions.
+[[files]]
+path = "cxx/**"
+class = "first-party"
+license = "Apache-2.0"
+
+# LLVM's own LICENSE.TXT, verbatim, kept beside the pin so a source or image
+# tree that carries libc++/libc++abi (or their headers) can carry it
+# (scripts/stage-llvm.sh refuses a staged tree whose LICENSE.TXT differs).
+[[files]]
+path = "cxx/llvm-project.LICENSE"
+class = "imported"
+origin = "llvm-project 18.1.8 (cxx/PIN), LICENSE.TXT"
+license = "Apache-2.0 WITH LLVM-exception"
+
+# The LLVM-on-the-kit port (task T2, cxx/README.md "LLVM on the kit"): the
+# declared patches against the pinned llvm-project 18.1.8, applied to a build
+# copy outside the tree by scripts/build-llvm-kit.sh. Each patch's context
+# and removed lines are LLVM's, its added lines first-party.
+[[files]]
+path = "cxx/patches/llvm/*.patch"
+class = "adapted"
+origin = "llvm-project 18.1.8 (cxx/PIN): libcxx/src, llvm/lib/Support, llvm/lib/TargetParser, llvm/lib/Passes, clang/lib/Frontend, lld"
+upstream-license = "Apache-2.0 WITH LLVM-exception"
+upstream-notice = "The LLVM project contributors (LLVM Project, llvmorg-18.1.8), cxx/llvm-project.LICENSE"
+license = "Apache-2.0 WITH LLVM-exception"
+
+# The ABSD OS layer of LLVMSupport, copied into the build copy as
+# lib/Support/ABSD/*.inc: written for the kit, in LLVM's Unix/*.inc shape,
+# with findProgramByName and writeFileWithEncoding (Program.inc) and the
+# Watchdog and Memory signatures kept from LLVM's Unix/ files.
+[[files]]
+path = "cxx/glue/llvm-support/*.inc"
+class = "adapted"
+origin = "llvm-project 18.1.8 (cxx/PIN): llvm/lib/Support/Unix/{Signals,Program,Memory,Watchdog}.inc"
+upstream-license = "Apache-2.0 WITH LLVM-exception"
+upstream-notice = "The LLVM project contributors (LLVM Project, llvmorg-18.1.8), cxx/llvm-project.LICENSE"
+license = "Apache-2.0 WITH LLVM-exception"
+
+# Stage 3 TinyCC lane (docs/c-ecosystem-20261010/tcc/): the pin, the case
+# programs and their pinned ABSD outputs, and the ABSD build glue (empty
+# crti/crtn, the ONE_SOURCE wrapper, the execve stub, the -lc GROUP script)
+# are first-party. TinyCC itself is not in this tree: scripts/stage-tcc.sh
+# clones it at the pinned commit (tcc/PIN, archive hash enforced) and
+# scripts/build-tcc.sh builds it into a guest session image for the Stage 3
+# run only; no ABSD artifact carries tcc. tcc's share tree also carries
+# tcc/libtcc1.a, which tcc links into every program it compiles; its
+# members are three-way: tcc itself "LGPL version 2 or any later" per its
+# source headers (tcc.c, tccelf.c; COPYING carries the 2.1 text) — the
+# LGPL-2.1-or-later recorded below is a narrower, permissible election of that
+# grant, not its literal wording; lib/libtcc1.c GPL-2.0-or-later WITH the FSF runtime linking
+# exception, lib/atomic.S GPL-3.0-or-later WITH GCC-exception-3.1 (from gcc
+# 15.1.0 libatomic). Distribution of the patches or that archive is the N8
+# release-gate item; staging and qualification are unaffected.
+[[files]]
+path = "tcc/**"
+class = "first-party"
+license = "Apache-2.0"
+
+# The three declared patches against TinyCC (WORKAROUNDS TCC-P1..P3; the
+# steward's PATCHES-stage3 classification): each diff carries context lines
+# of tccelf.c / tcc.h. tcc is LGPL-2.1-or-later (COPYING); RELICENSING
+# lists the contributors who also agreed to MIT terms for their own work.
+[[files]]
+path = "tcc/patches/*.patch"
+class = "adapted"
+origin = "TinyCC mob at 43c7708b (tcc/PIN): tccelf.c and tcc.h"
+upstream-license = "LGPL-2.1-or-later"
+upstream-notice = "Copyright (c) 2001-2004 Fabrice Bellard and the TinyCC contributors (COPYING: LGPL 2.1; RELICENSING: per-author MIT agreement)"
+decision = "Owner ruling 2026-10-12 (C ecosystem integration) released Stage 3 for isolated staging composition with the three declared patches, pinned, minimal, disclosed and independently reviewable, qualifying as PATCHED/BOUNDED; the patch text is a modification of LGPL-2.1-or-later tcc and stays under those terms wherever it is distributed, and no ABSD artifact links or carries tcc (it is built into a Stage 3 guest session image during the run only). Publication of the patches with the source distribution is a separate owner decision, open."
+license = "LGPL-2.1-or-later"
+
+# tcc's own ./configure output for the target configure line (hostbuild.txt
+# configure_target), with the host-only defines dropped; build-tcc.sh refuses
+# it if it disagrees with the configure it reproduces.
+[[files]]
+path = "tcc/build/config.h"
+class = "adapted"
+origin = "TinyCC mob at 43c7708b: the config.h written by ./configure"
+upstream-license = "LGPL-2.1-or-later"
+upstream-notice = "Copyright (c) 2001-2004 Fabrice Bellard and the TinyCC contributors (COPYING: LGPL 2.1)"
+decision = "Owner ruling 2026-10-12 (C ecosystem integration) released Stage 3 for isolated staging composition with the three declared patches, pinned, minimal, disclosed and independently reviewable, qualifying as PATCHED/BOUNDED; this configure output is derived from LGPL-2.1-or-later tcc and stays under those terms wherever it is distributed, and no ABSD artifact links or carries tcc (it is built into a Stage 3 guest session image during the run only). Publication of the patches with the source distribution is a separate owner decision, open."
+license = "LGPL-2.1-or-later"
+
+# Disclosure (as for cports/demand): the Stage 3 receipts and records under
+# docs/c-ecosystem-20261010/tcc/ (hostbuild.txt, run-tcc.log, matrix.log,
+# README.md, STAGE3-DESIGN.md) carry the campaign checkout path
+# the development checkout as tool output; no upstream text.
+
+# The symbol names Picolibc 1.8.12's libc.a and libm.a define (nm), kept so
+# that demand tables can be classified without the install present. The
+# upstream is Picolibc 1.8.12 under BSD-style licences (its COPYING.picolibc:
+# mostly BSD-3-Clause, with BSD-2-Clause and MIT parts); the list carries
+# symbol names only, and BSD-3-Clause is the single SPDX value that covers
+# the archives it was read from (campaign controller, 2026-10-12).
+[[files]]
+path = "cports/demand/picolibc-1.8.12-defined.txt"
+class = "generated"
+generator = "cports/demand/collect.sh (nm --defined-only over the pinned Picolibc 1.8.12 archives; c/picolibc/PIN)"
+origin = "picolibc 1.8.12 (symbol names only, from its built archives)"
+upstream-license = "BSD-3-Clause"
 license = "Apache-2.0"
 
 [[files]]
@@ -102,7 +281,7 @@ kind = "test-key"
 [[files]]
 path = "patches/rust-1.95.0-absd-std.patch"
 class = "adapted"
-origin = "rust-lang/rust 1.95.0, library/ (the pinned rust-src component)"
+origin = "rust-lang/rust 1.95.0, library/ (the pinned rust-src component); ABSD std-mtime 2026-10-17 adds first-party V2 metadata-hook forwarding and whole-second modified() presentation, preserving upstream notices and terms"
 upstream-license = "MIT OR Apache-2.0"
 upstream-notice = "The Rust Project Developers (see https://thanks.rust-lang.org), as rust-lang/rust REUSE.toml states for library/** at 1.95.0"
 license = "Apache-2.0"
@@ -130,7 +309,7 @@ in-artifacts = ["workload-images"]
 binary-actions = ["ag-loopctl links ring 0.17.14 (BoringSSL-derived C and assembly) built with this patch: ring's three licence files accompany any image that carries it."]
 
 [[files]]
-path = ["patches/pulse-nq-load-support-absd.patch", "patches/pulse-absd-frame-pressure.patch"]
+path = ["patches/pulse-nq-load-support-absd.patch", "patches/pulse-absd-frame-pressure.patch", "observe/served.rs"]
 class = "adapted"
 origin = "constellation-monitor public cut at 81c2354 (the owner's project)"
 upstream-license = "Apache-2.0"
@@ -168,6 +347,46 @@ license = "Apache-2.0"
 notice-files = ["provenance/upstream-notices/nightshift.NOTICE"]
 in-artifacts = ["workload-images"]
 binary-actions = ["Apache-2.0 with a NOTICE file: the Nightshift programs built from this material carry that NOTICE and the licence text in any image or source tree that includes them."]
+
+# sbase's own LICENSE, verbatim: the MIT notice its permission requires to
+# accompany every copy, kept beside the pin so that any image or source
+# tree carrying an sbase-derived binary can carry it (scripts/stage-userland.sh
+# refuses a staged tree whose LICENSE differs).
+[[files]]
+path = "userland/sbase.LICENSE"
+class = "imported"
+origin = "sbase 0.1 (userland/PIN), LICENSE"
+license = "MIT"
+
+# The declared per-port patches against sbase 0.1 (userland/README.md): each
+# carries a header (failure, change, preserved ABSD behaviour) and context
+# lines of the sbase file it changes.
+[[files]]
+path = "userland/patches/*.patch"
+class = "adapted"
+origin = "sbase 0.1 (userland/PIN): the utility sources each patch names"
+upstream-license = "MIT"
+upstream-notice = "userland/sbase.LICENSE (Connor Lane Smith, Dimitris Papastamos, Laslo Hunhold and the sbase contributors)"
+decision = "Owner direction 2026-10-12 (base userland): bounded ports with explicit unsupported-feature behaviour and preserved provenance; each patch is declared in userland/README.md and stays under sbase's MIT terms wherever it is distributed."
+license = "Apache-2.0"
+
+# Source-specific bounded Toybox diff adaptation; host-only and not installed.
+# SOURCE.json pins the archive, selected upstream file, license, explicit patch
+# and adapted source. No accepted image includes this port yet.
+[[files]]
+path = ["userland/diff/diff.c", "userland/diff/diff.patch"]
+class = "adapted"
+origin = "Toybox 0.8.15 toys/pending/diff.c; tag a57b091d05ec366dcd4dd737784c03761cb6a4b1; archive SHA256 44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e (userland/diff/SOURCE.json)"
+upstream-license = "0BSD"
+upstream-notice = "Copyright 2014 Sandeep Sharma and Ashwini Kumar; author notices preserved in diff.c and diff.patch; release LICENSE carried verbatim."
+license = "Apache-2.0"
+notice-files = ["userland/diff/LICENSE"]
+
+[[files]]
+path = "userland/diff/LICENSE"
+class = "imported"
+origin = "Toybox 0.8.15 LICENSE, verbatim; archive SHA256 44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e (userland/diff/SOURCE.json)"
+license = "0BSD"
 
 # --- Vendored crates -------------------------------------------------------
 # Content-pinned by scripts/verify-inputs.sh, so attribution lives in
@@ -217,3 +436,65 @@ class = "first-party"
 license = "Apache-2.0"
 
 # REUSE-IgnoreEnd
+
+# Bounded hexdump port: preserve exact Toybox attribution separately from glue.
+[[files]]
+path = ["userland/hexdump/hexdump.c", "userland/hexdump/hexdump.patch"]
+class = "adapted"
+origin = "Toybox 0.8.15 toys/pending/hexdump.c; archive and member SHA256 in userland/hexdump/SOURCE.json"
+upstream-license = "0BSD"
+upstream-notice = "Copyright 2021 Moritz Röhrich; userland/hexdump/LICENSE"
+decision = "Owner base-userland direction 2026-10-12 and controller r11 admission: six conventional modes, bounded standalone adaptation and explicit unsupported formats. Retain upstream formatter and 0BSD terms."
+license = "0BSD"
+notice-files = ["userland/hexdump/LICENSE"]
+
+[[files]]
+path = "userland/hexdump/LICENSE"
+class = "imported"
+origin = "Toybox 0.8.15 LICENSE; exact archive member SHA256 in userland/hexdump/SOURCE.json"
+license = "0BSD"
+
+[[files]]
+path = "man/toybox.7"
+class = "adapted"
+origin = "Toybox 0.8.15 LICENSE, copied in its LICENSE section"
+upstream-license = "0BSD"
+upstream-notice = "Copyright 2006, 2019 Rob Landley; exact source license userland/diff/LICENSE"
+decision = "Carry the admitted Toybox license into the installed manual; surrounding ABSD explanatory text is first-party."
+license = "Apache-2.0"
+notice-files = ["userland/diff/LICENSE"]
+# This substantial sbase tar adaptation explicitly retains MIT terms.
+[[files]]
+path = "userland/patches/tar-absd.patch"
+class = "adapted"
+origin = "sbase 0.1 tar.c; archive pinned in userland/PIN"
+upstream-license = "MIT"
+upstream-notice = "userland/sbase.LICENSE"
+license = "MIT"
+decision = "Owner bounded base-userland scope; controller explicitly admitted substantial native ustar adaptation 2026-10-13. No claim original parser/extractor preserved; MIT notice carried."
+
+[[files]]
+path = "userland/tar-vectors/basic.ustar"
+class = "generated"
+generator = "Python 3.12.3 tarfile USTAR_FORMAT; userland/test_tar.py standard([('file', b'abc', 0o644)]) verifies exact regeneration"
+license = "Apache-2.0"
+
+# Development-only native HTTPS fixture; this patch adds the narrow ABSD
+# x86_64 fixture RNG cfg without changing the existing AG ring staging.
+[[files]]
+path = "patches/ring-absd-tls-fixture-rng.patch"
+class = "adapted"
+origin = "ring 0.17.14 (tls/PIN.json), src/rand.rs"
+upstream-license = "Apache-2.0 AND ISC"
+upstream-notice = "ring ships LICENSE, LICENSE-BoringSSL and LICENSE-other-bits; no NOTICE file"
+license = "Apache-2.0"
+in-artifacts = ["workload-images"]
+binary-actions = ["The private native TLS fixture links ring with the existing assembly patch and this fixture-only RNG cfg patch; all three ring licence files accompany retained or transferred fixture images."]
+
+# Only public certificates generated by the admitted fixture recipe belong here.
+# Private keys remain outside the source worktree and ordinary evidence.
+[[files]]
+path = "fixtures/native-tls/pki/*.der"
+class = "generated"
+generator = "scripts/native-tls-fixture-pki.sh (OpenSSL fixture PKI, sealed in PUBLIC-PKI.json before native build)"
+license = "Apache-2.0"

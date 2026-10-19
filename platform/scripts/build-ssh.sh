@@ -13,10 +13,15 @@
 #   absd-fsd-regenerate.elf   the same file server started with
 #                             --regenerate-host-key
 #   sshtest.elf               the matrix's session helper
+#   absd-enroll.elf           the enrollment image's key writer
 # Requires scripts/stage-library.sh to have staged the sysroot.
+# Source paths are remapped (scripts/inputs.sh, absd_rust_remap), so the
+# programs do not depend on the checkout path (N3).
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/inputs.sh"
+absd_rust_remap
 toolchain=${ABSD_RUST_TOOLCHAIN:-$HOME/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu}
 sysroot=$root/.staged-sysroot
 test -d "$sysroot/lib/rustlib/src/rust/library"
@@ -37,8 +42,8 @@ RUSTC=$root/scripts/rustc-staged.sh \
 RUSTC_BOOTSTRAP=1 \
 RUST_TARGET_PATH=$root/targets \
 ABSD_PROGRAM_ARGS="$args" \
-cargo +1.95.0 build -Z build-std=core,alloc,std,panic_abort \
-    --target x86_64-unknown-absd --release --offline ${ABSD_CARGO_LOCKED---locked} --bin sshd --bin sshtest --bin absd-fsd)
+cargo +1.95.0 --config "$ABSD_RUST_REMAP" build -Z build-std=core,alloc,std,panic_abort \
+    --target x86_64-unknown-absd --release --offline ${ABSD_CARGO_LOCKED---locked} --bin sshd --bin sshtest --bin absd-fsd --bin absd-enroll)
 for pair in "$@"; do
     bin=${pair%%:*} elf=${pair#*:}
     cp "$root/ssh/target/x86_64-unknown-absd/release/$bin" "$root/$elf"
@@ -46,7 +51,7 @@ for pair in "$@"; do
 done
 }
 
-build "" sshd:sshd.elf absd-fsd:absd-fsd.elf sshtest:sshtest.unstripped
+build "" sshd:sshd.elf absd-fsd:absd-fsd.elf absd-enroll:absd-enroll.elf sshtest:sshtest.unstripped
 # The matrix's session helper, installed as /bin/sshtest (symbols stripped:
 # it travels through the importer).
 llvm-strip-18 -o "$root/sshtest.elf" "$root/sshtest.unstripped"

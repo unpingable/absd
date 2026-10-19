@@ -1,5 +1,60 @@
 # Source-compatibility ledger
 
+The original nineteen-program measurement below is historical and retains its
+original outcomes. The exact accepted-with-limits platform base investigated by S3 is
+`bf8c7583` with kernel `f8184ca`, including twelve refreshed C ports in
+`userland/PORTS.tsv`; the original "C programs" section describes its earlier
+probe, not today's C kit (see [C interface](C-INTERFACE.md)).
+
+S3 in coordination tranche #24 investigates a separate independently selected
+Rust documentation application using the existing native interface:
+[pulldown-cmark workflow and fixture](../compat/native-markdown/README.md).
+This does not change the original cases, reference output, divergence list or
+verdict. Cross-compilation is distinct from native on-target development;
+Userland U4's component-closure gate and U5/U6 remain deferred.
+
+## S3 native application result — 2026-10-15
+
+Independently selected `pulldown-cmark` 0.13.4, default `getopts`/`html`
+features: **cross-build and native execution PASS for the selected cases**.
+No application or dependency Rust source changed. The only application-tree
+scaffolding is an ABSD-only runtime dependency and an additive lock preserving
+all 23 published upstream package identities. The existing restricted-std
+wrapper and patched platform std remain necessary experimental scaffolding.
+
+Two local KVM boots imported/read back eight files, then started twelve native
+application images from the filesystem. All twelve cases agreed byte for byte
+with the untouched Linux reference and a reference committed before guest
+execution: stdout, stderr and status, including status 1 for invalid options
+and rejected broken links. Terminal frames/processes/cells/pipes were all zero.
+This exercises the in-process read-only filesystem route, not served FSD/SSH.
+The empty-stdin case uses event mode (`-e`). Both boots used KVM; TCG was
+not run. Native release settings force panic=abort, LTO, opt-level z and one
+codegen unit, plus std optimize_for_size; the Linux reference uses upstream
+release settings. Unchanged source does not mean identical build profiles.
+
+| Facility | Observed result | Blocker or limitation |
+| --- | --- | --- |
+| Native application entry, allocation, arguments and normal/error exit | Used by the unchanged CLI; selected cases pass. | No missing runtime facility found on this consumed path. |
+| Unicode file reads, piped/null stdin, buffered stdout/stderr | Selected rendering, help/events and multi-chunk cases pass. | Writable files, missing-file panic diagnostics, interactive terminal behavior and capacity limits were not qualified. |
+| External Cargo cross-build entry point | New reusable `scripts/build-native-app.sh` accepts a manifest/binary and fresh output directory; uses existing target/std/wrapper/linker. | Existing compatibility scripts recreate shared staging; the new helper avoids that coupling without changing those qualification scripts. |
+| Stable SDK/interface version contract | Exact compiler, source, lock, target, runtime and ELF identities recorded. | Interface-v0 remains experimental/planned; this fixed-pair run does not establish independently versioned SDK/runtime compatibility. |
+| Threads, signals, mappings, general networking, Unix descriptors | Not requested by this application fixture. | Existing ledger limitations remain; no new support or new blocker measurement is claimed. |
+| Native Cargo/compiler and component closures | Not exercised. | Linux runs the toolchain; Userland U4's component gate and U5/U6 remain deferred. |
+
+No runtime or kernel change was justified by this application; none was made.
+This finite result does not qualify an R-level, a release, U1, the entire
+application, arbitrary Rust crates or the C/POSIX surface. No catalog entry,
+main merge, source push, publication or release pin changed.
+
+Exact source, execution identities, assumptions and evidence:
+[S3 report](s3-native-programmability/REPORT.md). The runnable
+workflow and inputs live in [the fixture](../compat/native-markdown/README.md).
+“Reproducible” here describes the pinned replay procedure; a second clean
+bit-identical rebuild was not measured.
+
+## Original nineteen-program measurement
+
 How far does ordinary, unmodified source travel on this platform's Rust
 `std` before Unix or Linux assumptions dominate? This ledger records one
 deliberate probe: nineteen published crates.io programs, chosen because

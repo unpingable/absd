@@ -1,0 +1,2 @@
+# No divergences are allowed in this fixture. Expected output is committed
+# before guest execution and compared byte for byte, including exit status.

@@ -1,0 +1,723 @@
+Verbatim copyright/permission/license comment blocks from the pinned public libm 0.2.16 crate.
+The companion LICENSE text remains unchanged. Source locations are retained below.
+
+===== libm-0.2.16/src/math/acos.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/acosf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/asin.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/asinf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/atan.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/atan2.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ *
+ */
+
+===== libm-0.2.16/src/math/atan2f.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/atanf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/cbrt.rs =====
+/* SPDX-License-Identifier: MIT */
+
+/* origin: core-math/src/binary64/cbrt/cbrt.c
+ * Copyright (c) 2021-2022 Alexei Sibidanov.
+ * Ported to Rust in 2025 by Trevor Gross.
+ */
+
+===== libm-0.2.16/src/math/cbrtf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/cos.rs =====
+// origin: FreeBSD /usr/src/lib/msun/src/s_cos.c */
+//
+// ====================================================
+// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+//
+// Developed at SunPro, a Sun Microsystems, Inc. business.
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+
+
+===== libm-0.2.16/src/math/cosf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/erf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/erff.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/exp.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/exp2.rs =====
+// origin: FreeBSD /usr/src/lib/msun/src/s_exp2.c */
+//-
+// Copyright (c) 2005 David Schultz <das@FreeBSD.ORG>
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+// 1. Redistributions of source code must retain the above copyright
+//    notice, this list of conditions and the following disclaimer.
+// 2. Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimer in the
+//    documentation and/or other materials provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+// ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+// OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+// LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+// OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+// SUCH DAMAGE.
+
+
+===== libm-0.2.16/src/math/exp2f.rs =====
+// origin: FreeBSD /usr/src/lib/msun/src/s_exp2f.c
+//-
+// Copyright (c) 2005 David Schultz <das@FreeBSD.ORG>
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+// 1. Redistributions of source code must retain the above copyright
+//    notice, this list of conditions and the following disclaimer.
+// 2. Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimer in the
+//    documentation and/or other materials provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+// ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+// OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+// LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+// OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+// SUCH DAMAGE.
+
+
+===== libm-0.2.16/src/math/expf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/expm1.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/expm1f.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/fma.rs =====
+/* SPDX-License-Identifier: MIT */
+
+===== libm-0.2.16/src/math/generic/ceil.rs =====
+/* SPDX-License-Identifier: MIT */
+
+===== libm-0.2.16/src/math/generic/floor.rs =====
+/* SPDX-License-Identifier: MIT
+ * origin: musl src/math/floor.c */
+
+===== libm-0.2.16/src/math/generic/fma.rs =====
+/* SPDX-License-Identifier: MIT */
+
+===== libm-0.2.16/src/math/generic/fmax.rs =====
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+===== libm-0.2.16/src/math/generic/fmaximum.rs =====
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+===== libm-0.2.16/src/math/generic/fmaximum_num.rs =====
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+===== libm-0.2.16/src/math/generic/fmin.rs =====
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+===== libm-0.2.16/src/math/generic/fminimum.rs =====
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+===== libm-0.2.16/src/math/generic/fminimum_num.rs =====
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+===== libm-0.2.16/src/math/generic/fmod.rs =====
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+===== libm-0.2.16/src/math/generic/rint.rs =====
+/* SPDX-License-Identifier: MIT */
+
+===== libm-0.2.16/src/math/generic/sqrt.rs =====
+/* SPDX-License-Identifier: MIT */
+
+===== libm-0.2.16/src/math/generic/trunc.rs =====
+/* SPDX-License-Identifier: MIT
+ * origin: musl src/math/trunc.c */
+
+===== libm-0.2.16/src/math/j0.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/j0f.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/j1.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/j1f.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/jn.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/jnf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/k_cos.rs =====
+// origin: FreeBSD /usr/src/lib/msun/src/k_cos.c
+//
+// ====================================================
+// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+//
+// Developed at SunSoft, a Sun Microsystems, Inc. business.
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+
+
+===== libm-0.2.16/src/math/k_cosf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/k_sin.rs =====
+// origin: FreeBSD /usr/src/lib/msun/src/k_sin.c
+//
+// ====================================================
+// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+//
+// Developed at SunSoft, a Sun Microsystems, Inc. business.
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+
+
+===== libm-0.2.16/src/math/k_sinf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/k_tan.rs =====
+// origin: FreeBSD /usr/src/lib/msun/src/k_tan.c */
+//
+// ====================================================
+// Copyright 2004 Sun Microsystems, Inc.  All Rights Reserved.
+//
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+
+
+===== libm-0.2.16/src/math/k_tanf.rs =====
+/*
+ * ====================================================
+ * Copyright 2004 Sun Microsystems, Inc.  All Rights Reserved.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/lgamma_r.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ *
+ */
+
+===== libm-0.2.16/src/math/lgammaf_r.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/log.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/log10.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/log10f.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/log1p.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/log1pf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/log2.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/log2f.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/logf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/pow.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/powf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/rem_pio2.rs =====
+// origin: FreeBSD /usr/src/lib/msun/src/e_rem_pio2.c
+//
+// ====================================================
+// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+//
+// Developed at SunPro, a Sun Microsystems, Inc. business.
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+//
+// Optimized by Bruce D. Evans. */
+
+
+===== libm-0.2.16/src/math/rem_pio2_large.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/rem_pio2f.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/sin.rs =====
+// origin: FreeBSD /usr/src/lib/msun/src/s_sin.c */
+//
+// ====================================================
+// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+//
+// Developed at SunPro, a Sun Microsystems, Inc. business.
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+
+
+===== libm-0.2.16/src/math/sincos.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/sincosf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/sinf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
+===== libm-0.2.16/src/math/support/int_traits/narrowing_div.rs =====
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+===== libm-0.2.16/src/math/support/modular.rs =====
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+===== libm-0.2.16/src/math/tan.rs =====
+// origin: FreeBSD /usr/src/lib/msun/src/s_tan.c */
+//
+// ====================================================
+// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+//
+// Developed at SunPro, a Sun Microsystems, Inc. business.
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+
+
+===== libm-0.2.16/src/math/tanf.rs =====
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */

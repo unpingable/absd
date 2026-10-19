@@ -1,0 +1,30 @@
+# C kit test cases (scripts/run-c-kit.sh, scripts/c-kit-matrix.py).
+# ROUTE embedded|shell|both, or native: a platform command (/bin/PROGRAM) run on
+# the shell route and compared with the host's command of that name, in order
+# with the cases around it (the Linux reference shares one scratch directory).
+# STDIN - or inputs/<file>; ARGS tab-separated.
+# ROUTE	PROGRAM	STDIN	ARGS...
+both	hello	-
+both	exit	-
+both	alloc	-
+both	math	-
+both	jmp	-
+both	short	lines.txt
+both	short	bytes.bin
+shell	args	-	one	two	three
+shell	exit	-	nested
+shell	exit	-	_Exit
+shell	exit	-	return
+shell	exit	-	abort
+shell	stdio	-	write
+native	cat	-	c-stdio.dat
+shell	stdio	-	verify
+shell	errno	-
+shell	errmsg	-
+shell	errout	-
+shell	stack	-	inside
+shell	stack	-	beyond
+shell	stack	-	frame1m
+shell	stack	-	touchdepth
+shell	stack	-	overflow
+shell	short	-	writer

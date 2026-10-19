@@ -1,0 +1,19 @@
+system(NULL): 0 0
+system(true): -1 ENOSYS
+popen true: -1 ENOSYS
+signal SIGINT SIG_IGN: -1 ENOSYS
+getrusage: -1 ENOSYS
+utimes in.txt: -1 ENOSYS
+gethostname: -1 ENOSYS
+symlink in.txt s: -1 EPERM
+open in.txt: 0 0
+fchown fd uid gid: -1 EPERM
+chown in.txt uid gid: -1 EPERM
+lchown in.txt uid gid: -1 EPERM
+setuid getuid: -1 EPERM
+seteuid geteuid: -1 EPERM
+setgid getgid: -1 EPERM
+setegid getegid: -1 EPERM
+--
+--
+status=0

@@ -45,6 +45,13 @@ pub const INIT_MODE_SERVED_FSD_EXIT_TEST: u64 = 15;
 pub const INIT_MODE_MACHINE_RECOVER_TEST: u64 = 16;
 /// FPU/MXCSR state-isolation qualification boot (docs/HOSTILE-USERSPACE.md).
 pub const INIT_MODE_FPU_TEST: u64 = 17;
+/// Qualification-only served boot whose file server receives the fixed
+/// hang-control argument (`--qualification-hang-on-notice`): on the
+/// notice it spins in user mode and never beats its liveness cell, so only
+/// init's liveness judgment can end the generation
+/// (docs/service-lifecycle-20261008/LIVENESS.md). Ordinary served boots
+/// use mode 9.
+pub const INIT_MODE_SERVED_FSD_HANG_TEST: u64 = 18;
 /// The durable modes carry the boot's step number above the mode byte.
 pub const INIT_MODE_MASK: u64 = 0xff;
 pub const INIT_STEP_SHIFT: u32 = 8;
@@ -103,6 +110,179 @@ pub const SERVED_RECOVERY_BUDGET_STOP_CODE: u64 = 20;
 /// streak was advertised before readiness (`SSH RECOVERY streak=`): the
 /// count is unverifiable, so nothing resets (QEMU status 87).
 pub const SERVED_RECOVERY_UNKNOWN_STOP_CODE: u64 = 21;
+
+/// How long a served service's liveness cell may stay unchanged after
+/// readiness before init treats the service as unresponsive: about 60 s
+/// of guest ticks (docs/service-lifecycle-20261008/LIVENESS.md). The
+/// services transition their cell once per loop pass, and a pass is
+/// bounded well under this; the bound is deliberately coarse so that a
+/// slow but live service never spends the recovery budget.
+pub const SERVED_LIVENESS_TICKS: u64 = 60_000;
+/// The tick-jump rule: if more than this passed between two of init's own
+/// observations, init itself did not run for that long (the whole guest
+/// was stopped, or every process waited inside the kernel on a device),
+/// so nothing about the services can be concluded from that interval.
+/// Both witnesses are rebased to the observation and the interval is not
+/// judged. Init observes every `ORPHAN_REAP_TICKS` (100), so an honest
+/// gap this large is never the scheduler's doing.
+pub const SERVED_LIVENESS_GAP_TICKS: u64 = 2_000;
+
+/// A served boot's two essential services, as init's liveness judgment
+/// names them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServedComponent {
+    FileServer,
+    Worker,
+}
+
+impl ServedComponent {
+    /// The component word on init's console lines.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::FileServer => "fsd",
+            Self::Worker => "sshd",
+        }
+    }
+
+    /// The reason `recover_served` prints when the component stopped
+    /// beating: distinct from the exit reasons, so a stall is never read
+    /// as an exit.
+    pub const fn unresponsive_reason(self) -> &'static str {
+        match self {
+            Self::FileServer => "file server unresponsive",
+            Self::Worker => "served worker unresponsive",
+        }
+    }
+}
+
+/// One observation's verdict.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LivenessVerdict {
+    /// Both cells moved within the bound, or the judgment just started.
+    Live,
+    /// Init itself did not run for `ticks`: the interval is not judged
+    /// and both witnesses restart at this observation.
+    Gap { ticks: u64 },
+    /// `component` has not moved its cell for `idle_ticks` (at least the
+    /// bound). The file server is named first when both have gone quiet:
+    /// sshd blocks in its untimed exchange with a file server that stopped
+    /// serving, so an unresponsive file server always takes sshd with it,
+    /// and sshd's last beat precedes the file server's by up to one pass.
+    /// sshd is therefore named only while the file server is demonstrably
+    /// live (its cell moved within half the bound); otherwise the verdict
+    /// waits for the file server to cross the bound.
+    Stale {
+        component: ServedComponent,
+        idle_ticks: u64,
+        sshd_idle_ticks: u64,
+        fsd_idle_ticks: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LivenessWitness {
+    /// The cell version last seen.
+    version: u64,
+    /// The observation tick at which that version was first seen.
+    since: u64,
+}
+
+impl LivenessWitness {
+    const fn new(version: u64, now: u64) -> Self {
+        Self {
+            version,
+            since: now,
+        }
+    }
+
+    fn observe(&mut self, version: u64, now: u64) -> u64 {
+        if version != self.version {
+            self.version = version;
+            self.since = now;
+        }
+        now.saturating_sub(self.since)
+    }
+}
+
+/// Init's liveness judgment over the two served services' heartbeat
+/// cells: pure policy over (tick, sshd cell version, fsd cell version)
+/// observations, so it is host-testable; init supplies the readings.
+/// Judgment begins at readiness (`start`), never before: a generation that
+/// does not reach readiness is the existing pre-ready refusal's business.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ServedLiveness {
+    started: bool,
+    last_pass: u64,
+    sshd: LivenessWitness,
+    fsd: LivenessWitness,
+}
+
+impl ServedLiveness {
+    pub const fn new() -> Self {
+        Self {
+            started: false,
+            last_pass: 0,
+            sshd: LivenessWitness::new(0, 0),
+            fsd: LivenessWitness::new(0, 0),
+        }
+    }
+
+    /// Whether `start` ran.
+    pub const fn started(&self) -> bool {
+        self.started
+    }
+
+    /// Begins judging at `now` with both cells read as fresh: the first
+    /// bound counts from readiness, not from spawn.
+    pub fn start(&mut self, now: u64, sshd_version: u64, fsd_version: u64) {
+        self.started = true;
+        self.last_pass = now;
+        self.sshd = LivenessWitness::new(sshd_version, now);
+        self.fsd = LivenessWitness::new(fsd_version, now);
+    }
+
+    /// One observation per reap pass. Returns `Live` before `start`.
+    pub fn observe(&mut self, now: u64, sshd_version: u64, fsd_version: u64) -> LivenessVerdict {
+        if !self.started {
+            return LivenessVerdict::Live;
+        }
+        let gap = now.saturating_sub(self.last_pass);
+        self.last_pass = now;
+        let sshd_idle = self.sshd.observe(sshd_version, now);
+        let fsd_idle = self.fsd.observe(fsd_version, now);
+        if gap > SERVED_LIVENESS_GAP_TICKS {
+            self.sshd.since = now;
+            self.fsd.since = now;
+            return LivenessVerdict::Gap { ticks: gap };
+        }
+        let component = if fsd_idle >= SERVED_LIVENESS_TICKS {
+            ServedComponent::FileServer
+        } else if sshd_idle >= SERVED_LIVENESS_TICKS && fsd_idle < SERVED_LIVENESS_TICKS / 2 {
+            ServedComponent::Worker
+        } else {
+            // Either both are within the bound, or sshd crossed it while
+            // the file server has also been quiet for half of it: that is
+            // the file server's stall seen through sshd, and the file
+            // server is named when its own cell crosses the bound.
+            return LivenessVerdict::Live;
+        };
+        LivenessVerdict::Stale {
+            component,
+            idle_ticks: match component {
+                ServedComponent::FileServer => fsd_idle,
+                ServedComponent::Worker => sshd_idle,
+            },
+            sshd_idle_ticks: sshd_idle,
+            fsd_idle_ticks: fsd_idle,
+        }
+    }
+}
+
+impl Default for ServedLiveness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Where a served boot's init routes a failure (an `Err` reaching main).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -828,5 +1008,246 @@ mod tests {
             digest = (digest ^ input_stream_byte(index) as u32).wrapping_mul(0x0100_0193);
         }
         assert_eq!(digest, INPUT_STREAM_DIGEST);
+    }
+
+    /// Both services beat on every pass: no verdict but Live, at any
+    /// cadence under the bound.
+    #[test]
+    fn served_liveness_is_live_while_both_cells_move() {
+        let mut judge = ServedLiveness::new();
+        assert_eq!(
+            judge.observe(5, 0, 0),
+            LivenessVerdict::Live,
+            "before start"
+        );
+        judge.start(1_000, 7, 3);
+        let mut sshd = 7;
+        let mut fsd = 3;
+        for pass in 1..2_000u64 {
+            if pass % 3 == 0 {
+                sshd += 1;
+            }
+            if pass % 500 == 0 {
+                fsd += 1;
+            }
+            let now = 1_000 + pass * 100;
+            assert_eq!(
+                judge.observe(now, sshd, fsd),
+                LivenessVerdict::Live,
+                "pass {pass}"
+            );
+        }
+    }
+
+    /// The worker stops beating while the file server goes on: the worker
+    /// is named exactly at the bound, with both idle counts reported, and
+    /// not one observation earlier.
+    #[test]
+    fn served_liveness_names_a_stalled_worker_at_the_bound() {
+        let mut judge = ServedLiveness::new();
+        judge.start(10_000, 1, 1);
+        let mut fsd = 1;
+        let mut now = 10_000;
+        while now + 100 < 10_000 + SERVED_LIVENESS_TICKS {
+            now += 100;
+            fsd += 1;
+            assert_eq!(
+                judge.observe(now, 1, fsd),
+                LivenessVerdict::Live,
+                "tick {now}"
+            );
+        }
+        now += 100;
+        fsd += 1;
+        assert_eq!(
+            judge.observe(now, 1, fsd),
+            LivenessVerdict::Stale {
+                component: ServedComponent::Worker,
+                idle_ticks: SERVED_LIVENESS_TICKS,
+                sshd_idle_ticks: SERVED_LIVENESS_TICKS,
+                fsd_idle_ticks: 0,
+            }
+        );
+    }
+
+    /// Both stop at once (a file server that stopped serving takes sshd
+    /// with it): the file server is the component named.
+    #[test]
+    fn served_liveness_names_the_file_server_when_both_are_stale() {
+        let mut judge = ServedLiveness::new();
+        judge.start(0, 4, 9);
+        let mut now = 0;
+        let mut verdict = LivenessVerdict::Live;
+        while verdict == LivenessVerdict::Live {
+            now += 100;
+            verdict = judge.observe(now, 4, 9);
+        }
+        assert_eq!(
+            verdict,
+            LivenessVerdict::Stale {
+                component: ServedComponent::FileServer,
+                idle_ticks: SERVED_LIVENESS_TICKS,
+                sshd_idle_ticks: SERVED_LIVENESS_TICKS,
+                fsd_idle_ticks: SERVED_LIVENESS_TICKS,
+            }
+        );
+        assert_eq!(now, SERVED_LIVENESS_TICKS);
+        assert_eq!(ServedComponent::FileServer.name(), "fsd");
+        assert_eq!(ServedComponent::Worker.name(), "sshd");
+        assert_ne!(
+            ServedComponent::FileServer.unresponsive_reason(),
+            ServedComponent::Worker.unresponsive_reason()
+        );
+    }
+
+    /// Init itself did not run across the interval (a stopped guest, a
+    /// device wait inside the kernel): the interval is reported as a gap
+    /// and never judged, even though both cells are unchanged for far
+    /// longer than the bound. Judgment resumes from the gap, so a service
+    /// that really is stalled is still named one bound later.
+    #[test]
+    fn served_liveness_tick_jump_rule_never_judges_an_unwitnessed_interval() {
+        let mut judge = ServedLiveness::new();
+        judge.start(0, 1, 1);
+        assert_eq!(judge.observe(100, 1, 1), LivenessVerdict::Live);
+        let jump = 100 + 3 * SERVED_LIVENESS_TICKS;
+        assert_eq!(
+            judge.observe(jump, 1, 1),
+            LivenessVerdict::Gap {
+                ticks: 3 * SERVED_LIVENESS_TICKS
+            }
+        );
+        let mut now = jump;
+        while now + 100 < jump + SERVED_LIVENESS_TICKS {
+            now += 100;
+            assert_eq!(
+                judge.observe(now, 1, 1),
+                LivenessVerdict::Live,
+                "tick {now}"
+            );
+        }
+        now += 100;
+        assert!(matches!(
+            judge.observe(now, 1, 1),
+            LivenessVerdict::Stale {
+                component: ServedComponent::FileServer,
+                ..
+            }
+        ));
+        // A gap exactly at the rule's bound is still an ordinary pass.
+        let mut judge = ServedLiveness::new();
+        judge.start(0, 1, 1);
+        assert_eq!(
+            judge.observe(SERVED_LIVENESS_GAP_TICKS, 2, 2),
+            LivenessVerdict::Live
+        );
+        assert_eq!(
+            judge.observe(2 * SERVED_LIVENESS_GAP_TICKS + 1, 2, 2),
+            LivenessVerdict::Gap {
+                ticks: SERVED_LIVENESS_GAP_TICKS + 1
+            }
+        );
+    }
+
+    /// The file server stalls one pass after sshd's last beat (sshd beats
+    /// at its loop top, then sends the request the file server never
+    /// answers): sshd crosses the bound first, but the file server is the
+    /// component named, one pass later, because sshd is never named while
+    /// the file server has been quiet for half the bound.
+    #[test]
+    fn served_liveness_names_the_file_server_that_stalled_a_pass_after_sshd() {
+        let mut judge = ServedLiveness::new();
+        judge.start(0, 1, 1);
+        // sshd's last change is seen at tick 100, the file server's at 200.
+        assert_eq!(judge.observe(100, 2, 1), LivenessVerdict::Live);
+        assert_eq!(judge.observe(200, 2, 2), LivenessVerdict::Live);
+        let mut now = 200;
+        while now + 100 < 100 + SERVED_LIVENESS_TICKS {
+            now += 100;
+            assert_eq!(
+                judge.observe(now, 2, 2),
+                LivenessVerdict::Live,
+                "tick {now}"
+            );
+        }
+        now += 100;
+        assert_eq!(
+            now,
+            100 + SERVED_LIVENESS_TICKS,
+            "sshd crosses the bound here"
+        );
+        assert_eq!(judge.observe(now, 2, 2), LivenessVerdict::Live);
+        now += 100;
+        assert_eq!(
+            judge.observe(now, 2, 2),
+            LivenessVerdict::Stale {
+                component: ServedComponent::FileServer,
+                idle_ticks: SERVED_LIVENESS_TICKS,
+                sshd_idle_ticks: SERVED_LIVENESS_TICKS + 100,
+                fsd_idle_ticks: SERVED_LIVENESS_TICKS,
+            }
+        );
+        // The file server beating steadily keeps the worker's verdict
+        // exact, even when the file server's last beat is recent but not
+        // in this very pass.
+        let mut judge = ServedLiveness::new();
+        judge.start(0, 1, 1);
+        let mut fsd = 1;
+        let mut now = 0;
+        let mut verdict = LivenessVerdict::Live;
+        while verdict == LivenessVerdict::Live {
+            now += 100;
+            if now % 1_000 == 0 {
+                fsd += 1;
+            }
+            verdict = judge.observe(now, 1, fsd);
+        }
+        assert!(matches!(
+            verdict,
+            LivenessVerdict::Stale {
+                component: ServedComponent::Worker,
+                ..
+            }
+        ));
+        assert_eq!(now, SERVED_LIVENESS_TICKS);
+    }
+
+    /// A beat that arrives after a long silence resets that service's
+    /// witness: idleness is measured from the last change, not summed,
+    /// so the bound counts again from the late beat.
+    #[test]
+    fn served_liveness_a_late_beat_restarts_the_witness() {
+        let mut judge = ServedLiveness::new();
+        judge.start(0, 1, 1);
+        let late = SERVED_LIVENESS_TICKS - 100;
+        let mut now = 0;
+        while now < late {
+            now += 100;
+            let versions = if now == late { (2, 2) } else { (1, 1) };
+            assert_eq!(
+                judge.observe(now, versions.0, versions.1),
+                LivenessVerdict::Live,
+                "tick {now}"
+            );
+        }
+        while now + 100 < late + SERVED_LIVENESS_TICKS {
+            now += 100;
+            assert_eq!(
+                judge.observe(now, 2, 2),
+                LivenessVerdict::Live,
+                "tick {now}"
+            );
+        }
+        now += 100;
+        assert_eq!(now, late + SERVED_LIVENESS_TICKS);
+        assert_eq!(
+            judge.observe(now, 2, 2),
+            LivenessVerdict::Stale {
+                component: ServedComponent::FileServer,
+                idle_ticks: SERVED_LIVENESS_TICKS,
+                sshd_idle_ticks: SERVED_LIVENESS_TICKS,
+                fsd_idle_ticks: SERVED_LIVENESS_TICKS,
+            }
+        );
     }
 }

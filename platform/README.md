@@ -4,7 +4,7 @@
 
 This repository is the ABSD platform: the `x86_64-unknown-absd` Rust `std`
 target and everything built on it, pinned to one kernel commit by
-`scripts/check-all.sh` (currently kernel `260b4a2`, the source-distribution
+`scripts/check-all.sh` (currently kernel `5a29fba`, the integration-steward
 lane; the pair has not passed the gate yet). The sections below
 are a lab notebook in the order the work was done; this summary states what
 exists and how far each part is qualified (classes as in the kernel's
@@ -136,6 +136,129 @@ their existing `no_std + alloc` feature boundary, while the thin `pulse_std`
 adapter uses ordinary `std::io` for input/output and the standard Rust `main`.
 This keeps Pulse independent of ABSD and avoids an ABSD-specific Pulse fork.
 
+## Building from a fresh clone
+
+The rest of this file is a lab notebook; this section is the order a
+developer new to ABSD follows on a Linux x86-64 host, in the `core`
+profile (ABSD alone; see "Profiles and inputs" below). Every step was run
+from a fresh clone on 2026-10-12; the operator image build and the boot
+need QEMU.
+
+Host tools (Ubuntu 24.04 package names in brackets): `rustup`, `git`,
+`curl`, Python 3.11 or later with `venv` (`python3-venv`; the scripts use
+`tomllib`), clang 18 as both `clang` and `clang-18` (`clang-18`, plus
+the `clang` package pointing at it), `libclang-rt-18-dev` (the compiler
+builtins archive used by C ports), `ld.lld-17` (`lld-17`), `llvm-ar-18`,
+`llvm-strip-18` and `llvm-nm-18` (`llvm-18`), `ninja` (`ninja-build`,
+used by Picolibc's Meson build), `groff` (`groff-base` for manual pages;
+the full `groff` package adds files outside the pinned renderer tree),
+`grub-mkrescue` and `xorriso` (`grub-pc-bin`, `grub-common`, `xorriso`),
+and `qemu-system-x86_64` (`qemu-system-x86`). Rust toolchains:
+
+```sh
+rustup toolchain install 1.95.0 --profile minimal --component rust-src
+rustup toolchain install 1.98.0 --profile minimal   # the kernel's rust-toolchain.toml
+```
+
+`scripts/verify-inputs.sh` checks the 1.95.0 `rustc`, `cargo` and
+`rust-src` by digest; a toolchain installed elsewhere than
+`~/.rustup/toolchains` is named with `ABSD_RUST_TOOLCHAIN`.
+
+The qualified Ubuntu 24.04 package inputs for those previously implicit
+dependencies are `ninja-build=1.11.1-2`, `groff-base=1.23.0-3build2`,
+`clang=1:18.0-59~exp2` and `libclang-rt-18-dev=1:18.1.3-1ubuntu1`.
+These package identities supplement the pinned compiler, library and renderer
+inputs; the host package list is not an image redistribution manifest.
+
+Lay the two repositories out side by side; build outputs that are not in
+either tree (`ckit-build/`, `picolibc/`, `cports-build/`, `upstream/`,
+`userland-build/`, `venv/`, `absd-std-staged-*`, the disposable kernel
+clone) are created in the directory that holds them, here `work/`:
+
+```sh
+cd work
+git clone <platform repository> absd-platform
+git clone <kernel repository> kernel     # or set ABSD_KERNEL_SOURCE
+cd absd-platform
+export ABSD_PROFILE=core                 # a Git clone defaults to `full`
+scripts/fetch-crates.sh                  # the only step that needs network (besides Picolibc and sbase)
+scripts/prepare-and-build.sh             # the std target, commands, sshd, absd-fsd, manual
+sh scripts/build-picolibc.sh             # ../picolibc/install, pinned digests checked
+sh scripts/build-c-kit.sh                # ../ckit-build/kit (ABSD_CKIT_BUILD for another place)
+sh scripts/build-userland.sh             # the sbase ports (userland/README.md), twice, gated
+scripts/build-ports.sh                   # uutils, ripgrep, and the sbase ports, for /bin
+```
+
+`build-userland.sh` downloads sbase once (the tarball `userland/PIN`
+names, refused unless its sha256 is the pinned one) into `../upstream/`,
+builds the nine sbase ports twice with the kit (both builds must hash the
+same) into `../userland-build/`, and checks them; `build-ports.sh` then
+installs them into `ports/` beside the Rust ports, each at the digest
+`userland/PORTS.tsv` records, and refuses any other bytes. These two
+steps were added after the fresh-clone run above, and have been run only
+in a development checkout.
+
+Every build after `fetch-crates.sh` is `--offline --locked`: it reads only
+the Cargo cache (`$CARGO_HOME`, default `~/.cargo`) that script filled.
+The C kit's `BUILT-FROM` names the commit and toolchain and the digests of
+its archives; building the kit twice, in two clones at different paths,
+gives the same `libabs.a`, `libabs_builtins.a` and `crt0.o`, and the same
+program binaries. So do the platform's Rust programs, the 39 the core
+profile's reproducibility check hashes (that check itself builds twice at
+one path): built from two checkouts in different parent directories with
+different `$CARGO_HOME`s, they are byte-identical. Source paths outside the
+workspace being built are remapped, the tree to `/absd` as in the C kit and
+the Cargo registry to `/cargo/registry/src` (`absd_rust_remap` in
+`scripts/inputs.sh`, applied by `prepare-and-build.sh`, `build-ssh.sh` and
+`run-contain-matrix.sh`), and `ssh/` reaches the tree's crates through
+`ssh/tree/` links so that Cargo's crate hashes do not carry the path. A
+panic message from an `ssh/` program therefore names `/absd/...`,
+`/cargo/registry/src/...` or `tree/<crate>/...`; one from the root
+workspace names the registry as `/cargo/registry/src/...` and its own
+sources relatively, as before
+([docs/path-independence-20261013/RECORD.md](docs/path-independence-20261013/RECORD.md)).
+Not covered: the full profile's extended integration programs, not checked
+across paths and expected still to differ (their workspaces name the tree's
+crates and the staged Pulse, AG, Nightshift and NQ trees from outside), and
+`run-contain-matrix.sh`'s `sshd-controls.elf`, which now gets the remap but
+was not built across paths.
+
+A C program of your own ([c/README.md](c/README.md),
+[docs/C-INTERFACE.md](docs/C-INTERFACE.md)):
+
+```sh
+../ckit-build/kit/bin/absd-cc -o prog prog.c
+python3 -I scripts/check-c-elf.py prog --map prog.map   # must print C ELF OK
+```
+
+The operator image (afterboot(8), "The operator image" below) needs a
+disposable kernel clone at the commit `kernel_commit=` in
+`scripts/check-all.sh` names, and runs QEMU for its importer boots:
+
+```sh
+git clone --shared ../kernel ../absd-kernel-std-run
+git -C ../absd-kernel-std-run checkout --detach "$(sed -n 's/^kernel_commit=\${ABSD_KERNEL_COMMIT:-\([0-9a-f]*\)}$/\1/p' scripts/check-all.sh)"
+ssh-keygen -t ed25519 -N '' -f ../operator-key
+ABSD_KERNEL_RUN=../absd-kernel-std-run ABSD_SKIP_BUILD=1 \
+    scripts/build-operator-image.sh --authorized-keys ../operator-key.pub ../operator
+scripts/boot-operator.sh ../operator 2222     # in its own terminal; the console is ../operator/console.log
+```
+
+Then copy the program in and run it over SSH (afterboot(8), "Copying
+files"); a program's writable places are `/home/operator` and the
+session's `/tmp/session-N`, and the working directory starts at `/`,
+which is read-only:
+
+```sh
+ssh -p 2222 -i ../operator-key operator@127.0.0.1 'cat > /home/operator/prog' < prog
+ssh -p 2222 -i ../operator-key operator@127.0.0.1 'cd /home/operator && /home/operator/prog'
+```
+
+The kernel's own boot images are built in a disposable kernel clone with
+its Makefile (`make iso` for the default boot; the kernel README).
+`scripts/check-all.sh` is the whole gate: it rebuilds everything twice and
+boots every matrix under QEMU.
+
 ## Terminology
 
 Shared ABSD terms (process, task, handle, rights, cell, pipe, generation,
@@ -248,7 +371,7 @@ scripts/check-all.sh
 It enforces a storage gate, builds twice from clean output and compares all
 57 output hashes (`ABSD RUST REPRODUCIBLE OK ... commands=24`), creates a
 disposable shared clone at the pinned kernel commit (`kernel_commit=` in the
-script; kernel main `2b4abb428e5020198848a5ed885077cbfa5aa93a` at this
+script; `aee59ea40a0a062dc1c45a30055a8a3b3cf98ffd` at this
 writing), runs every
 QEMU workload, and
 removes its staging, targets, ELFs, host oracle build, and kernel clone on both
@@ -421,12 +544,29 @@ in `ABSD_KERNEL_RUN` (`check-all.sh` runs it against the kernel it pins).
 The kernel (main, `docs/NETWORK.md` there) moves whole Ethernet frames
 through a NIC handle and nothing more. `absd-net` (`net/`) is the protocol
 stack a program links: smoltcp 0.14.0 with `alloc`, `medium-ethernet`,
-`proto-ipv4`, `socket-tcp`, `socket-icmp`, and `auto-icmp-echo-reply`;
-static IPv4 only (no IPv6, UDP, DNS, DHCP, or fragment reassembly). It is
+`proto-ipv4`, `socket-tcp`, `socket-udp`, `socket-icmp`, and `auto-icmp-echo-reply`;
+static IPv4 only (no IPv6, DNS, DHCP, or fragment reassembly). It is
 `no_std + alloc` and usable from a `std` program. It is **not** behind
 `std::net`: `std::net` stays unsupported, and a program uses this API
 directly. A connection is a smoltcp socket inside the process; there is no
 kernel socket.
+
+The bounded native UDP development interface is `absd_net::datagram`:
+the NIC holder grants a dedicated pipe channel for one local port and exact
+peer, with eight endpoints maximum, four queued packets per direction, and
+1472 data bytes per datagram. Two separately spawned native diagnostic
+clients exercise it against independent Linux peers. The versioned channel,
+refusal and lifecycle contract, qualification scope and integration handoff
+are in [NATIVE-UDP.md](docs/NATIVE-UDP.md). It is not installed in the current
+operator image and does not give stock SSH a UDP grant or DNS lookup.
+
+The initial native DNS development client is `absd_net::dns`, using a delegated
+exact-peer UDP channel. It resolves bounded A/CNAME answers, reports precise
+negative/malformed/truncated outcomes, and requires a fresh authorized channel
+after a timeout. The native hostname diagnostic and independent Linux-peer
+evidence are described in [NATIVE-DNS.md](docs/NATIVE-DNS.md). This slice has
+explicit UDP TC refusal, no TCP fallback or cache, and does not change SSH
+hostname behavior or the operator image.
 
 A `net` durable boot hands the worker the NIC as startup-record role 12;
 the runtime keeps it (`absd_runtime::nic::handle()`, with raw `info`,
@@ -1410,6 +1550,48 @@ either in any session's mount list. `scripts/survival-recovery.py`
 exercises the resets, the stop, the clear, and the exit-0 case; the
 contract is the kernel's docs/service-lifecycle-20261008/RECOVERY-BUDGET.md.
 
+Network state is reported, never folded into readiness. sshd prints
+`SSH NET link=up|down|unknown disabled=0|1|unknown rx_missed=N
+link_errors=N` once between `SSH RECOVERY` and `SSH LISTENING`, then once
+per change of carrier or of the device's disabled latch (sampled every
+200 ms; counters alone print nothing). `unknown` means the kernel refused
+the `nic_info` read: neither healthy nor disabled, never a fault. The
+quiescent `SERVED CAPACITY` line ends with `link=`. A served boot with the
+link down reaches `SSH LISTENING`, and losing the link after readiness
+spends nothing. A NIC that disables itself after readiness ends sshd with
+`SERVED SERVICE FAULT component=sshd reason=nic_disabled` (exit 7), and the
+recovery budget resets the machine, at most three times in a row. An
+absent NIC is still refused before readiness.
+
+A send the kernel refuses for lack of carrier is a link outcome, not a
+device one (the service-lifecycle record's §10, D-05). `nic_send` returns
+`-100` (`ERROR_NO_CARRIER`; `KERNEL_ABI` stays 1, the controller's ruling
+under D-05, which the owner may override) when a transmit bound expires
+with the link down, or with a loss seen during it;
+the NIC stays enabled and the descriptor stays the device's. While it is
+held, later sends are refused with `-100` at once until its done bit is
+seen or carrier returns. With carrier back and no done bit, the next send
+waits one fresh bound for it: expiry with carrier present throughout that
+bound is a device outcome (`NIC DISABLED reason=tx-timeout`, the path
+above); a loss seen during it keeps the descriptor held. A loss shorter
+than the roughly 1 ms poll can be missed, and the expiry then disables the
+NIC as before. A device that fails across a loss is reported as a link
+outcome first, and as a device outcome only at a send whose bound runs
+with carrier throughout (kernel docs/NETWORK.md). sshd charges nothing for
+`-100` (TCP repairs the loss; nothing retries) and prints `SSH NET TX
+held=1 no_carrier=N` when a send is refused that way, then `SSH NET TX
+held=0 no_carrier=N` once a later send gets any other result, an accepted
+send or a disabled NIC's refusal. The line is checked once per pass of
+sshd's loop: `no_carrier` counts every `-100`, and a hold set and cleared
+within one pass prints nothing. QEMU's e1000 completes a transmit
+descriptor with the link down, so on QEMU the rule is reached only through
+the kernel's qualification-only `nic-tx-hold` and `nic-tx-hold-stuck`
+options (`NIC TX HOLD FIXTURE ARMED mode=release|stuck kind=tctl`; refused
+in the physical profile), which show the driver's rule, not a device's.
+Qualified on QEMU's e1000 by `scripts/run-link-matrix.sh` only; no
+physical NIC is qualified for this rule until the record's §10 (c)
+observation on the named machine.
+
 Halt under QEMU is the debug-exit device; on hardware the CPU halts
 (`cli; hlt`, `ABSD HALT code=0` on the screen) and the machine stays
 powered: there is no ACPI power-off. Restart is the 0xcf9 reset register,
@@ -1517,6 +1699,22 @@ slot rebound.
 `check-all.sh` runs it after the SSH matrix, and the dispatcher's host
 tests (`fsd/src/tests.rs`).
 
+`scripts/run-core-fsd-recovery.sh` is the separate core guest recovery
+verdict. It interrupts the VM with the real `absd-fsd` serving after an
+acknowledged write with its handle still open, a synced write, and a rename
+replacement. Each case cold boots the same image. The host's independent
+filesystem reader checks the complete previous or candidate content for the
+open write and the committed result for the other two cases; the new guest
+file server must serve the recovered file. These are three representative
+interruption boundaries, not an exhaustive sector-write or power-loss sweep.
+The AG SQLite `run-fs-matrix.sh` remains the extended verdict.
+Formalization consideration for this recovery claim: the bounded proposition
+is whole previous or candidate bytes after the open unsynced write, and the
+exact committed bytes and namespace after sync or rename, assuming ordered
+guest device writes and one FSD instance. The local VM interruption and
+host oracle are practical tests for these three histories; they do not
+establish physical power-loss durability or every sector transition.
+
 **Release identity and binding** (the design is `docs/RELEASE.md`
 sections 2 to 4; the record and the compiled identity are the
 `absd-release` crate, `release/`). After it has mounted, prepared its
@@ -1573,12 +1771,12 @@ really provide. Two kinds are installed:
 - The platform's own small `std` programs (`src/bin/<name>.rs`, stripped
   into `commands/`): `echo`, `pwd`, `ls`, `cat`, `printenv`, `uname`,
   `mkdir`, `rm`, `mv`, `cp`, `head`, `tail`, `wc`, `sha256sum`, `stat`,
-  `df`, `sync`, `date`, `uptime`, `release`, `sysinfo`, and `man` (below,
+  `df`, `sync`, `date`, `uptime`, `release`, `sysinfo`, `health`, and `man` (below,
   "Manual pages").
 - Unmodified crates.io programs from their registry archives, the ones
   the source-portability probe found to build and agree with Linux: uutils
   0.12.0 `basename`, `seq`, `cut`, `fold`, `nl`, `uniq`, and `base64`, and
-  ripgrep 15.2.0 as `rg` (rg(1); the search tool, there being no `grep`).
+  ripgrep 15.2.0 as `rg` (rg(1); the search tool for directory trees).
   `scripts/build-ports.sh` builds them into `ports/` from the same staged
   trees and pinned locks as `scripts/build-compat.sh`, sized for the image
   (LTO, `opt-level=z`: about 30% smaller, 0.56 to 2.3 MB each), since
@@ -1603,13 +1801,35 @@ really provide. Two kinds are installed:
   repository that encloses the staging area (`GIT_CEILING_DIRECTORIES`),
   so `rg --version` carries no host revision and the port rebuilds
   identically.
+- C programs from sbase 0.1 (MIT) built with the C kit, the base
+  userland ([userland/README.md](userland/README.md)): `printf`, `test`,
+  `grep`, `sort`, `sed`, `od`, `cmp`, `ed` (the line editor), and `find`,
+  each with a page of its own (printf(1) ... find(1), and sbase(7), which
+  carries sbase's licence). Each is a bounded port: what ABSD does not
+  provide is refused by name with a status (`find -exec`, `sed -i`, `ed`'s
+  `!cmd`, `test -nt`, ...), and the page lists it. None shares a name with
+  a native command, a Rust port, or a shell builtin.
+  `scripts/build-userland.sh` builds them (twice, gated);
+  `scripts/build-ports.sh` installs them into `ports/` at the digests
+  `userland/PORTS.tsv` records (`scripts/install-userland-ports.sh`), and
+  `scripts/cmds-matrix.py --host-check` checks them against that manifest
+  and the image's command list. They are host-built and host-checked
+  only: their behaviour as ABSD processes is not yet qualified.
+
+- Bounded Toybox 0.8.15 (0BSD) `diff` and `hexdump` now use the same C-port
+  pipeline; diff(1), hexdump(1), and toybox(7) document their admitted
+  options and license. Their target builds and host cases are checked;
+  the composed full pipeline and guest behavior still require qualification.
+  Reviewed SDK-specific digests remain enforced by the installer.
+  The native ustar `tar` joins the same pipeline, with measured manifest pins
+  from the two-round copied-SDK build. Guest qualification remains pending.
 
 What each native command means here:
 
 - `cp [-r] SOURCE DEST` or `cp [-r] SOURCE... DIRECTORY` copies bytes
   through the caller's own view, so it writes only where that binding is
-  writable. Owners, modes, and times do not exist to copy, and the
-  read-only flag is not carried. Copying a file onto itself (same
+  writable. Owners and modes do not exist; copying does not preserve modification
+  time or the read-only flag. Copying a file onto itself (same
   filesystem id and object serial) or a directory into itself is refused.
   A file copy that fails part way (the filesystem full, say) removes the
   new destination it had created; a destination that already existed is
@@ -1627,7 +1847,8 @@ What each native command means here:
 - `stat PATH...` prints what the filesystem records: kind, size, the
   read-only flag, identity (filesystem id and object serial, never
   reused), links, and the mount of this session's binding that holds the
-  path and whether it is writable here. No owner, mode, or times exist.
+  path and whether it is writable here. `modified` is whole-second UTC ISO
+  time, or `unknown`; no owner, mode, access or creation time exists.
 - `df` asks the file server for the filesystem's space (`SPACE`, op 21):
   data blocks from the format's geometry, blocks in use by the committed
   image or by accepted changes, free blocks, and the commit sequence on the
@@ -1654,8 +1875,8 @@ What each native command means here:
   head` ends `cat` quietly when `head` is done (there is no SIGPIPE), and
   so for `ls`.
 - `ls -l` adds kind (`d` or `-`), the read-only flag (`ro` or `--`), links,
-  size. No owner or mode exists; the filesystem records a modification time
-  (format 2, `mtime`), which `ls`, `stat` and `cp` do not yet show or copy.
+  size, and modification time (`YYYY-MM-DD HH:MM`, UTC, or `-` when
+  unknown). No owner or mode exists. `cp` does not preserve mtime.
 - `date [-u] [+%s]` prints the kernel's RTC reading (`wall_clock`): UTC,
   whole seconds, never set or corrected; `uptime` prints the boot tick
   counter as days and time plus the raw ticks, and the kernel's boot
@@ -1679,8 +1900,9 @@ What each native command means here:
   match). `uname -r` prints the id the command itself was built as, and
   `uname -a` includes it.
 
-**No editor, and why (2026-10-08 investigation).** A screen editor of
-the vi family (nvi, levee, busybox vi, or a native vi-like program) is
+**No screen editor, and why (2026-10-08 investigation).** The editor is
+now the line editor `ed` (sbase, ed(1); above); this records why there is
+no screen editor. A screen editor of the vi family (nvi, levee, busybox vi, or a native vi-like program) is
 blocked by the session, not by the filesystem:
 
 - A program's only keyboard is its standard input pipe, and on a PTY
@@ -1710,8 +1932,8 @@ output, `ed FILE < script` works) and could be a native program over
 `ed` is a crates.io binary the ports mechanism could take unmodified. It
 would edit `/home/operator` and the session's `/tmp` only (`/etc` is
 read-only in a session), ^C would kill it with its buffer, and `!cmd`
-would be impossible (commands cannot spawn). That is the next editing
-step, not started here.
+would be impossible (commands cannot spawn). That step was taken on
+2026-10-12 with sbase `ed` rather than a native program (ed(1)).
 
 `df` and `sync` need the file server: a process with no channel (`nofs`)
 is told so. Neither op needs more authority than a bound channel: `SPACE`
@@ -1727,7 +1949,7 @@ Not provided, on purpose (`scripts/cmds-matrix.py` checks each is absent):
   supervision, and sponsorship are separate graphs). `ps` is instead a
   shell builtin that sshd answers for the asking session only (ps(1),
   "Session control" above); `kill` stays the parent's alone.
-- `chmod`, `chown`, `touch`, `ln`: no modes, owners, times, or links exist.
+- `chmod`, `chown`, `touch`, `ln`: no modes, owners, timestamp setter, or links exist.
   (The one permission, the read-only flag, has no command yet.)
 - `mount`: bindings are the file server's, fixed per session by sshd.
 - `env` with a command, `b3sum`, and the uutils `wc`, `head`, `cat`,
@@ -1884,7 +2106,8 @@ OpenSSH 9's `scp` speaks SFTP.
 
 **Time.** `date` and `uptime` (above, "Commands under /bin"). The
 filesystem records a modification time per object since format 2
-(docs/FILESYSTEM.md), but `ls`, `stat` and `cp` do not yet show or copy it.
+(docs/FILESYSTEM.md). `stat` shows whole-second UTC or `unknown`; `ls -l`
+shows UTC to the minute or `-`. `cp` does not preserve it.
 
 `scripts/run-operator-matrix.sh` (`scripts/operator-matrix.py`) builds the
 image with the documented script and non-default `/etc` files (address
@@ -1907,3 +2130,47 @@ the command set and manual, halts with status 0), and
 `ETC CONFIG MALFORMED REFUSED OK` (a malformed `sshd.conf` and
 `network.conf`, each put in place with `--reconfigure`, stop the boot with
 the file, line, and reason in plain text; replacing the file recovers).
+
+## C application kit
+
+The C kit lets a C program run on ABSD as a static ELF over the native
+runtime, with Picolibc for the C library. The sources are in the tree:
+`c/libabs/` (crt0, malloc, descriptors, errno, clocks), `c/absd-c/` (the
+runtime as a staticlib), `c/include/absd/` (the runtime and kit headers),
+`c/absd-c.ld` (the link form), `c/bin/absd-cc` (the driver) and the test
+programs in `c/tests/kit/`. What a C program may rely on is
+[docs/C-INTERFACE.md](docs/C-INTERFACE.md); the lane record, receipts and
+workarounds are in
+[docs/c-ecosystem-20261010/c-kit/README.md](docs/c-ecosystem-20261010/c-kit/README.md).
+
+`scripts/build-c-kit.sh` builds the kit into `ckit-build/kit` in the
+directory that holds this clone (not in the tree; `ABSD_CKIT_BUILD` names
+another place): `lib/libabs.a`, `lib/libabs_builtins.a`,
+`lib/crt0.o`, Picolibc's `libc.a` and `libm.a`, the headers and
+`bin/absd-cc`. Picolibc (pinned in `c/picolibc/PIN`, installed at
+`picolibc/install`) and the Python venv also live in that directory,
+not in the tree; the kit build does not rebuild Picolibc. `absd-cc` compiles
+with host clang under the kit flags and links a static ET_EXEC with
+ld.lld-17, leaving `OUT.map` for `scripts/check-c-elf.py`:
+
+```sh
+ckit-build/kit/bin/absd-cc -o hello hello.c
+```
+
+A kit program runs on two routes: embedded (the kernel's `external-test`
+boots the ELF as its one user program, stdin from a file, output compared
+with the Linux build's) and shell (installed as `/bin/<program>` and run as
+absd-sh's child in an SSH exec session, compared with the Linux build,
+startup-record vectors and resources checked; `scripts/c-kit-matrix.py`).
+
+`scripts/run-c-kit.sh` (in `check-all.sh`) qualifies it and prints, in
+order: `ABSD C KIT REPRODUCIBLE OK builds=2 libabs=<sha> programs=<n>` (two
+clean kit builds, each with a clang build of every kit program, hash
+identically: libabs.a, libabs_builtins.a, crt0.o and every program ELF),
+`ABSD C KIT EMBEDDED OK cases=<n>` (and `ABSD C KIT EMBEDDED GCC OK` with
+`ABSD_C_GCC=1`, gcc under the kit's link line), `C KIT MATRIX OK` (the
+shell route), and `ABSD C KIT OK embedded=<n> shell=<n> shell_defects=<n>`.
+That line proves two builds at the same path only. That the kit's archives
+are also the same from two checkout paths is the N10 result recorded in
+[c/README.md](c/README.md) (lane/sdk-reproducibility-20261012 at 18d257ae):
+the runtime archive's source paths are remapped to `/absd`.

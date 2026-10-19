@@ -394,10 +394,10 @@ index 53fb92b..a38479e 100644
              crate::intrinsics::abort()
 diff --git a/library/std/src/sys/fs/absd.rs b/library/std/src/sys/fs/absd.rs
 new file mode 100644
-index 0000000..e4d8946
+index 0000000..1d1b998
 --- /dev/null
 +++ b/library/std/src/sys/fs/absd.rs
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,678 @@
 +//! ABSD: `std::fs` forwarded to the process's storage runtime.
 +//!
 +//! The runtime owns the block device and whatever it holds: either the
@@ -406,7 +406,8 @@ index 0000000..e4d8946
 +//! nothing is mounted, the one-name `ledger` append region. This file only
 +//! translates between `std` types and the runtime's hooks; every semantic
 +//! lives behind them. There are no symlinks, hard links, owners, modes,
-+//! timestamps, or file descriptors.
++//! access/creation timestamps, or file descriptors. Modification time is
++//! whole UTC Unix seconds when known; zero stays Unsupported.
 +
 +use crate::sync::atomic::{AtomicU64, Ordering};
 +use crate::ffi::OsString;
@@ -416,7 +417,8 @@ index 0000000..e4d8946
 +use crate::io::{self, BorrowedCursor, IoSlice, IoSliceMut, SeekFrom};
 +use crate::path::{Path, PathBuf};
 +pub use crate::sys::fs::common::Dir;
-+use crate::sys::time::SystemTime;
++use crate::sys::time::{SystemTime, UNIX_EPOCH};
++use crate::time::Duration;
 +use crate::sys::unsupported;
 +
 +#[repr(C)]
@@ -428,6 +430,7 @@ index 0000000..e4d8946
 +    filesystem: u64,
 +    serial: u64,
 +    links: u64,
++    mtime: u64,
 +}
 +
 +unsafe extern "C" {
@@ -437,8 +440,8 @@ index 0000000..e4d8946
 +    fn __absd_std_fs_write_at(handle: u64, offset: u64, bytes: *const u8, length: usize) -> isize;
 +    fn __absd_std_fs_set_len(handle: u64, length: u64) -> i64;
 +    fn __absd_std_fs_sync(handle: u64) -> i64;
-+    fn __absd_std_fs_fstat(handle: u64, attr: *mut RawAttr) -> i64;
-+    fn __absd_std_fs_stat(path: *const u8, length: usize, attr: *mut RawAttr) -> i64;
++    fn __absd_std_fs_fstat_v2(handle: u64, attr: *mut RawAttr) -> i64;
++    fn __absd_std_fs_stat_v2(path: *const u8, length: usize, attr: *mut RawAttr) -> i64;
 +    fn __absd_std_fs_set_readonly(handle: u64, readonly: u32) -> i64;
 +    fn __absd_std_fs_set_readonly_path(path: *const u8, length: usize, readonly: u32) -> i64;
 +    fn __absd_std_fs_mkdir(path: *const u8, length: usize) -> i64;
@@ -451,7 +454,7 @@ index 0000000..e4d8946
 +        to_length: usize,
 +        noreplace: u32,
 +    ) -> i64;
-+    fn __absd_std_fs_readdir(
++    fn __absd_std_fs_readdir_v2(
 +        path: *const u8,
 +        length: usize,
 +        index: u64,
@@ -468,6 +471,7 @@ index 0000000..e4d8946
 +const OPEN_CREATE: u32 = 8;
 +const OPEN_CREATE_NEW: u32 = 16;
 +const OPEN_TRUNCATE: u32 = 32;
++const KIND_FILE: u32 = 1;
 +const KIND_DIR: u32 = 2;
 +const NAME_CAPACITY: usize = 256;
 +const PATH_CAPACITY: usize = 4096;
@@ -522,32 +526,54 @@ index 0000000..e4d8946
 +    filesystem: u64,
 +    serial: u64,
 +    links: u64,
++    mtime: u64,
 +}
 +
-+impl From<RawAttr> for FileAttr {
-+    fn from(raw: RawAttr) -> Self {
-+        FileAttr {
++/// Exactly two kinds exist (file 1, directory 2). Any other kind word is
++/// refused as the runtime refuses it (-5), never read as a file or a
++/// directory: no closed-world assumption about what the runtime passes.
++impl TryFrom<RawAttr> for FileAttr {
++    type Error = io::Error;
++
++    fn try_from(raw: RawAttr) -> io::Result<Self> {
++        let directory = match raw.kind {
++            KIND_FILE => false,
++            KIND_DIR => true,
++            _ => return Err(error(-5)),
++        };
++        Ok(FileAttr {
 +            raw: RawAttrCopy {
-+                directory: raw.kind == KIND_DIR,
++                directory,
 +                readonly: raw.readonly != 0,
 +                size: raw.size,
 +                filesystem: raw.filesystem,
 +                serial: raw.serial,
 +                links: raw.links,
++                mtime: raw.mtime,
 +            },
-+        }
++        })
 +    }
++}
++
++/// A listing entry's attributes: `None` (unknown) for any kind other than
++/// file or directory, so one such entry neither converts nor makes the
++/// directory unreadable.
++fn entry_attr(raw: RawAttr) -> Option<FileAttr> {
++    FileAttr::try_from(raw).ok()
 +}
 +
 +pub struct ReadDir {
 +    root: PathBuf,
-+    entries: crate::vec::IntoIter<(OsString, FileAttr)>,
++    entries: crate::vec::IntoIter<(OsString, Option<FileAttr>)>,
 +}
 +
++/// `attr` is `None` for an entry whose kind is unknown (SPEC A21: the
++/// runtime marks it, std represents it as unknown and never as a file or a
++/// directory).
 +pub struct DirEntry {
 +    root: PathBuf,
 +    name: OsString,
-+    attr: FileAttr,
++    attr: Option<FileAttr>,
 +}
 +
 +#[derive(Clone, Debug)]
@@ -590,7 +616,11 @@ index 0000000..e4d8946
 +    }
 +
 +    pub fn modified(&self) -> io::Result<SystemTime> {
-+        unsupported()
++        if self.raw.mtime == 0 {
++            return unsupported();
++        }
++        UNIX_EPOCH.checked_add_duration(&Duration::from_secs(self.raw.mtime))
++            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "ABSD modification time is out of range"))
 +    }
 +
 +    pub fn accessed(&self) -> io::Result<SystemTime> {
@@ -674,12 +704,21 @@ index 0000000..e4d8946
 +        self.name.clone()
 +    }
 +
++    /// The listing's snapshot; for an entry of unknown kind, `stat` of
++    /// its path, which the runtime refuses (-5) while the kind is unknown.
 +    pub fn metadata(&self) -> io::Result<FileAttr> {
-+        Ok(self.attr.clone())
++        match &self.attr {
++            Some(attr) => Ok(attr.clone()),
++            None => stat(&self.path()),
++        }
 +    }
 +
++    /// An entry of unknown kind is the -5 error, never a file or a directory.
 +    pub fn file_type(&self) -> io::Result<FileType> {
-+        Ok(self.attr.file_type())
++        match &self.attr {
++            Some(attr) => Ok(attr.file_type()),
++            None => Err(error(-5)),
++        }
 +    }
 +}
 +
@@ -747,8 +786,8 @@ index 0000000..e4d8946
 +
 +    pub fn file_attr(&self) -> io::Result<FileAttr> {
 +        let mut raw = RawAttr::default();
-+        checked(unsafe { __absd_std_fs_fstat(self.handle, &mut raw) })?;
-+        Ok(raw.into())
++        checked(unsafe { __absd_std_fs_fstat_v2(self.handle, &mut raw) })?;
++        FileAttr::try_from(raw)
 +    }
 +
 +    fn len(&self) -> io::Result<u64> {
@@ -923,7 +962,7 @@ index 0000000..e4d8946
 +        let mut name = [0u8; NAME_CAPACITY];
 +        let mut raw = RawAttr::default();
 +        let result = unsafe {
-+            __absd_std_fs_readdir(
++            __absd_std_fs_readdir_v2(
 +                path.as_ptr(),
 +                path.len(),
 +                entries.len() as u64,
@@ -937,7 +976,7 @@ index 0000000..e4d8946
 +            break;
 +        }
 +        let name = OsString::from(crate::str::from_utf8(&name[..length]).map_err(|_| error(-74))?);
-+        entries.push((name, FileAttr::from(raw)));
++        entries.push((name, entry_attr(raw)));
 +    }
 +    Ok(ReadDir { root: p.to_path_buf(), entries: entries.into_iter() })
 +}
@@ -1009,8 +1048,8 @@ index 0000000..e4d8946
 +pub fn stat(p: &Path) -> io::Result<FileAttr> {
 +    let path = bytes(p);
 +    let mut raw = RawAttr::default();
-+    checked(unsafe { __absd_std_fs_stat(path.as_ptr(), path.len(), &mut raw) })?;
-+    Ok(raw.into())
++    checked(unsafe { __absd_std_fs_stat_v2(path.as_ptr(), path.len(), &mut raw) })?;
++    FileAttr::try_from(raw)
 +}
 +
 +pub fn lstat(p: &Path) -> io::Result<FileAttr> {

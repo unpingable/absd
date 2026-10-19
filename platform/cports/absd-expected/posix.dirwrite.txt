@@ -1,0 +1,8 @@
+access . W_OK: -1 ENOSYS
+mkdir d 0777: 0 0
+opendir d before: (0)
+access d W_OK: -1 ENOSYS
+opendir d after: (0)
+--
+--
+status=0

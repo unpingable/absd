@@ -22,8 +22,19 @@ header_end:
 
 .section .bss
 .align 16
+.global boot_stack_canary
+boot_stack_canary:
+    /* One stack-probe interval outside the usable stack. This detects
+       writes past the bottom; it is not an unmapped guard page. */
+    .skip 4096
+.global boot_stack_bottom
+boot_stack_bottom:
 stack_bottom:
-    .skip 16384
+    /* ACPI's bounded by-value root/MADT readers exceed 16 KiB together.
+       Keep measured margin on this BSP-only stack before task entry. */
+    .skip 32768
+.global boot_stack_top
+boot_stack_top:
 stack_top:
 .align 4096
 .global boot_pml4
@@ -101,6 +112,14 @@ long_mode_entry:
     mov %ax, %es
     mov %ax, %ss
     mov $stack_top, %rsp
+    /* Paint before any Rust call, preserving the Multiboot pointer. */
+    mov %rdi, %r8
+    lea boot_stack_canary(%rip), %rdi
+    mov $((stack_top - boot_stack_canary) / 8), %ecx
+    movabs $0xa55aa55aa55aa55a, %rax
+    cld
+    rep stosq
+    mov %r8, %rdi
     /* Rust may use scalar XMM moves while constructing fixed user programs. */
     mov %cr0, %rax
     and $~0x4, %rax                 /* CR0.EM = 0 */
@@ -465,6 +484,41 @@ bsp_ap_ack_stub:
     movq %rsp, %r12
     andq $-16, %rsp
     call bsp_ap_ack_interrupt
+    movq %r12, %rsp
+    fxrstor BSP_CPU_LOCAL+{cpu_serial_fpu}(%rip)
+    popq %r12
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rdi
+    popq %rsi
+    popq %rdx
+    popq %rcx
+    popq %rax
+    iretq
+
+/* USB MSI-X: BSP-only, no kernel lock, foreground owns all event TRBs.
+   Retain this gate and handler for late delivery after controller stop. */
+.global xhci_interrupt_stub
+.type xhci_interrupt_stub, @function
+xhci_interrupt_stub:
+    nway_epoch 8
+    pushq %rax
+    pushq %rcx
+    pushq %rdx
+    pushq %rsi
+    pushq %rdi
+    pushq %r8
+    pushq %r9
+    pushq %r10
+    pushq %r11
+    pushq %r12
+    cld
+    fxsave BSP_CPU_LOCAL+{cpu_serial_fpu}(%rip)
+    movq %rsp, %r12
+    andq $-16, %rsp
+    call xhci_interrupt
     movq %r12, %rsp
     fxrstor BSP_CPU_LOCAL+{cpu_serial_fpu}(%rip)
     popq %r12

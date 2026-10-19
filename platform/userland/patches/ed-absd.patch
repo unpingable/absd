@@ -1,0 +1,120 @@
+ABSD per-port patch for sbase 0.1 ed (userland/README.md, "Patches").
+
+Failure: (1) ed installs SIGINT/SIGHUP/SIGQUIT handlers with sigaction,
+which neither the kit nor the adapter defines (userland/DEMAND.tsv: ed
+sigaction REFUSED, link-time). (2) The scratch file that holds the buffer
+is mkstemp("$TMPDIR/ed.XXXXXX"), defaulting to /tmp; on ABSD the
+environment is empty and /tmp is a read-only ancestor (C-INTERFACE.md 6,
+CPA-045), so ed could not hold any text, and the failure only printed "?"
+and left ed running without a buffer. (3) !cmd and w !cmd call system()
+and popen(), which the adapter refuses at run time (CPA-003): ed would
+print "?" with "bad exec", or nothing at all for !cmd.
+
+Change: (1) with ABSD_NO_SIGNALS (the ABSD build) no handler is installed.
+No signal is ever delivered on ABSD (CPA-004): ^C in an SSH session ends
+the pipeline and ed with it, so the buffer is lost unless written, and
+the scratch file stays behind in its directory. (2) the scratch file is
+created in $TMPDIR when that is set and non-empty, else in the working
+directory ("./ed.XXXXXX"), never in /tmp (owner D2: per-port patch, no
+contract change); if it cannot be created when ed starts, ed exits with
+status 1 and "ed: cannot create scratch file ./ed.XXXXXX (start ed in a
+writable directory): <strerror>". (3) !cmd and w !cmd are refused before
+anything runs: "?" and, with h or H, "shell commands are not supported on
+this system" (no spawn right). (2) and (3) apply to both builds, so the
+host reference pins exactly what ABSD must do.
+
+Preserved: every editing command, the buffer and undo behaviour, file
+reads and writes, the "?" error convention and the exit status (1 after
+any error). The scratch file is still removed on q, Q and end of input.
+On Linux the reference behaves as upstream except that, with TMPDIR
+unset, the scratch file lives in the working directory, and that ! is
+refused. No adapter or kit change. dowrite's `sh ? pclose(fp) : fclose(fp)`
+arms stay; `sh` is never set now, so the optimised build drops pclose (an -O0
+build would still name it; the adapter defines it, -1/ECHILD).
+
+--- a/ed.c
++++ b/ed.c
+@@ -376,17 +376,28 @@
+ {
+ 	int r, k;
+ 	char *dir;
++	static int started;
+ 
+ 	clearbuf();
+ 	clearundo();
+-	if ((dir = getenv("TMPDIR")) == NULL)
+-		dir = "/tmp";
++	/* ABSD (userland/patches/ed-absd.patch): the scratch file goes in
++	   TMPDIR when it is set, else in the working directory, never in
++	   /tmp (owner D2; C-INTERFACE.md 6: /tmp is not writable, the
++	   environment is empty). Failing to create it when ed starts is
++	   fatal and named: an ed without its scratch file cannot hold text. */
++	if ((dir = getenv("TMPDIR")) == NULL || *dir == '\0')
++		dir = ".";
+ 	r = snprintf(tmpname, sizeof(tmpname), "%s/%s",
+ 	             dir, "ed.XXXXXX");
+ 	if (r < 0 || (size_t)r >= sizeof(tmpname))
+ 		error("scratch filename too long");
+-	if ((scratch = mkstemp(tmpname)) < 0)
++	if ((scratch = mkstemp(tmpname)) < 0) {
++		if (!started)
++			eprintf("cannot create scratch file %s "
++			        "(start ed in a writable directory):", tmpname);
+ 		error("failed to create scratch file");
++	}
++	started = 1;
+ 	if ((k = makeline(NULL, NULL)))
+ 		error("input/output error in scratch file");
+ 	relink(k, k, k, k);
+@@ -761,10 +772,9 @@
+ 	}
+ 
+ 	if(fname[0] == '!') {
+-		sh = 1;
+-		fname++;
+-		if((fp = popen(fname, "w")) == NULL)
+-			error("bad exec");
++		/* ABSD (userland/patches/ed-absd.patch): w !cmd is refused
++		   like !cmd: no spawn right (CPA-003). Both builds. */
++		error("shell commands are not supported on this system");
+ 	} else {
+ 		sh = 0;
+ 		if ((fp = fopen(fname, "w")) == NULL)
+@@ -1091,11 +1101,11 @@
+ 	}
+ 	addchar('\0', &cmd);
+ 
+-	if (repl)
+-		puts(cmd.str);
+-	system(cmd.str);
+-	if (optdiag)
+-		puts("!");
++	/* ABSD (userland/patches/ed-absd.patch): a program holds no spawn
++	   right, so !cmd is refused before anything runs (CPA-003). Both
++	   builds, so the reference pins the refusal. */
++	(void)repl;
++	error("shell commands are not supported on this system");
+ }
+ 
+ static void
+@@ -1632,6 +1642,7 @@
+ 		usage();
+ 
+ 	if (!setjmp(savesp)) {
++#ifndef ABSD_NO_SIGNALS
+ 		sigaction(SIGINT,
+ 		          &(struct sigaction) {.sa_handler = sigintr},
+ 		          NULL);
+@@ -1641,6 +1652,12 @@
+ 		sigaction(SIGQUIT,
+ 		          &(struct sigaction) {.sa_handler = SIG_IGN},
+ 		          NULL);
++#endif
++		/* ABSD (userland/patches/ed-absd.patch): with ABSD_NO_SIGNALS no
++		   handler is installed; no signal is ever delivered (CPA-004).
++		   ^C in an SSH session ends the pipeline, and with it ed: the
++		   buffer is lost unless written, and the scratch file stays
++		   behind in its directory. */
+ 		init(*argv);
+ 	}
+ 	edit();

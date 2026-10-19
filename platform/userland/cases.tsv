@@ -1,0 +1,134 @@
+# Host cases of the base userland (scripts/check-userland.py). Tab-separated:
+# ID UTILITY STDIN ARGS. STDIN is a fixture name or "-" (empty). ARGS is split
+# with Python's shlex. Each case runs in a fresh directory holding the
+# fixtures check-userland.py's FIXTURES defines, with argv[0] = /bin/UTILITY (D-21) and an
+# empty environment; userland/expected/ID pins its status, stdout and stderr
+# (and every file it created, changed or removed in its directory) as the
+# host REFERENCE build (gcc, glibc) produces them. These are the
+# guest's expected outputs for T5 except where userland/divergences.tsv
+# names the case. Option parsing: every utility has a usage-error case.
+printf-basic	printf	-	'%s-%d\n' a 5
+printf-formats	printf	-	'%5.2f|%x|%o|%c|%%\n' 3.14159 255 8 xyz
+printf-escapes	printf	-	'\101\t\x42\n'
+printf-reuse	printf	-	'%s\n' one two three
+printf-badnum	printf	-	'%d\n' abc
+printf-usage	printf	-	
+test-file	test	-	-f words.txt
+test-dir	test	-	-d dir
+test-missing	test	-	-e missing.txt
+test-readable	test	-	-r words.txt
+test-size	test	-	-s empty.txt
+test-int	test	-	3 -lt 10
+test-string	test	-	abc = abc
+test-zero	test	-	-z ''
+test-not	test	-	! -d words.txt
+test-writable-file	test	-	-w words.txt
+test-writable-dir	test	-	-w dir
+test-exec-file	test	-	-x words.txt
+test-exec-dir	test	-	-x dir
+test-newer	test	-	words.txt -nt older.txt
+test-symlink	test	-	-h words.txt
+test-badint	test	-	1 -eq x
+test-badunary	test	-	-q x
+grep-n	grep	-	-n b words.txt
+grep-c	grep	-	-c a words.txt
+grep-v-e	grep	-	-v -e a -e b words.txt
+grep-E	grep	-	-E '^c+$' words.txt
+grep-i	grep	-	-i A words.txt
+grep-F	grep	-	-F . lines.txt
+grep-x	grep	-	-x c words.txt
+grep-l	grep	-	-l b words.txt lines.txt
+grep-q-miss	grep	-	-q zzz words.txt
+grep-stdin	grep	words.txt	c
+grep-missing	grep	-	b missing.txt
+grep-usage	grep	-	-Z b words.txt
+sort-plain	sort	-	words.txt
+sort-r	sort	-	-r words.txt
+sort-u	sort	-	-u words.txt
+sort-n	sort	-	-n nums.txt
+sort-key	sort	-	-t : -k 3,3n passwd.txt
+sort-stdin	sort	nums.txt	-rn
+sort-check	sort	-	-c nums.txt
+sort-missing	sort	-	missing.txt
+sort-usage	sort	-	-Q words.txt
+sed-print	sed	-	-n 2p lines.txt
+sed-subst	sed	-	s/c/X/g words.txt
+sed-ere	sed	-	-E 's/(b)/[\1]/' words.txt
+sed-delete	sed	-	2,4d lines.txt
+sed-lineno	sed	-	-n /c/= words.txt
+sed-y	sed	-	y/abc/xyz/ words.txt
+sed-stdin	sed	lines.txt	-n $p
+sed-inplace	sed	-	-i s/a/b/ words.txt
+sed-badscript	sed	-	s/a/ words.txt
+sed-usage	sed	-	
+od-default	od	-	bin.dat
+od-x1	od	-	-A x -t x1 bin.dat
+od-tc	od	-	-t c words.txt
+od-c-unsupported	od	-	-c words.txt
+od-skip	od	-	-A d -t o2 -j 2 -N 6 bin.dat
+od-stdin	od	words.txt	-t u1
+od-missing	od	-	missing.txt
+od-usage	od	-	-Q bin.dat
+cmp-same	cmp	-	words.txt words.txt
+cmp-differ	cmp	-	words.txt lines.txt
+cmp-l	cmp	-	-l words.txt words2.txt
+cmp-s	cmp	-	-s words.txt words2.txt
+cmp-eof	cmp	-	words.txt words-short.txt
+cmp-missing	cmp	-	words.txt missing.txt
+cmp-usage	cmp	-	words.txt
+ed-new	ed	ed-new.ed	
+ed-edit	ed	ed-edit.ed	lines.txt
+ed-global	ed	ed-global.ed	words.txt
+ed-undo	ed	ed-undo.ed	words.txt
+ed-read	ed	ed-read.ed	-s
+ed-prompt	ed	ed-help.ed	-p '> ' words.txt
+ed-shell	ed	ed-shell.ed	
+ed-wshell	ed	ed-wshell.ed	
+ed-modified	ed	ed-modified.ed	
+ed-eof	ed	ed-eof.ed	
+ed-missing	ed	ed-help.ed	missing.txt
+ed-usage	ed	-	-x
+find-all	find	-	tree
+find-name	find	-	tree -name leaf.txt
+find-type-d	find	-	tree -type d
+find-type-f	find	-	tree -type f
+find-type-l	find	-	tree -type l
+find-depth	find	-	tree -depth
+find-prune	find	-	tree -name sub -prune -o -print
+find-not	find	-	tree ! -type d
+find-size	find	-	words.txt empty.txt -size 0
+find-files	find	-	words.txt dir
+find-exec	find	-	tree -exec cat {} ;
+find-ok	find	-	tree -ok cat {} ;
+find-mtime	find	-	tree -mtime +1
+find-newer	find	-	tree -newer older.txt
+find-missing	find	-	missing.txt
+find-badtype	find	-	tree -type x
+find-nopath	find	-	-print
+find-usage	find	-	-Q tree
+diff-equal	diff	-	words.txt words.txt
+diff-changed	diff	-	words.txt words2.txt
+diff-binary	diff	-	bin.dat empty.txt
+diff-missing	diff	-	missing.txt words.txt
+diff-usage	diff	-	-r words.txt words2.txt
+hexdump-b	hexdump	-	-b high.dat
+hexdump-c	hexdump	-	-c high.dat
+hexdump-C	hexdump	-	-C high.dat
+hexdump-d	hexdump	-	-d high.dat
+hexdump-o	hexdump	-	-o high.dat
+hexdump-x	hexdump	-	-x high.dat
+hexdump-zero	hexdump	-	zero48.dat
+hexdump-verbose	hexdump	-	-v zero48.dat
+hexdump-limit0	hexdump	-	-n0 bin.dat
+hexdump-crossskip	hexdump	-	-s50 bin.dat bin.dat
+hexdump-stdin-tail	hexdump	high.dat	-C
+hexdump-empty-final	hexdump	-	-C high.dat empty.txt
+hexdump-usage	hexdump	-	-e x
+tar-list	tar	-	-tf basic.ustar
+tar-list-stdin	tar	basic.ustar	-tf -
+tar-extract	tar	-	-xf basic.ustar
+tar-extract-stdin	tar	basic.ustar	-xf -
+tar-create	tar	-	-cf made.ustar words-short.txt tree
+tar-select-missing	tar	-	-tf basic.ustar absent
+tar-invalid	tar	-	-tf bad.ustar
+tar-unsupported	tar	-	-zf basic.ustar

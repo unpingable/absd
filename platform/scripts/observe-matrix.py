@@ -34,6 +34,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
+from served_kernel import kernel_make
 import absd_fs  # noqa: E402
 import absd_inputs  # noqa: E402
 
@@ -225,7 +226,7 @@ class Matrix:
         return path
 
     def iso(self, kernel, step, worker, worker_input, reader=None, reader_input=b""):
-        subprocess.run(["make", "--no-print-directory", "-C", str(kernel), "durable-iso", f"DURABLE_STEP={step}",
+        subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(kernel), "durable-iso", f"DURABLE_STEP={step}",
                         f"EXTERNAL_USER_ELF={worker}", f"EXTERNAL_INPUT={self.write_input(worker_input)}",
                         f"EXTERNAL_READER_ELF={reader or ''}",
                         f"EXTERNAL_READER_INPUT={self.write_input(reader_input) if reader else ''}"],
@@ -233,6 +234,8 @@ class Matrix:
         return kernel / "build" / "durable" / f"absd-durable-{step}.iso"
 
     def raw_boot(self, name, kernel, iso, image, memory=None):
+        # Qualification-only worker/reader and importer ISOs, never served.
+        # The pressure-present case intentionally runs at 32M.
         self.boots += 1
         log = self.work / f"{name}.{self.boots:03d}.serial.log"
         qemu = self.qemu + (["-m", memory] if memory else [])

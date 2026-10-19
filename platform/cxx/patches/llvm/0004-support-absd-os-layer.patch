@@ -1,0 +1,186 @@
+LLVMSupport: the ABSD OS layer for signals, programs, memory and the
+watchdog; no signal handlers, no sigprocmask, no dup2, no getsid
+
+Failure: Unix/Program.inc needs wait4, struct rusage::ru_maxrss and
+posix_spawn/fork/execve (compile errors at Program.inc:348,425,472);
+Unix/Signals.inc needs sigaction, sigaltstack, dl_iterate_phdr and backtrace;
+Unix/Memory.inc needs mmap/munmap/mprotect; Unix/Watchdog.inc needs alarm
+(undefined at link: none is in the kit, its POSIX adapter or Picolibc);
+CrashRecoveryContext.cpp needs sigaction; Unix/Process.inc needs dup2
+(FixupStandardFileDescriptors) and blocks signals with sigprocmask around
+every close (SafelyCloseFileDescriptor), which the kit answers ENOSYS, so
+every such close would fail; it seeds rand() from /dev/urandom, which ABSD
+has not; LockFileManager.cpp calls getsid.
+Change: under LLVM_ABSD_KIT, Signals.cpp, Program.cpp, Memory.cpp and
+Watchdog.cpp include ABSD/*.inc (cxx/glue/llvm-support, copied in by
+scripts/build-llvm-kit.sh) instead of Unix/*.inc: registrations kept,
+no handler installed, no stack trace; program execution refused with a
+message, Wait reports no child; memory blocks are page-aligned heap blocks,
+read+write only, executable or read-only protection refused (ENOTSUP);
+watchdog does nothing. CrashRecoveryContext installs no handlers;
+FixupStandardFileDescriptors does nothing (the kit never hands 0-2 to
+open()); SafelyCloseFileDescriptor is close(); the seed comes from the kit's
+getentropy (RDRAND) first; LockFileManager assumes a lock owner is alive.
+Behaviour preserved: every other platform includes the same Unix/*.inc and
+code as before. On ABSD the behaviour is what the kit's contract allows:
+nothing is emulated (no fake mmap, no fake spawn, no fake signal).
+Upstreamability: as an LLVM OS port (lib/Support/ABSD/ next to Unix/ and
+Windows/, keyed on a target OS macro) it is the shape upstream uses for
+Windows; not upstreamable before ABSD is a known OS in LLVM's triple.
+
+--- a/llvm/lib/Support/Signals.cpp
++++ b/llvm/lib/Support/Signals.cpp
+@@ -273,7 +273,9 @@
+ }
+ 
+ // Include the platform-specific parts of this class.
+-#ifdef LLVM_ON_UNIX
++#if defined(LLVM_ABSD_KIT)
++#include "ABSD/Signals.inc"
++#elif defined(LLVM_ON_UNIX)
+ #include "Unix/Signals.inc"
+ #endif
+ #ifdef _WIN32
+--- a/llvm/lib/Support/Program.cpp
++++ b/llvm/lib/Support/Program.cpp
+@@ -99,7 +99,9 @@
+ }
+ 
+ // Include the platform-specific parts of this class.
+-#ifdef LLVM_ON_UNIX
++#if defined(LLVM_ABSD_KIT)
++#include "ABSD/Program.inc"
++#elif defined(LLVM_ON_UNIX)
+ #include "Unix/Program.inc"
+ #endif
+ #ifdef _WIN32
+--- a/llvm/lib/Support/Memory.cpp
++++ b/llvm/lib/Support/Memory.cpp
+@@ -19,7 +19,9 @@
+ #endif // ifndef NDEBUG
+ 
+ // Include the platform-specific parts of this class.
+-#ifdef LLVM_ON_UNIX
++#if defined(LLVM_ABSD_KIT)
++#include "ABSD/Memory.inc"
++#elif defined(LLVM_ON_UNIX)
+ #include "Unix/Memory.inc"
+ #endif
+ #ifdef _WIN32
+--- a/llvm/lib/Support/Watchdog.cpp
++++ b/llvm/lib/Support/Watchdog.cpp
+@@ -14,7 +14,9 @@
+ #include "llvm/Config/llvm-config.h"
+ 
+ // Include the platform-specific parts of this class.
+-#ifdef LLVM_ON_UNIX
++#if defined(LLVM_ABSD_KIT)
++#include "ABSD/Watchdog.inc"
++#elif defined(LLVM_ON_UNIX)
+ #include "Unix/Watchdog.inc"
+ #endif
+ #ifdef _WIN32
+--- a/llvm/lib/Support/CrashRecoveryContext.cpp
++++ b/llvm/lib/Support/CrashRecoveryContext.cpp
+@@ -390,6 +390,13 @@
+     const_cast<CrashRecoveryContextImpl *>(CRCI)->HandleCrash(RetCode, Signal);
+ }
+ 
++#if defined(LLVM_ABSD_KIT)
++// ABSD delivers no signal (C-INTERFACE.md section 10): a fault ends the
++// process in the kernel and abort() ends it with status 134, so no handler
++// can be installed and a crash is never recovered in process.
++static void installExceptionOrSignalHandlers() {}
++static void uninstallExceptionOrSignalHandlers() {}
++#else
+ static void installExceptionOrSignalHandlers() {
+   // Setup the signal handler.
+   struct sigaction Handler;
+@@ -407,6 +414,7 @@
+   for (unsigned i = 0; i != NumSignals; ++i)
+     sigaction(Signals[i], &PrevActions[i], nullptr);
+ }
++#endif // LLVM_ABSD_KIT
+ 
+ #endif // !_WIN32
+ 
+--- a/llvm/lib/Support/Unix/Process.inc
++++ b/llvm/lib/Support/Unix/Process.inc
+@@ -231,6 +231,14 @@
+         return std::error_code(errno, std::generic_category());
+     }
+ 
++#if defined(LLVM_ABSD_KIT)
++    // The kit never allocates 0, 1 or 2 to an open() and has no dup2
++    // (C-INTERFACE.md section 4): a closed standard descriptor stays
++    // closed and no later file can take its number, which is what this
++    // function guards against. Nothing to do.
++    (void)NullFD;
++    continue;
++#endif
+     if (NullFD == StandardFD)
+       FDC.keepOpen();
+     else if (dup2(NullFD, StandardFD) < 0)
+@@ -240,6 +248,13 @@
+ }
+ 
+ std::error_code Process::SafelyCloseFileDescriptor(int FD) {
++#if defined(LLVM_ABSD_KIT)
++  // No signal is ever delivered on ABSD (the kit's sigprocmask is ENOSYS),
++  // so there is nothing to block around the close.
++  if (::close(FD) < 0)
++    return std::error_code(errno, std::generic_category());
++  return std::error_code();
++#endif
+   // Create a signal set filled with *all* signals.
+   sigset_t FullSet, SavedSet;
+   if (sigfillset(&FullSet) < 0 || sigfillset(&SavedSet) < 0)
+@@ -428,6 +443,15 @@
+ 
+ #if !HAVE_DECL_ARC4RANDOM
+ static unsigned GetRandomNumberSeed() {
++#if defined(LLVM_ABSD_KIT)
++  // No /dev/urandom on ABSD; the kit's getentropy is RDRAND
++  // (C-INTERFACE.md section 10).
++  {
++    unsigned seed;
++    if (getentropy(&seed, sizeof(seed)) == 0)
++      return seed;
++  }
++#endif
+   // Attempt to get the initial seed from /dev/urandom, if possible.
+   int urandomFD = open("/dev/urandom", O_RDONLY);
+ 
+--- a/llvm/lib/Support/LockFileManager.cpp
++++ b/llvm/lib/Support/LockFileManager.cpp
+@@ -117,9 +117,15 @@
+     return true; // Conservatively assume it's executing on error.
+ 
+   // Check whether the process is dead. If so, we're done.
++#if defined(LLVM_ABSD_KIT)
++  // The kit cannot ask whether another process lives (no getsid, kill is
++  // ENOSYS): conservatively assume it is executing, as on error above.
++  (void)PID;
++#else
+   if (StoredHostID == HostID && getsid(PID) == -1 && errno == ESRCH)
+     return false;
+ #endif
++#endif
+ 
+   return true;
+ }
+@@ -303,8 +309,14 @@
+   unsigned long WaitMultiplier = 1;
+   unsigned long ElapsedTimeSeconds = 0;
+ 
++#if defined(LLVM_ABSD_KIT)
++  // The C kit's libc++ has no std::random_device; the jitter only spreads
++  // retries, so the process's own random number seeds it.
++  std::default_random_engine Engine(sys::Process::GetRandomNumber());
++#else
+   std::random_device Device;
+   std::default_random_engine Engine(Device());
++#endif
+ 
+   auto StartTime = std::chrono::steady_clock::now();
+ 

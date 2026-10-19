@@ -1,0 +1,134 @@
+# Media profile: a whole-disk GPT/EFI USB image for the HP Z2 Mini G3
+# attended boot (generalised from the S4 recipe for
+# bf8c7583/f8184ca, the development checkout).
+#
+# Templates take {kernel} {platform} (full commits), {kernel7} {platform8}
+# (their short forms). Everything else in the image comes from the pair, the
+# retained runtime inputs and the pinned host tools (scripts/media.py).
+
+profile = "z2-usb"
+image_name = "absd-z2-{platform8}-{kernel7}.img"
+
+[geometry]
+# The recorded qualification medium. A differently sized device needs a new
+# profile, never an edited GPT.
+image_bytes = 8103395328
+start_lba = 2048
+esp_sectors = 258048
+sector_bytes = 512
+
+[identity]
+# Disk and partition GUIDs: ab5d1015-<platform[0:4]>-4<platform[5:8]>-8<kernel[1:4]>-<n:012x>
+guid_prefix = "ab5d1015"
+fat_volume_id = "AB5D1015"
+fat_uuid = "AB5D-1015"
+fat_label = "ABSDZ2BOOT"
+partition_name = "ABSDZ2BOOT"
+
+[kernel]
+features = ["block-read-only"]
+remap_root = "/absd-z2-candidate"
+
+[compact]
+# S4's .img.xz is xz preset 0 (LZMA2, 256 KiB dictionary, one block,
+# CRC64); this reproduces it byte for byte. The raw image is the artifact;
+# the compressed copy is transport.
+xz_preset = 0
+
+[fat]
+# The ESP's copy order (scripts/media.py copy_order): S4's image put its
+# files on the FAT in this order, which `mcopy -s` took from the readdir
+# order of the S4 build host's filesystem. Pinning it here makes every host
+# produce S4's cluster layout, hence its exact bytes; a profile without this
+# table copies in sorted order.
+order = [
+    "BOOT/", "BOOT/KERNEL.ELF", "BOOT/GRUB.CFG",
+    "EFI/", "EFI/BOOT/", "EFI/BOOT/BOOTX64.EFI",
+    "NOTICES/", "NOTICES/KERNEL.TXT", "NOTICES/GPL3.TXT", "NOTICES/INTEL.TXT", "NOTICES/GRUB.TXT",
+    "NOTICES/APACHE.TXT", "NOTICES/KPROV.TXT", "NOTICES/PPROV.TXT",
+    "PAIR.JSON", "README.TXT",
+    "RUNTIME/", "RUNTIME/EXPECT.TXT", "RUNTIME/PROBE.ELF", "RUNTIME/INPUT.TXT",
+]
+
+[grub]
+modules = "part_gpt fat normal configfile search search_fs_uuid multiboot2 all_video gfxterm echo halt"
+early_cfg = """search --no-floppy --fs-uuid --set=root {fat_uuid}
+configfile /BOOT/GRUB.CFG
+"""
+config = """insmod all_video
+set gfxmode=1024x768,auto
+set gfxpayload=keep
+set default=0
+set timeout=15
+menuentry 'ABSD Z2 identity survey - disks and NIC untouched' --id survey {{
+    echo 'Kernel {kernel7} / platform {platform8}, survey only'
+    multiboot2 /BOOT/KERNEL.ELF survey halt-on-exit
+    boot
+}}
+menuentry 'ABSD Z2 RAM runtime check - no filesystem, disk writes disabled' --id runtime {{
+    echo 'Kernel {kernel7} / platform {platform8}, embedded Rust std probe'
+    multiboot2 /BOOT/KERNEL.ELF external halt-on-exit
+    boot
+}}
+"""
+
+[readme]
+text = """ABSD HP Z2 Mini G3 physical-boot candidate, not physical qualification.
+Kernel {kernel7} / platform {platform8}. See PAIR.JSON and external FIRST-BOOT.md.
+Default: read-only identity survey; no storage/NIC initialization.
+Second: embedded platform Rust std probe, RAM only, block writes disabled.
+Runtime mode may initialize/read NVMe; it receives no filesystem/block handle.
+USB FAT is firmware/GRUB input only; ABSD has no USB runtime storage.
+No writable root, FSD, SSH, installer, native NIC probe or automatic reboot.
+All entries halt. Never edit options to enable another test or device.
+"""
+
+# Notices carried in /NOTICES, by source: kernel:<path> and platform:<path>
+# are files at the pair's commits; kernel-comment:<path> is the file's
+# leading block comment and the blank line after it; host:<path> is the
+# build host's file (its digest is recorded in the media receipt).
+[notices]
+"APACHE.TXT" = "platform:LICENSE"
+"GPL3.TXT" = "host:/usr/share/common-licenses/GPL-3"
+"GRUB.TXT" = "host:/usr/share/doc/grub-common/copyright"
+"INTEL.TXT" = "kernel-comment:src/i219.rs"
+"KERNEL.TXT" = "kernel:LICENSE"
+"KPROV.TXT" = "kernel:provenance.toml"
+"PPROV.TXT" = "platform:provenance.toml"
+
+# The fixed fields of PAIR.JSON (the component record); the rest is computed.
+[pair]
+boot_modes = { default = "survey halt-on-exit: no storage/NIC initialization", second = "external halt-on-exit: embedded Rust std probe, no filesystem/block/NIC handle; may initialize and read NVMe before userspace" }
+build_profile = "dev opt-level2/debug assertions/overflow checks/static kernel; no AP enabling feature"
+kernel_rebuild_reproducibility = "Two clean separate source roots, byte-identical kernel ELF; remap roots to {remap_root}; build-kernel.sh"
+physical_target = "HP Z2 Mini G3, N53 01.72 historical UEFI; exact current firmware/media still operator-observed; no Secure Boot/firmware change admitted"
+purpose = "Attended physical-boot candidate; no physical qualification"
+storage = "One FAT32 ESP consumed by firmware/GRUB only; no ABSD data/root filesystem, FSD, SSH, installer or native USB storage"
+write_boundary = "All kernel block Write/Flush calls compiled to refusal; no nvme-write boot option, NIC/xHCI initialization mode or reset action in GRUB entries"
+unused_remainder = "unallocated; not a writable ABSD filesystem"
+
+[pins]
+# Checked before `kernel` and `image` build anything; a host with any other
+# version is refused. These are the packages whose bytes reach the image or
+# the kernel ELF (S4 and the 2026-10-16 replay host). QEMU and OVMF only run
+# the boots and are recorded, not pinned.
+rustc = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+
+[pins.packages]
+binutils = "2.42-4ubuntu2.10"
+dosfstools = "4.2-1.1build1"
+gcc-13 = "13.3.0-6ubuntu2~24.04.1"
+gdisk = "1.0.10-1build1"
+grub-common = "2.12-1ubuntu7.3"
+grub-efi-amd64-bin = "2.12-1ubuntu7.3"
+libc6-dev = "2.39-0ubuntu8.9"
+mtools = "4.0.43-1build1"
+xz-utils = "5.6.1+really5.4.5-1ubuntu0.3"
+
+[pins.rust]
+# The kernel's toolchain, from this location only (never PATH or the rustup
+# proxies): its own cargo and rustc, each at the pinned SHA-256.
+rustup_home = "~/.rustup"
+toolchain = "1.98.0-x86_64-unknown-linux-gnu"
+rustc_sha256 = "3690cc576ede140504698405d5d8fa3826aaadbe71699c6c4ed0a565d6f493e2"
+cargo_sha256 = "ff3022fcbd13b08434ea7afde9a0ef9d5b3f5c17b5fc7a40031be3ee000a6a24"

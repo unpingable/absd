@@ -15,8 +15,9 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use absd_fs::{Attr, Device, Error, Fs, Kind, OpenFlags, SECTOR};
 
-use crate::cwd::resolve;
+use crate::cwd::{normalize, resolve};
 use crate::layout::{self, Layout, Region};
+use crate::wire_kind::WireKind;
 use crate::{BLOCK, ledger};
 
 /// One layout region as a filesystem device. Every access is bounded by
@@ -452,11 +453,15 @@ pub(crate) fn mount_view(handle: u64) -> Result<Mounted, Error> {
 }
 
 /// The kind of the object at `path` (already resolved): `None` when this
-/// process has no filesystem at all.
+/// process has no filesystem at all. A file server kind outside 1..=2 is
+/// refused with -5 (SPEC A21).
 pub(crate) fn stat_kind(path: &[u8]) -> Option<Result<Kind, i64>> {
     if crate::fsd::active() {
-        return Some(crate::fsd::stat(path).map(|attr| {
-            if crate::fsd::kind(&attr) == 2 { Kind::Dir } else { Kind::File }
+        return Some(crate::fsd::stat(path).and_then(|attr| {
+            Ok(match crate::fsd::kind(&attr)? {
+                WireKind::File => Kind::File,
+                WireKind::Dir => Kind::Dir,
+            })
         }));
     }
     with_fs(|fs| fs.stat(path).map(|attr| attr.kind).map_err(errno))
@@ -481,7 +486,7 @@ pub(crate) fn read_file_into(path: &[u8], limit: u64, bytes: &mut Vec<u8>) -> Re
         return crate::fsd::read_file_into(&resolve(path), limit, bytes);
     }
     let Backend::Fs(fs) = backend() else { return Err(-2) };
-    let path = resolve(path);
+    let path = normalize(path);
     let attr = fs.stat(&path).map_err(errno)?;
     if !matches!(attr.kind, Kind::File) {
         return Err(-21);
@@ -562,7 +567,9 @@ unsafe fn slice<'a>(bytes: *const u8, length: usize) -> &'a [u8] {
     if length == 0 { &[] } else { unsafe { core::slice::from_raw_parts(bytes, length) } }
 }
 
+/// V1 metadata ABI used by the existing C kit. Its 40-byte layout is fixed.
 #[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RawAttr {
     kind: u32,
     readonly: u32,
@@ -572,8 +579,29 @@ pub struct RawAttr {
     links: u64,
 }
 
-fn fill(out: *mut RawAttr, attr: Attr) {
-    let raw = RawAttr {
+/// Internal metadata ABI V2. The extra word is whole UTC Unix seconds;
+/// zero means unknown. Only the explicitly suffixed hooks write this layout.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RawAttrV2 {
+    kind: u32,
+    readonly: u32,
+    size: u64,
+    filesystem: u64,
+    serial: u64,
+    links: u64,
+    mtime: u64,
+}
+
+impl From<RawAttrV2> for RawAttr {
+    fn from(raw: RawAttrV2) -> Self {
+        Self { kind: raw.kind, readonly: raw.readonly, size: raw.size,
+            filesystem: raw.filesystem, serial: raw.serial, links: raw.links }
+    }
+}
+
+fn fill<T: From<RawAttrV2>>(out: *mut T, attr: Attr) {
+    let raw = RawAttrV2 {
         kind: match attr.kind {
             Kind::File => 1,
             Kind::Dir => 2,
@@ -583,13 +611,14 @@ fn fill(out: *mut RawAttr, attr: Attr) {
         filesystem: attr.fs_id,
         serial: attr.serial,
         links: u64::from(attr.links),
+        mtime: attr.mtime,
     };
-    unsafe { out.write(raw) };
+    unsafe { out.write(raw.into()) };
 }
 
-fn ledger_attr(out: *mut RawAttr, directory: bool, size: u64) {
+fn ledger_attr<T: From<RawAttrV2>>(out: *mut T, directory: bool, size: u64) {
     unsafe {
-        out.write(RawAttr { kind: if directory { 2 } else { 1 }, readonly: 0, size, filesystem: 0, serial: 0, links: 1 })
+        out.write(RawAttrV2 { kind: if directory { 2 } else { 1 }, readonly: 0, size, filesystem: 0, serial: 0, links: 1, mtime: 0 }.into())
     };
 }
 
@@ -608,7 +637,7 @@ pub unsafe extern "C" fn __absd_std_fs_open(path: *const u8, length: usize, flag
         return crate::fsd::open(&resolve(path), raw_flags);
     }
     if let Backend::Fs(fs) = backend() {
-        return match fs.open(&resolve(path), flags) {
+        return match fs.open(&normalize(path), flags) {
             Ok(handle) => handle as i64,
             Err(error) => errno(error),
         };
@@ -714,6 +743,15 @@ pub extern "C" fn __absd_std_fs_sync(handle: u64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __absd_std_fs_fstat(handle: u64, out: *mut RawAttr) -> i64 {
+    unsafe { fstat(handle, out) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __absd_std_fs_fstat_v2(handle: u64, out: *mut RawAttrV2) -> i64 {
+    unsafe { fstat(handle, out) }
+}
+
+unsafe fn fstat<T: From<RawAttrV2>>(handle: u64, out: *mut T) -> i64 {
     if crate::fsd::active() {
         return remote_attr(crate::fsd::fstat(handle), out);
     }
@@ -739,12 +777,21 @@ pub unsafe extern "C" fn __absd_std_fs_fstat(handle: u64, out: *mut RawAttr) -> 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __absd_std_fs_stat(path: *const u8, length: usize, out: *mut RawAttr) -> i64 {
+    unsafe { stat(path, length, out) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __absd_std_fs_stat_v2(path: *const u8, length: usize, out: *mut RawAttrV2) -> i64 {
+    unsafe { stat(path, length, out) }
+}
+
+unsafe fn stat<T: From<RawAttrV2>>(path: *const u8, length: usize, out: *mut T) -> i64 {
     let path = unsafe { slice(path, length) };
     if crate::fsd::active() {
         return remote_attr(crate::fsd::stat(&resolve(path)), out);
     }
     match backend() {
-        Backend::Fs(fs) => match fs.stat(&resolve(path)) {
+        Backend::Fs(fs) => match fs.stat(&normalize(path)) {
             Ok(attr) => {
                 fill(out, attr);
                 0
@@ -768,26 +815,44 @@ pub unsafe extern "C" fn __absd_std_fs_stat(path: *const u8, length: usize, out:
     }
 }
 
-/// A file server's attribute record, whose first 40 bytes have `RawAttr`'s
-/// layout; the `mtime` word after them does not reach `std` yet.
-fn remote_attr(attr: Result<[u8; absd_fsd::proto::ATTR_BYTES], i64>, out: *mut RawAttr) -> i64 {
+/// A file server's attribute record for one object (stat, fstat). A kind
+/// outside 1..=2 is refused with -5 and nothing is written (SPEC A21).
+fn remote_attr<T: From<RawAttrV2>>(attr: Result<[u8; absd_fsd::proto::ATTR_BYTES], i64>, out: *mut T) -> i64 {
     match attr {
         Ok(bytes) => {
-            let word = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
-            let half = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
-            let raw = RawAttr {
-                kind: half(0),
-                readonly: half(4),
-                size: word(8),
-                filesystem: word(16),
-                serial: word(24),
-                links: word(32),
+            let kind = match crate::wire_kind::of_attr(&bytes) {
+                Ok(kind) => crate::wire_kind::word(kind),
+                Err(code) => return code,
             };
-            unsafe { out.write(raw) };
+            write_attr(&bytes, kind, out);
             0
         }
         Err(code) => code,
     }
+}
+
+/// A directory listing entry's attribute record: a kind outside 1..=2 is
+/// marked unknown (`wire_kind::ENTRY_UNKNOWN`), never a file or a
+/// directory, and the listing goes on (SPEC A21).
+fn entry_attr<T: From<RawAttrV2>>(bytes: &[u8; absd_fsd::proto::ATTR_BYTES], out: *mut T) {
+    write_attr(bytes, crate::wire_kind::entry_word(bytes), out);
+}
+
+/// The single wire decoder for both versions. V1 projects the first six
+/// fields; V2 also preserves mtime. The caller supplies the decoded kind.
+fn write_attr<T: From<RawAttrV2>>(bytes: &[u8; absd_fsd::proto::ATTR_BYTES], kind: u32, out: *mut T) {
+    let word = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
+    let half = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    let raw = RawAttrV2 {
+        kind,
+        readonly: half(4),
+        size: word(8),
+        filesystem: word(16),
+        serial: word(24),
+        links: word(32),
+        mtime: word(40),
+    };
+    unsafe { out.write(raw.into()) };
 }
 
 fn with_mounted(f: impl FnOnce(&mut Fs<RegionDevice>) -> Result<(), Error>) -> i64 {
@@ -811,7 +876,7 @@ pub unsafe extern "C" fn __absd_std_fs_set_readonly_path(path: *const u8, length
     if crate::fsd::active() {
         return crate::fsd::set_readonly_path(&resolve(path), readonly != 0);
     }
-    with_mounted(|fs| fs.set_readonly_path(&resolve(path), readonly != 0))
+    with_mounted(|fs| fs.set_readonly_path(&normalize(path), readonly != 0))
 }
 
 #[unsafe(no_mangle)]
@@ -820,7 +885,7 @@ pub unsafe extern "C" fn __absd_std_fs_mkdir(path: *const u8, length: usize) -> 
     if crate::fsd::active() {
         return crate::fsd::path_op(absd_fsd::proto::op::MKDIR, &resolve(path));
     }
-    with_mounted(|fs| fs.mkdir(&resolve(path)))
+    with_mounted(|fs| fs.mkdir(&normalize(path)))
 }
 
 #[unsafe(no_mangle)]
@@ -829,7 +894,7 @@ pub unsafe extern "C" fn __absd_std_fs_rmdir(path: *const u8, length: usize) -> 
     if crate::fsd::active() {
         return crate::fsd::path_op(absd_fsd::proto::op::RMDIR, &resolve(path));
     }
-    with_mounted(|fs| fs.rmdir(&resolve(path)))
+    with_mounted(|fs| fs.rmdir(&normalize(path)))
 }
 
 #[unsafe(no_mangle)]
@@ -838,7 +903,7 @@ pub unsafe extern "C" fn __absd_std_fs_unlink(path: *const u8, length: usize) ->
     if crate::fsd::active() {
         return crate::fsd::path_op(absd_fsd::proto::op::UNLINK, &resolve(path));
     }
-    with_mounted(|fs| fs.unlink(&resolve(path)))
+    with_mounted(|fs| fs.unlink(&normalize(path)))
 }
 
 #[unsafe(no_mangle)]
@@ -853,18 +918,20 @@ pub unsafe extern "C" fn __absd_std_fs_rename(
     if crate::fsd::active() {
         return crate::fsd::rename(&resolve(from), &resolve(to), noreplace != 0);
     }
-    with_mounted(|fs| fs.rename(&resolve(from), &resolve(to), noreplace != 0))
+    with_mounted(|fs| fs.rename(&normalize(from), &normalize(to), noreplace != 0))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __absd_std_fs_readdir(
-    path: *const u8,
-    length: usize,
-    index: u64,
-    name: *mut u8,
-    capacity: usize,
-    out: *mut RawAttr,
-) -> isize {
+pub unsafe extern "C" fn __absd_std_fs_readdir(path: *const u8, length: usize, index: u64, name: *mut u8, capacity: usize, out: *mut RawAttr) -> isize {
+    unsafe { readdir(path, length, index, name, capacity, out) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __absd_std_fs_readdir_v2(path: *const u8, length: usize, index: u64, name: *mut u8, capacity: usize, out: *mut RawAttrV2) -> isize {
+    unsafe { readdir(path, length, index, name, capacity, out) }
+}
+
+unsafe fn readdir<T: From<RawAttrV2>>(path: *const u8, length: usize, index: u64, name: *mut u8, capacity: usize, out: *mut T) -> isize {
     let path = unsafe { slice(path, length) };
     if crate::fsd::active() {
         return match crate::fsd::read_dir_entry(&resolve(path), index) {
@@ -873,7 +940,7 @@ pub unsafe extern "C" fn __absd_std_fs_readdir(
                     return -22;
                 }
                 unsafe { core::ptr::copy_nonoverlapping(entry.as_ptr(), name, entry.len()) };
-                remote_attr(Ok(attr), out);
+                entry_attr(&attr, out);
                 entry.len() as isize
             }
             Ok(None) => 0,
@@ -881,7 +948,7 @@ pub unsafe extern "C" fn __absd_std_fs_readdir(
         };
     }
     let Backend::Fs(fs) = backend() else { return -95 };
-    let entries: Vec<_> = match fs.read_dir(&resolve(path)) {
+    let entries: Vec<_> = match fs.read_dir(&normalize(path)) {
         Ok(entries) => entries,
         Err(error) => return errno(error) as isize,
     };
@@ -908,7 +975,7 @@ pub unsafe extern "C" fn __absd_std_fs_canonical(path: *const u8, length: usize,
         };
     }
     let Backend::Fs(fs) = backend() else { return -95 };
-    match fs.canonical(&resolve(path)) {
+    match fs.canonical(&normalize(path)) {
         Ok(canonical) if canonical.len() <= capacity => {
             unsafe { core::ptr::copy_nonoverlapping(canonical.as_ptr(), out, canonical.len()) };
             canonical.len() as isize

@@ -1,0 +1,277 @@
+== /bin/pulldown-cmark
+<h1>Native documentation</h1>
+<p>ABSD renders <strong>ordinary Rust</strong> applications with café and 日本語.</p>
+<ul>
+<li>arguments and files</li>
+<li>piped standard input</li>
+</ul>
+<p>An <a href="https://example.org/">upstream parser</a> and <code>inline code</code>.</p>
+<pre><code class="language-rust">fn main() { println!("hello"); }
+</code></pre>
+-- stderr
+-- status 0
+== /bin/pulldown-cmark basic.md
+<h1>Native documentation</h1>
+<p>ABSD renders <strong>ordinary Rust</strong> applications with café and 日本語.</p>
+<ul>
+<li>arguments and files</li>
+<li>piped standard input</li>
+</ul>
+<p>An <a href="https://example.org/">upstream parser</a> and <code>inline code</code>.</p>
+<pre><code class="language-rust">fn main() { println!("hello"); }
+</code></pre>
+-- stderr
+-- status 0
+== /bin/pulldown-cmark -T -S -L extensions.md
+<table><thead><tr><th>Facility</th><th>State</th></tr></thead><tbody>
+<tr><td>Rust std</td><td>restricted</td></tr>
+<tr><td>native Cargo</td><td>deferred</td></tr>
+</tbody></table>
+<p><del>removed</del></p>
+<ul>
+<li><input disabled="" type="checkbox" checked=""/>
+cross-build</li>
+<li><input disabled="" type="checkbox"/>
+native build</li>
+</ul>
+-- stderr
+-- status 0
+== /bin/pulldown-cmark -P punctuation.md
+<p>“Rust” – a useful tool… ‘native’ application.</p>
+-- stderr
+-- status 0
+== /bin/pulldown-cmark -d basic.md
+30 events
+-- stderr
+-- status 0
+== /bin/pulldown-cmark -e tiny.md
+0..8: Start(Paragraph)
+0..7: Start(Emphasis)
+1..6: Text(Borrowed("hello"))
+0..7: End(Emphasis)
+0..8: End(Paragraph)
+EOF
+-- stderr
+-- status 0
+== /bin/pulldown-cmark -R broken.md
+<p>A [missing reference][absent].</p>
+-- stderr
+Error: 1 broken links:
+[2-29]: absent
+-- status 1
+== /bin/pulldown-cmark --no-such-option
+-- stderr
+Unrecognized option: 'no-such-option'
+Usage: /bin/pulldown-cmark [options]
+
+Reads markdown from file or standard input and emits HTML.
+
+Options:
+    -h, --help          this help message
+    -d, --dry-run       dry run, produce no output
+    -e, --events        print event sequence instead of rendering
+    -T, --enable-tables 
+                        enable GitHub-style tables
+    -m, --enable-math   enable LaTeX-style math
+    -F, --enable-footnotes 
+                        enable GitHub-style footnotes
+    -f, --enable-old-footnotes 
+                        enable Hoedown-style footnotes
+    -S, --enable-strikethrough 
+                        enable GitHub-style strikethrough
+    -U, --enable-superscript 
+                        enable superscript
+    -B, --enable-subscript 
+                        enable subscript
+    -L, --enable-tasklists 
+                        enable GitHub-style task lists
+    -P, --enable-smart-punctuation 
+                        enable smart punctuation
+    -H, --enable-heading-attributes 
+                        enable heading attributes
+    -M, --enable-metadata-blocks 
+                        enable metadata blocks
+    -R, --reject-broken-links 
+                        fail if input file has broken links
+    -G, --enable-gfm    enable misc GFM features
+    -D, --enable-definition-list 
+                        enable Commonmark-HS-Extensions compatible definition
+                        lists
+    -W, --enable-wikilinks 
+                        enable wikilinks
+
+-- status 1
+== /bin/pulldown-cmark --help
+Usage: /bin/pulldown-cmark [options]
+
+Reads markdown from file or standard input and emits HTML.
+
+Options:
+    -h, --help          this help message
+    -d, --dry-run       dry run, produce no output
+    -e, --events        print event sequence instead of rendering
+    -T, --enable-tables 
+                        enable GitHub-style tables
+    -m, --enable-math   enable LaTeX-style math
+    -F, --enable-footnotes 
+                        enable GitHub-style footnotes
+    -f, --enable-old-footnotes 
+                        enable Hoedown-style footnotes
+    -S, --enable-strikethrough 
+                        enable GitHub-style strikethrough
+    -U, --enable-superscript 
+                        enable superscript
+    -B, --enable-subscript 
+                        enable subscript
+    -L, --enable-tasklists 
+                        enable GitHub-style task lists
+    -P, --enable-smart-punctuation 
+                        enable smart punctuation
+    -H, --enable-heading-attributes 
+                        enable heading attributes
+    -M, --enable-metadata-blocks 
+                        enable metadata blocks
+    -R, --reject-broken-links 
+                        fail if input file has broken links
+    -G, --enable-gfm    enable misc GFM features
+    -D, --enable-definition-list 
+                        enable Commonmark-HS-Extensions compatible definition
+                        lists
+    -W, --enable-wikilinks 
+                        enable wikilinks
+
+-- stderr
+-- status 0
+== /bin/pulldown-cmark -e
+EOF
+-- stderr
+-- status 0
+== /bin/pulldown-cmark basic.md tiny.md
+<h1>Native documentation</h1>
+<p>ABSD renders <strong>ordinary Rust</strong> applications with café and 日本語.</p>
+<ul>
+<li>arguments and files</li>
+<li>piped standard input</li>
+</ul>
+<p>An <a href="https://example.org/">upstream parser</a> and <code>inline code</code>.</p>
+<pre><code class="language-rust">fn main() { println!("hello"); }
+</code></pre>
+<h1>Native documentation</h1>
+<p>ABSD renders <strong>ordinary Rust</strong> applications with café and 日本語.</p>
+<ul>
+<li>arguments and files</li>
+<li>piped standard input</li>
+</ul>
+<p>An <a href="https://example.org/">upstream parser</a> and <code>inline code</code>.</p>
+<pre><code class="language-rust">fn main() { println!("hello"); }
+</code></pre>
+<p><em>hello</em></p>
+-- stderr
+-- status 0
+== /bin/pulldown-cmark long.md
+<h1>A longer document</h1>
+<ul>
+<li>Line 000: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 001: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 002: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 003: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 004: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 005: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 006: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 007: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 008: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 009: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 010: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 011: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 012: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 013: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 014: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 015: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 016: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 017: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 018: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 019: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 020: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 021: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 022: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 023: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 024: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 025: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 026: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 027: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 028: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 029: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 030: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 031: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 032: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 033: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 034: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 035: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 036: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 037: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 038: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 039: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 040: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 041: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 042: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 043: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 044: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 045: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 046: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 047: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 048: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 049: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 050: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 051: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 052: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 053: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 054: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 055: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 056: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 057: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 058: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 059: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 060: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 061: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 062: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 063: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 064: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 065: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 066: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 067: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 068: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 069: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 070: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 071: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 072: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 073: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 074: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 075: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 076: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 077: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 078: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 079: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 080: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 081: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 082: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 083: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 084: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 085: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 086: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 087: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 088: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 089: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 090: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 091: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 092: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 093: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 094: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 095: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 096: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 097: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 098: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+<li>Line 099: <strong>buffered output</strong>, café, <code>std::io</code> and ordinary Markdown.</li>
+</ul>
+-- stderr
+-- status 0
+COMPAT LAUNCH DONE cases=12

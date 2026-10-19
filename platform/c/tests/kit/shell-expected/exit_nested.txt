@@ -1,0 +1,10 @@
+ctor
+main
+nested exit 3
+atexit 2
+atexit 1
+dtor
+--
+absd-sh: /bin/exit: exit status 3
+--
+status=3

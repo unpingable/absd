@@ -1,4 +1,19 @@
 //! Bounded QEMU virt device-tree reader, not a general hardware framework.
+/// The interrupt controller the tree names: GICv2 (`arm,cortex-a15-gic`,
+/// a memory-mapped CPU interface) or GICv3 (`arm,gic-v3`, redistributors
+/// and a system-register CPU interface). Anything else is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gic {
+    V2,
+    V3,
+}
+/// How PSCI is reached: `hvc` (QEMU virt without EL2 firmware) or `smc`
+/// (EL3 firmware, or QEMU virt with `virtualization=on`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Psci {
+    Hvc,
+    Smc,
+}
 #[derive(Debug)]
 pub struct Board {
     pub cpus: [u64; 4],
@@ -11,9 +26,15 @@ pub struct Board {
     pub ram: (u64, u64),
     pub uart: u64,
     pub gicd: u64,
+    /// The second `reg` region: the CPU interface (v2) or the one
+    /// redistributor region (v3), with its size.
     pub gicc: u64,
-    gicv2: bool,
-    pub hvc: bool,
+    pub gic_region_bytes: u64,
+    pub gic: Option<Gic>,
+    pub psci: Option<Psci>,
+    /// The psci node names a PSCI 0.2 or later binding (the function ids
+    /// this kernel uses).
+    pub psci_02: bool,
     pub dtb_bytes: usize,
 }
 fn word(b: &[u8], at: usize) -> Result<u32, &'static str> {
@@ -66,8 +87,10 @@ pub fn parse(b: &[u8]) -> Result<Board, &'static str> {
         uart: 0,
         gicd: 0,
         gicc: 0,
-        gicv2: false,
-        hvc: false,
+        gic_region_bytes: 0,
+        gic: None,
+        psci: None,
+        psci_02: false,
         dtb_bytes: size,
     };
     let mut at = structure;
@@ -131,13 +154,20 @@ pub fn parse(b: &[u8]) -> Result<Board, &'static str> {
                     }
                 }
                 if node.starts_with(b"intc@") && key == b"compatible" {
-                    if !data
-                        .split(|byte| *byte == 0)
-                        .any(|name| name == b"arm,cortex-a15-gic")
-                    {
+                    let mut names = data.split(|byte| *byte == 0);
+                    board.gic = if names.clone().any(|name| name == b"arm,cortex-a15-gic") {
+                        Some(Gic::V2)
+                    } else if names.any(|name| name == b"arm,gic-v3") {
+                        Some(Gic::V3)
+                    } else {
                         return Err("FDT unsupported GIC version");
-                    }
-                    board.gicv2 = true;
+                    };
+                }
+                if node.starts_with(b"intc@")
+                    && key == b"#redistributor-regions"
+                    && word(data, 0)? != 1
+                {
+                    return Err("FDT unsupported GIC redistributor regions");
                 }
                 if key == b"reg" {
                     if node.starts_with(b"cpu@") {
@@ -168,12 +198,25 @@ pub fn parse(b: &[u8]) -> Result<Board, &'static str> {
                         board.uart = quad(data, 0)?;
                     }
                     if node.starts_with(b"intc@") {
+                        if data.len() < 32 {
+                            return Err("FDT GIC reg");
+                        }
                         board.gicd = quad(data, 0)?;
                         board.gicc = quad(data, 16)?;
+                        board.gic_region_bytes = quad(data, 24)?;
                     }
                 }
+                if node == b"psci" && key == b"compatible" {
+                    board.psci_02 = data
+                        .split(|byte| *byte == 0)
+                        .any(|name| name == b"arm,psci-0.2" || name == b"arm,psci-1.0");
+                }
                 if node == b"psci" && key == b"method" {
-                    board.hvc = data == b"hvc\0";
+                    board.psci = match data {
+                        b"hvc\0" => Some(Psci::Hvc),
+                        b"smc\0" => Some(Psci::Smc),
+                        _ => return Err("FDT unsupported PSCI method"),
+                    };
                 }
             }
             4 => {}
@@ -190,8 +233,9 @@ pub fn parse(b: &[u8]) -> Result<Board, &'static str> {
         || board.uart == 0
         || board.gicd == 0
         || board.gicc == 0
-        || !board.gicv2
-        || !board.hvc
+        || board.gic.is_none()
+        || board.psci.is_none()
+        || !board.psci_02
     {
         return Err("FDT required platform missing");
     }

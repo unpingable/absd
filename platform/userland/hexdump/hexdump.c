@@ -1,0 +1,200 @@
+/* hexdump.c - Dump file content in hexadecimal format to stdout
+ * Copyright 2021 Moritz Röhrich <moritz@ildefons.de>
+ * Toybox 0.8.15, 0BSD. ABSD standalone adaptation 2026.
+ * Retains upstream six-mode formatter and fixed-block repeat algorithm.
+ * Stream assembly, checked options and error propagation replace Toybox plumbing.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <limits.h>
+#include <errno.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+static unsigned char line[16], previous[16];
+static unsigned count;
+static unsigned long long offset, remaining_skip, remaining_limit;
+static int limited, verbose, have_previous, squeezed, failed;
+static char mode = 'x';
+static const char *fmt;
+
+const char *make_printable(unsigned char byte) {
+  switch (byte) {
+    case '\0': return "\\0";
+    case '\a': return "\\a";
+    case '\b': return "\\b";
+    case '\t': return "\\t";
+    case '\n': return "\\n";
+    case '\v': return "\\v";
+    case '\f': return "\\f";
+    default: return "??";  // for all unprintable bytes
+  }
+}
+
+static void emit(void)
+{
+  unsigned int block, adv, i;
+  if (count == 16 && have_previous && !verbose && !memcmp(line, previous, 16)) {
+    if (!squeezed) puts("*");
+    squeezed = 1;
+  } else {
+    squeezed = 0;
+      if (!(mode == 'C') && !(mode == 'c')) {
+        printf("%07llx", offset);
+        adv = (mode == 'b') ? 1 : 2;
+        for (i = 0; i < count; i += adv) {
+          block = ((mode == 'b') || i == count-1)
+            ? line[i] : (line[i] | line[i+1] << 8);
+          printf(fmt, block);
+        }
+      } else if (mode == 'C') {
+        printf("%08llx", offset);
+        for (i = 0; i < 16; i++) {
+          if (!(i % 8)) putchar(' ');
+          if (i < count) printf(" %02x", line[i]);
+          else printf("   ");
+        }
+        printf("  |");
+        for (i = 0; i < count; i++) {
+          if (line[i] < ' ' || line[i] > '~') putchar('.');
+          else putchar(line[i]);
+        }
+        putchar('|');
+      } else {
+        printf("%07llx", offset);
+        for (i = 0; i < count; i++) {
+          if (line[i] >= ' ' && line[i] <= '~')
+            printf("%4c", line[i]);
+          else printf("%4s", make_printable(line[i]));
+        }
+      }
+      putchar('\n');
+  }
+  if (count == 16) { memcpy(previous, line, 16); have_previous = 1; }
+  offset += count; /* Input admission checks offset + buffered count. */
+  count = 0;
+}
+
+static int number(const char *s, unsigned long long *out)
+{
+  unsigned long long v = 0;
+  unsigned base = 10, digit, digits = 0;
+  if (!*s || *s == '-' || *s == '+') return -1;
+  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) { base = 16; s += 2; }
+  if (!*s) return -1;
+  while (*s) {
+    digit = *s >= '0' && *s <= '9' ? (unsigned)(*s-'0') :
+      *s >= 'a' && *s <= 'f' ? (unsigned)(*s-'a'+10) :
+      *s >= 'A' && *s <= 'F' ? (unsigned)(*s-'A'+10) : 99;
+    if (digit >= base) break;
+    if (v > (ULLONG_MAX-digit)/base) return -1;
+    v = v*base+digit; s++; digits++;
+  }
+  if (!digits) return -1;
+  if (*s) {
+    const char *suffixes = "cwbkmgtpe", *suffix;
+    char c = *s >= 'A' && *s <= 'Z' ? *s-'A'+'a' : *s;
+    unsigned long long mul = 1;
+    int power;
+    suffix = strchr(suffixes, c);
+    if (!suffix) return -1;
+    power = (int)(suffix-suffixes)-2;
+    s++;
+    if (power == -1) mul = 2;
+    else if (!power) mul = 512;
+    else if (power > 0) {
+      unsigned unit = 1024;
+      if (*s == 'd' || *s == 'D') { unit = 1000; s++; }
+      while (power--) mul *= unit;
+    }
+    if (*s || v > ULLONG_MAX/mul) return -1;
+    v *= mul;
+  }
+  *out = v;
+  return 0;
+}
+
+static void consume(int fd, const char *name)
+{
+  unsigned char buf[4096];
+  while (!limited || remaining_limit || remaining_skip) {
+    size_t want = sizeof(buf), start = 0, n;
+    ssize_t got;
+    /* Never consume beyond the requested range, particularly on stdin. */
+    if (remaining_skip) {
+      if (remaining_skip < want) want = (size_t)remaining_skip;
+    } else if (limited && remaining_limit < want) want = (size_t)remaining_limit;
+    if (!want) break;
+    got = read(fd, buf, want);
+    if (got < 0) {
+      if (errno == EINTR) continue;
+      fprintf(stderr, "hexdump: %s: read error\n", name); failed = 1; return;
+    }
+    if (!got) return;
+    n = (size_t)got;
+    if (remaining_skip) {
+      remaining_skip -= n;
+      if (offset > ULLONG_MAX-n) { failed = 1; return; }
+      offset += n;
+      continue;
+    }
+    if (limited) remaining_limit -= n;
+    while (start < n) {
+      if (offset == ULLONG_MAX-count) {
+        fprintf(stderr, "hexdump: offset overflow\n"); failed = 1; return;
+      }
+      line[count++] = buf[start++];
+      if (count == 16) emit();
+    }
+    if (ferror(stdout)) { failed = 1; return; }
+  }
+}
+
+static int usage(void)
+{
+  fputs("usage: hexdump [-bcCdox] [-v] [-n LEN] [-s SKIP] [FILE ...]\n"
+        "custom formats -e/-f are unsupported\n", stderr);
+  return 2;
+}
+
+int main(int argc, char **argv)
+{
+  int i = 1, j, mode_seen = 0;
+  for (; i < argc && argv[i][0] == '-' && argv[i][1]; i++) {
+    if (!strcmp(argv[i], "--")) { i++; break; }
+    for (j = 1; argv[i][j]; j++) {
+      char opt = argv[i][j];
+      if (strchr("bcCdox", opt)) {
+        if (mode_seen && mode != opt) return usage();
+        mode = opt; mode_seen = 1;
+      } else if (opt == 'v') verbose = 1;
+      else if (opt == 'n' || opt == 's') {
+        const char *arg = argv[i]+j+1;
+        unsigned long long val;
+        if (!*arg) { if (++i == argc) return usage(); arg = argv[i]; }
+        if (number(arg, &val)) return usage();
+        if (opt == 'n') { remaining_limit = val; limited = 1; }
+        else remaining_skip = val;
+        break;
+      } else return usage();
+    }
+  }
+  fmt = mode == 'b' ? " %03o" : mode == 'd' ? " %05u" :
+        mode == 'o' ? " %06o" : " %04x";
+  if (i == argc) consume(STDIN_FILENO, "stdin");
+  for (; i < argc; i++) {
+    int fd, owned = strcmp(argv[i], "-") != 0;
+    if (limited && !remaining_limit && !remaining_skip) break;
+    fd = owned ? open(argv[i], O_RDONLY) : STDIN_FILENO;
+    if (fd < 0) { fprintf(stderr, "hexdump: %s: open error\n", argv[i]); failed = 1; continue; }
+    consume(fd, argv[i]);
+    if (owned && close(fd)) { fprintf(stderr, "hexdump: %s: close error\n", argv[i]); failed = 1; }
+    if (ferror(stdout)) break;
+  }
+  if (count) emit();
+  printf("%0*llx\n", 7+(mode == 'C'), offset);
+  if (fflush(stdout) || ferror(stdout)) failed = 1;
+  return failed ? 2 : 0;
+}

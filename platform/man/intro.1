@@ -54,6 +54,10 @@ filesystem space, and this session's mounts
 print arguments
 .It Nm head
 first lines or bytes of files
+.It Nm health
+the release, this boot, how the previous generation ended, the
+configuration in use, and the logs' sizes; see
+.Xr health 1
 .It Nm ls
 list directories;
 .Fl l
@@ -115,14 +119,51 @@ and
 They behave as on Linux.
 And
 .Nm rg ,
-ripgrep 15.2.0, likewise unmodified: the search tool (there is no
-.Nm grep ) ;
+ripgrep 15.2.0, likewise unmodified: the search tool for directory trees;
 see
 .Xr rg 1
 for what differs here, in particular that standard input must be named as
 .Ql - .
 Each port is 0.5 to 2.3 MB, and a program is read whole through the file
 server before it starts, so they start more slowly than the native commands.
+.Pp
+C programs from sbase 0.1 (MIT), built with the C kit; each refuses by name
+what ABSD does not provide, and its page lists those features
+.Pq Xr sbase 7 :
+.Bl -tag -width "sha256sum" -compact
+.It Nm cmp
+compare two files byte by byte; see
+.Xr cmp 1
+.It Nm ed
+the line editor; see
+.Xr ed 1
+for what to know before using it
+.It Nm find
+walk a file hierarchy; no
+.Ic -exec ,
+no time primaries; see
+.Xr find 1
+.It Nm grep
+lines matching a regular expression, from files or standard input; see
+.Xr grep 1
+.It Nm od
+dump bytes in octal, hexadecimal or characters; see
+.Xr od 1
+.It Nm printf
+format and print arguments; see
+.Xr printf 1
+.It Nm sed
+stream editor; no
+.Fl i ;
+see
+.Xr sed 1
+.It Nm sort
+sort lines, in memory; see
+.Xr sort 1
+.It Nm test
+evaluate a file, string or integer expression; see
+.Xr test 1
+.El
 .Pp
 .Nm man
 has pages only for the topics listed under
@@ -179,8 +220,12 @@ signals, job control, process groups: see
 .Xr process 7 .
 .El
 .Pp
-There is no text editor and no pager (above).
+There is no screen editor and no pager (above); the editor is the line
+editor
+.Xr ed 1 .
 Write files with
+.Nm ed ,
+with
 .Nm echo
 and
 .Ql > ,
@@ -191,6 +236,8 @@ read long output a part at a time with
 and
 .Nm tail ,
 or pick lines out of it with
+.Nm grep
+or
 .Nm rg .
 .Ss Copying files
 There is no
@@ -231,12 +278,22 @@ see
 .Xr afterboot 8 .
 .Sh SEE ALSO
 .Xr absd-sh 1 ,
+.Xr cmp 1 ,
 .Xr date 1 ,
+.Xr ed 1 ,
+.Xr find 1 ,
+.Xr grep 1 ,
+.Xr health 1 ,
 .Xr man 1 ,
+.Xr od 1 ,
+.Xr printf 1 ,
 .Xr ps 1 ,
 .Xr release 1 ,
 .Xr rg 1 ,
+.Xr sed 1 ,
+.Xr sort 1 ,
 .Xr sysinfo 1 ,
+.Xr test 1 ,
 .Xr uptime 1 ,
 .Xr ata 4 ,
 .Xr e1000 4 ,
@@ -246,5 +303,20 @@ see
 .Xr filesystem 7 ,
 .Xr handles 7 ,
 .Xr process 7 ,
+.Xr sbase 7 ,
 .Xr afterboot 8 ,
 .Xr shutdown 8
+.Sh ADDITIONAL C PORTS
+Bounded Toybox 0.8.15 adaptations provide
+.Xr diff 1
+for comparing two regular files and
+.Xr hexdump 1
+for conventional byte displays. Their pages define supported options and
+refusals; see
+.Xr toybox 7
+for source and license information.
+.Pp
+The native uncompressed archive interface is documented in
+.Xr tar 1 .
+Its supported format and native metadata limits are described there.
+Guest qualification of this pipeline successor remains pending.

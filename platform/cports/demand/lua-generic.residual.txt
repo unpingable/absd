@@ -1,0 +1,17 @@
+_exit	raise.c:64
+calloc	fdopen.c:54
+close	posixiob_stderr.c
+execve	system.c:71
+fork	system.c:70
+free	lauxlib.c
+gettimeofday	time.c:54
+lseek	posixiob_stderr.c
+malloc	bufio_setvbuf.c:89
+open	mktemp.c:0
+read	posixiob_stdin.c
+realloc	lauxlib.c
+rename	loslib.c
+times	clock.c:73
+unlink	tmpfile.c:54
+waitpid	system.c:76
+write	posixiob_stdin.c

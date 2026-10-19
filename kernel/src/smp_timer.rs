@@ -1,7 +1,7 @@
 //! Qualification-only local AP preemption. Global PIT time remains BSP-owned.
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-const VECTOR: u32 = 0xe0;
+const VECTOR: u32 = absd_kernel::interrupt_vector::AP_TIMER as u32;
 const MASK: u32 = 1 << 16;
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static MUTANT: AtomicU64 = AtomicU64::new(0);

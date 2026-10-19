@@ -70,6 +70,7 @@ import operator_image as oi  # noqa: E402
 import release_record  # noqa: E402
 import absd_inputs  # noqa: E402
 import ssh_absd  # noqa: E402
+from e1000_rx import wait_rx_setup, RxSetupFailed
 
 spec = importlib.util.spec_from_file_location("ssh_matrix", here / "ssh-matrix.py")
 sm = importlib.util.module_from_spec(spec)
@@ -122,6 +123,11 @@ class Boot:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.worker().count("SSH LISTENING") >= count:
+                try:
+                    wait_rx_setup(self.text, lambda: self.proc.poll() is None, deadline)
+                except RxSetupFailed as error:
+                    print(f"OPERATOR RECEIVE SETUP FAILED reason={error}", file=sys.stderr)
+                    return False
                 return True
             if self.proc.poll() is not None:
                 return False
@@ -163,7 +169,7 @@ class OperatorMatrix(sm.Matrix):
 
     def env(self):
         return dict(os.environ, ABSD_KERNEL_RUN=str(self.kernel), ABSD_SKIP_BUILD="1",
-                    ABSD_QEMU=self.qemu.split()[0])
+                    ABSD_QEMU=self.qemu)
 
     def build_image(self):
         site = self.work / "site-etc"
@@ -402,7 +408,9 @@ class OperatorMatrix(sm.Matrix):
 
     def logs(self, boot_ids):
         rc, out, err = self.ssh("ls /var/log")
-        self.check("/var/log lists the two logs", rc == 0 and out.split() == [b"fsd", b"sshd"], f"{out!r} {err!r}")
+        self.check("/var/log lists logs, network sample and recovery projection", rc == 0 and out.split() == [b"fsd", b"network-recovery", b"network-status", b"sshd"], f"{out!r} {err!r}")
+        rc, sample, err = self.ssh("cat /var/log/network-status")
+        self.check("the owner network sample is exactly 512 bytes", rc == 0 and len(sample) == 512, f"rc={rc} bytes={len(sample)} {err!r}")
         for name in ("sshd", "fsd"):
             rc, out, err = self.ssh(f"cat /var/log/{name}")
             lines = out.splitlines(keepends=True)
@@ -430,7 +438,11 @@ class OperatorMatrix(sm.Matrix):
                 break
             rounds += 1
         rc, out, err = self.ssh("ls -l /var/log")
-        sizes = {line.split()[-1]: int(line.split()[-2]) for line in out.decode().splitlines()}
+        sizes = {}
+        for line in out.decode().splitlines():
+            row = re.fullmatch(r"[d-] (?:ro|--) \d+ +(\d+) (?:-|[0-9]{4,12}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}) (\S+)", line)
+            self.check("log listing has size and explicit mtime", row is not None, line)
+            sizes[row.group(2)] = int(row.group(1))
         self.check("sshd's log rotated to sshd.0 at the 64 KiB bound", rc == 0 and "sshd.0" in sizes
                    and 60_000 < sizes["sshd.0"] <= 65_536 and sizes["sshd"] < 65_536, f"{rounds} rounds {out!r}")
         return rounds
@@ -512,8 +524,8 @@ class OperatorMatrix(sm.Matrix):
                    f"{first!r} {second!r} {boot_ids}")
         rc, out, err = self.ssh("ls -l /home/operator")
         rows = out.decode().splitlines()
-        self.check("ls -l shows kind, flag, links, size, name and nothing else",
-                   rc == 0 and rows and all(re.fullmatch(r"[d-] (ro|--) \d+ +\d+ \S+", r) for r in rows), repr(rows))
+        self.check("ls -l shows kind, flag, links, size, mtime and name",
+                   rc == 0 and rows and all(re.fullmatch(r"[d-] (ro|--) \d+ +\d+ (?:-|[0-9]{4,12}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}) \S+", r) for r in rows), repr(rows))
 
 
 def main():

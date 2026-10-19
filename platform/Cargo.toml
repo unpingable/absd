@@ -3,7 +3,185 @@ name = "absd-std-probe"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+native-udp-probe = []
+native-dns-probe = ["dep:absd-broker"]
+native-tcp-probe = ["dep:absd-broker"]
+native-icmp-probe = ["dep:absd-broker"]
+native-ipv6-probe = ["dep:absd-broker"]
+native-ipv6-tcp-probe = ["dep:absd-broker"]
+native-ipv6-feedback-probe = ["dep:absd-broker"]
+native-ipv6-dad-probe = ["dep:absd-broker"]
+native-ipv6-echo-probe = ["dep:absd-broker"]
+native-ipv6-echo-responder-probe = []
+native-ipv6-route-probe = ["dep:absd-broker"]
+native-ipv6-routed-tcp-probe = ["dep:absd-broker"]
+native-dhcpv4-probe = ["dep:absd-broker", "absd-net/dhcpv4"]
+native-sntp-probe = ["dep:absd-broker"]
+native-tcp-server-probe = ["dep:absd-broker"]
+native-echo-probe = ["dep:absd-broker"]
+
+[[bin]]
+name = "net-status"
+path = "src/bin/net_status.rs"
+
+[[bin]]
+name = "ipv6_echo_responder_probe"
+path = "src/bin/ipv6_echo_responder_probe.rs"
+required-features = ["native-ipv6-echo-responder-probe"]
+
+[[bin]]
+name = "ipv6_route_tcp_dns_client"
+path = "src/bin/ipv6_route_tcp_dns_client.rs"
+required-features = ["native-ipv6-routed-tcp-probe"]
+
+[[bin]]
+name = "ipv6_route_tcp_service_probe"
+path = "src/bin/ipv6_route_tcp_service_probe.rs"
+required-features = ["native-ipv6-routed-tcp-probe"]
+
+[[bin]]
+name = "ipv6_route_dns_client"
+path = "src/bin/ipv6_route_dns_client.rs"
+required-features = ["native-ipv6-route-probe"]
+
+[[bin]]
+name = "ipv6_route_service_probe"
+path = "src/bin/ipv6_route_service_probe.rs"
+required-features = ["native-ipv6-route-probe"]
+
+[[bin]]
+name = "ping6_once"
+path = "src/bin/ping6_once.rs"
+required-features = ["native-ipv6-echo-probe"]
+
+[[bin]]
+name = "ipv6_echo_service_probe"
+path = "src/bin/ipv6_echo_service_probe.rs"
+required-features = ["native-ipv6-echo-probe"]
+
+[[bin]]
+name = "ipv6_dad_dns_client"
+path = "src/bin/ipv6_dad_dns_client.rs"
+required-features = ["native-ipv6-dad-probe"]
+
+[[bin]]
+name = "ipv6_dad_service_probe"
+path = "src/bin/ipv6_dad_service_probe.rs"
+required-features = ["native-ipv6-dad-probe"]
+
+[[bin]]
+name = "ipv6_feedback_client"
+path = "src/bin/ipv6_feedback_client.rs"
+required-features = ["native-ipv6-feedback-probe"]
+
+[[bin]]
+name = "ipv6_feedback_service_probe"
+path = "src/bin/ipv6_feedback_service_probe.rs"
+required-features = ["native-ipv6-feedback-probe"]
+
+[[bin]]
+name = "ipv6_tcp_client"
+path = "src/bin/ipv6_tcp_client.rs"
+required-features = ["native-ipv6-tcp-probe"]
+
+[[bin]]
+name = "ipv6_tcp_service_probe"
+path = "src/bin/ipv6_tcp_service_probe.rs"
+required-features = ["native-ipv6-tcp-probe"]
+
+[[bin]]
+name = "ipv6_dns_client"
+path = "src/bin/ipv6_dns_client.rs"
+required-features = ["native-ipv6-probe"]
+
+[[bin]]
+name = "ipv6_service_probe"
+path = "src/bin/ipv6_service_probe.rs"
+required-features = ["native-ipv6-probe"]
+
+[[bin]]
+name = "dhcp_refusal_probe"
+path = "src/bin/dhcp_refusal_probe.rs"
+required-features = ["native-dhcpv4-probe"]
+
+[[bin]]
+name = "dhcp_service_probe"
+path = "src/bin/dhcp_service_probe.rs"
+required-features = ["native-dhcpv4-probe"]
+
+[[bin]]
+name = "dhcp_dns_client"
+path = "src/bin/dhcp_dns_client.rs"
+required-features = ["native-dhcpv4-probe"]
+
+[[bin]]
+name = "sntp-query"
+path = "src/bin/sntp_query.rs"
+required-features = ["native-sntp-probe"]
+
+[[bin]]
+name = "sntp_service_probe"
+path = "src/bin/sntp_service_probe.rs"
+required-features = ["native-sntp-probe"]
+
+[[bin]]
+name = "tcp_server_echo"
+path = "src/bin/tcp_server_echo.rs"
+required-features = ["native-tcp-server-probe"]
+
+[[bin]]
+name = "tcp_server_service_probe"
+path = "src/bin/tcp_server_service_probe.rs"
+required-features = ["native-tcp-server-probe"]
+
+[[bin]]
+name = "ping-once"
+path = "src/bin/ping_once.rs"
+required-features = ["native-echo-probe"]
+
+[[bin]]
+name = "echo_service_probe"
+path = "src/bin/echo_service_probe.rs"
+required-features = ["native-echo-probe"]
+
+[[bin]]
+name = "icmp_service_probe"
+path = "src/bin/icmp_service_probe.rs"
+required-features = ["native-icmp-probe"]
+
+[[bin]]
+name = "udp_client"
+path = "src/bin/udp_client.rs"
+required-features = ["native-udp-probe"]
+
+[[bin]]
+name = "udp_service_probe"
+path = "src/bin/udp_service_probe.rs"
+required-features = ["native-udp-probe"]
+
+[[bin]]
+name = "dns_client"
+path = "src/bin/dns_client.rs"
+required-features = ["native-dns-probe"]
+
+[[bin]]
+name = "dns_service_probe"
+path = "src/bin/dns_service_probe.rs"
+required-features = ["native-dns-probe"]
+
+[[bin]]
+name = "tcp_client"
+path = "src/bin/tcp_client.rs"
+required-features = ["native-tcp-probe"]
+
+[[bin]]
+name = "tcp_service_probe"
+path = "src/bin/tcp_service_probe.rs"
+required-features = ["native-tcp-probe"]
+
 [dependencies]
+absd-broker = { path = "broker", optional = true }
 absd-runtime = { path = "runtime" }
 absd-net = { path = "net" }
 absd-fs = { path = "fs" }

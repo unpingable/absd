@@ -1293,31 +1293,32 @@ struct Gate {
 }
 pub unsafe fn install_ap_idt(idt: *mut u8) {
     unsafe {
-        for vector in (0..32).chain([0x80, 0xe0, 0xf1, 0xff]) {
+        use absd_kernel::interrupt_vector as v;
+        for vector in (0u8..32).chain([v::SYSCALL, v::AP_TIMER, v::AP_IPI, v::APIC_SPURIOUS]) {
             let address = match vector {
-                0x80 => core::ptr::addr_of!(ap_user_syscall_stub) as u64,
-                0xf1 => core::ptr::addr_of!(ap_user_stop_stub) as u64,
-                0xe0 => core::ptr::addr_of!(ap_user_timer_stub) as u64,
-                0xff => core::ptr::addr_of!(ap_user_spurious_stub) as u64,
-                _ => (*core::ptr::addr_of!(ap_user_exception_table))[vector],
+                v::SYSCALL => core::ptr::addr_of!(ap_user_syscall_stub) as u64,
+                v::AP_IPI => core::ptr::addr_of!(ap_user_stop_stub) as u64,
+                v::AP_TIMER => core::ptr::addr_of!(ap_user_timer_stub) as u64,
+                v::APIC_SPURIOUS => core::ptr::addr_of!(ap_user_spurious_stub) as u64,
+                _ => (*core::ptr::addr_of!(ap_user_exception_table))[usize::from(vector)],
             };
             let gate = Gate {
                 low: address as u16,
                 selector: 8,
                 options: absd_kernel::arch::interrupt_gate_options(
-                    if vector == 8 || vector == 0xff {
+                    if vector == 8 || vector == v::APIC_SPURIOUS {
                         1
-                    } else if vector == 0xf1 {
+                    } else if vector == v::AP_IPI {
                         2
                     } else {
                         0
                     },
-                ) | if vector == 0x80 { 0x6000 } else { 0 },
+                ) | if vector == v::SYSCALL { 0x6000 } else { 0 },
                 middle: (address >> 16) as u16,
                 high: (address >> 32) as u32,
                 reserved: 0,
             };
-            core::ptr::write_unaligned(idt.cast::<Gate>().add(vector), gate);
+            core::ptr::write_unaligned(idt.cast::<Gate>().add(usize::from(vector)), gate);
         }
     }
 }

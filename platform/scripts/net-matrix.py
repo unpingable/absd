@@ -55,6 +55,7 @@ frames=0 processes=0 cells=0 pipes=0`) and `DURABLE WORKLOAD OK`.
 import hashlib
 import json
 import os
+import pathlib
 import random
 import re
 import socket
@@ -63,6 +64,12 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from served_kernel import kernel_make
+from served_ram import served_qemu
+from e1000_rx import wait_rx_setup
 
 QEMU = os.environ.get("ABSD_QEMU", "qemu-system-x86_64")
 QEMU_CPU = ["-cpu", "max,vendor=GenuineIntel,+rdrand"]
@@ -104,11 +111,19 @@ def wait_output(log_path, pattern, qemu, timeout=BOOT_TIMEOUT):
     fail(f"timed out waiting for {pattern!r}")
 
 
+def wait_network_ready(log_path, pattern, qemu, timeout=BOOT_TIMEOUT):
+    """Existing readiness and receive preparation share one absolute bound."""
+    deadline = time.monotonic() + timeout
+    found = wait_output(log_path, pattern, qemu, timeout=timeout)
+    wait_rx_setup(lambda: pathlib.Path(log_path).read_bytes(), lambda: qemu.poll() is None, deadline)
+    return found
+
+
 def build_iso(kernel, elf, work, step, broker=(), options="net"):
     empty = os.path.join(work, "empty")
     open(empty, "wb").close()
     built = subprocess.run(
-        ["make", "-C", kernel, "--no-print-directory", "durable-iso", f"DURABLE_STEP={step}",
+        [*kernel_make(), "-C", kernel, "--no-print-directory", "durable-iso", f"DURABLE_STEP={step}",
          f"DURABLE_OPTIONS={options}", f"EXTERNAL_USER_ELF={elf}", f"EXTERNAL_INPUT={empty}", *broker],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if built.returncode != 0:
@@ -127,7 +142,7 @@ def start_qemu(iso, image, log_path, netdev, stopped_with_qmp=None):
     stopped (`-S`) and serves QMP there, for `Qmp.set_link` before `cont`."""
     if os.path.exists(log_path):
         os.unlink(log_path)
-    command = [QEMU] + QEMU_CPU + [
+    command = served_qemu(QEMU) + QEMU_CPU + [
         "-cdrom", iso, "-drive", f"file={image},format=raw,if=ide,index=0",
         "-display", "none", "-serial", f"file:{log_path}", "-no-reboot", "-no-shutdown",
         "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
@@ -288,32 +303,42 @@ def stats_query(wire, guest_mac, qemu):
 
 
 def run_frames(kernel, elf, work, link_down=False):
+    # AF_UNIX paths are limited to 107 bytes on this host. Keep only the
+    # transient sockets here; images, captures and logs stay in work.
+    with tempfile.TemporaryDirectory(prefix="absd-net-", dir="/tmp") as sockets:
+        return run_frames_with_sockets(kernel, elf, work, sockets, link_down)
+
+
+def run_frames_with_sockets(kernel, elf, work, sockets, link_down=False):
     phase = "linkdown" if link_down else "frames"
     iso, image = build_iso(kernel, elf, work, 1)
     log = os.path.join(work, f"{phase}.serial.log")
-    host_path, guest_path = os.path.join(work, "host.sock"), os.path.join(work, "guest.sock")
-    qmp_path = os.path.join(work, "qmp.sock")
+    host_path, guest_path = os.path.join(sockets, "host.sock"), os.path.join(sockets, "guest.sock")
+    qmp_path = os.path.join(sockets, "qmp.sock")
     for path in (host_path, guest_path):
         if os.path.exists(path):
             os.unlink(path)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    sock.bind(host_path)
-    sock.settimeout(0.1)
-    qemu = start_qemu(iso, image, log, [
-        "-netdev", f"dgram,id=n0,local.type=unix,local.path={guest_path},"
-                   f"remote.type=unix,remote.path={host_path}",
-        "-object", f"filter-dump,id=f0,netdev=n0,file={os.path.join(work, f'{phase}.pcap')}"],
-        stopped_with_qmp=qmp_path if link_down else None)
+    qemu = None
     qmp = None
     try:
+        sock.bind(host_path)
+        sock.settimeout(0.1)
+        qemu = start_qemu(iso, image, log, [
+            "-netdev", f"dgram,id=n0,local.type=unix,local.path={guest_path},"
+                       f"remote.type=unix,remote.path={host_path}",
+            "-object", f"filter-dump,id=f0,netdev=n0,file={os.path.join(work, f'{phase}.pcap')}"],
+            stopped_with_qmp=qmp_path if link_down else None)
         if link_down:
             qmp = Qmp(qmp_path, qemu)
             qmp.set_link(False)
             qmp.execute("cont")
-        ready = wait_output(log, rb"NETD FRAMES READY mac=([0-9a-f:]{17}) ip=10.0.2.15/24 link=(up|down)", qemu)
+        ready = wait_network_ready(log, rb"NETD FRAMES READY mac=([0-9a-f:]{17}) ip=10.0.2.15/24 link=(up|down)", qemu)
         guest_mac = bytes.fromhex(ready.group(1).decode().replace(":", ""))
         if ready.group(2) != (b"down" if link_down else b"up"):
             fail(f"ready with link={ready.group(2).decode()}")
+        # QMP cont and receive preparation have completed before any wire
+        # exchange/silence window. First TX alone would not open the gate.
         wire = Wire(sock, guest_path)
         not_control = lambda frame: frame[12:14] != b"\x88\xb5"
 
@@ -407,7 +432,7 @@ def run_frames(kernel, elf, work, link_down=False):
         print(f"{phase.upper()} BOOT OK {done.group(0).decode()} nic: {nic}", flush=True)
         return int(done.group(1)), int(done.group(2))
     finally:
-        if qemu.poll() is None:
+        if qemu is not None and qemu.poll() is None:
             qemu.kill()
             qemu.wait()
         if qmp is not None:
@@ -549,7 +574,7 @@ def run_tcp(kernel, elf, work):
         "-netdev", f"user,id=n0,net=10.0.2.0/24,host=10.0.2.2,restrict=on,{forwards}",
         "-object", f"filter-dump,id=f0,netdev=n0,file={os.path.join(work, 'tcp.pcap')}"])
     try:
-        ready = wait_output(log, rb"NETD TCP READY .* sockets=(\d+)", qemu)
+        ready = wait_network_ready(log, rb"NETD TCP READY .* sockets=(\d+)", qemu)
         listening = int(ready.group(1))
         rng = random.Random(0x7C9)
         started = time.monotonic()

@@ -1,0 +1,32 @@
+# Current catalog: platform 3d68de77, including accepted mtime e0bf657c.
+# The metadata refactor changes linked V1 fstat (all), stat and readdir code; all 12 ports move.
+# Exact ca13/b217/C11/P12 comparisons: c11-cport-pin-diagnosis-20261017/f92c55e4.
+# Raw and stripped hashes change; installed lengths and C V1 layout stay fixed.
+# Host catalog update; fresh native qualification remains a separate result.
+# The base userland's ports installed under /bin (userland/README.md,
+# "Installed"). scripts/install-userland-ports.sh, run by
+# scripts/build-ports.sh, copies each into ports/NAME; scripts/operator_image.py
+# PORTS names the same utilities, so the operator image and a release carry
+# exactly these bytes. Tab-separated:
+#   NAME          the /bin name (no platform command, builtin or other port has it)
+#   UPSTREAM      the userland/PIN row the sources come from (NAME-VERSION)
+#   SOURCE        the upstream file; the patches in userland/patches/ name theirs
+#   BUILD         the ELF scripts/build-userland.sh builds and gates, relative to
+#                 its build directory ($ABSD_USERLAND_BUILD)
+#   GATED_SHA256  that ELF's digest (check-c-elf.py --map passed; two rounds equal)
+#   SHA256 BYTES  ports/NAME: BUILD stripped with llvm-strip-18, as the Rust ports are
+# A digest that changes (the kit, the adapter, a patch or the pin changed) is
+# refused by the install; record the new rows (install-userland-ports.sh
+# --print) only with that change, once it is reviewed.
+printf	sbase-0.1	printf.c	absd/printf	b23b08d26fdeb6e804a20ded73105e58ead01f34f4a562586062f21e31fb0217	42fc554b25717fc08ef5cb40826a0d73fc2c300eaa298cb67867e753c3fc789e	176632
+test	sbase-0.1	test.c	absd/test	7edb2f44ceafa0d67ca30933585963f22fb8ae93cea2674e146e2e1f9bb50d0e	e49278923c88493c4d1ad8a58e3f1296614c356d3b89ff83e6630ca6b197364d	197112
+grep	sbase-0.1	grep.c	absd/grep	8d15d2c2f1baf48845319d629bac913c8091fddd4ff46112bea7e09b9dd59790	c8b96cb40d3808a37b5d7e42c071acfa7cfeec507c828b756e7b233982cd69c1	225928
+sort	sbase-0.1	sort.c	absd/sort	4e341676cd56f6c993eda2acc0a536be06c897b346a03984f4523510d4761857	be8e810da20bef4efffdda6b7a2595b90c6a85ba6ac85b006ead42e6dff97416	213656
+sed	sbase-0.1	sed.c	absd/sed	6eb594d930b82031238b4bfeb044125524b51fcaef5d9fe24359d4ca50ec41a7	2313fe7ee5c683eea7a8310127ec550f112025feb670700620ed3f2f769047fd	250504
+od	sbase-0.1	od.c	absd/od	44f582dccbf9375d4e8d35fff9f2fd938ab02764d89f077114b78a190b17c8a0	c6bc54ae93dcb93030b3f25ebed8231574b8459420f6379d3a144d95b08f386e	197160
+cmp	sbase-0.1	cmp.c	absd/cmp	3dda8cab5a32398d796ece6059e41149eaae0a2cf0f86d7e6a6286288234c656	6bde08fa4d1827979377ee00298e7eb78863f5b3c2779687f2e23163c9094a57	193160
+ed	sbase-0.1	ed.c	absd/ed	36693a98cdc54c90cf10185d5196d1ca81bd55983a17ac0d4c67e8ebfbb013e4	dd2cab5ef8e46dded67d5af263548668f4edbe3e72fc1122560952a1139a23a8	258712
+find	sbase-0.1	find.c	absd/find	e72dedac6405d92eb0d435468830cf531ce2e1d93e6892a1c51b12840766b666	c4d3e8cb21c5f25e5b40e1253ac6a6dd0308876485c05cfb935b77c5741b7f75	218672
+diff	toybox-0.8.15	toys/pending/diff.c	absd/diff	dabeaddaa28fa6f145a44010112cfeb47edee5f69ccdb9aa99bd107cfc9ea697	3f169fcbc29b2c85d9583ea032bdf13bab101658b82121dca65c295abc0b33f0	197056
+hexdump	toybox-0.8.15	toys/pending/hexdump.c	absd/hexdump	73fe8e2e2497a03d7dd2095a4315ba75c1641ece24988491fec9bab63aa7065b	eb5db4049bdb1c710184e90ee32380368b32793b1e450838500b0047c53b6ea5	188880
+tar	sbase-0.1	tar.c	absd/tar	d4fc29013dbf7b12dd137a26aa157f121ead95cd4de0b4afadf6a06a28f8f3fa	3969d81900e1b7f51bc81082729d906451e8490ab470d54598aaa652dd5c336f	217592

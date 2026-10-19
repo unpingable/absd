@@ -14,7 +14,8 @@ unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS CARGO_TARGET_DIR CARGO_BUILD_TARGET \
     RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CLIPPY_ARGS CARGO_MAKEFLAGS \
     MAKEFLAGS MFLAGS TARGET
 
-programs="init durable_probe broker_probe broker_child image_probe elf_matrix disclosure_probe hello_a hello_b exit7 fault fpu trap privileged heap unmapped overflow cell shared readonly watcher piper sleeper shell fuzz multi_handle stack_grow stack_jump orphaner supervised_worker recovery_worker service_client client_service_worker alloc_probe isolation input_stream external_workload block_probe nic_probe machine_probe hostile_probe rt_probe fpu_mxcsr smp_user"
+programs="init durable_probe broker_probe broker_child image_probe image_rollback elf_matrix disclosure_probe hello_a hello_b exit7 fault fpu trap privileged heap unmapped overflow cell shared readonly watcher piper sleeper shell fuzz multi_handle stack_grow stack_jump orphaner supervised_worker recovery_worker service_client client_service_worker alloc_probe isolation input_stream external_workload block_probe nic_probe machine_probe hostile_probe rt_probe fpu_mxcsr smp_user"
+source_map=$(sh "$root/scripts/rust-source-map.sh")
 
 # Cargo does not track the linker script, so force the final links to rerun.
 for name in $programs; do
@@ -24,7 +25,7 @@ done
 
 # Static, non-PIE, no libc or start files; the kernel loader accepts only
 # ET_EXEC images placed by user/linker.ld inside the fixed user window.
-RUSTFLAGS="-C relocation-model=static -C code-model=large -C link-arg=-nostdlib -C link-arg=-static -C link-arg=-no-pie -C link-arg=-Wl,-T,$root/user/linker.ld" \
+RUSTFLAGS="--remap-path-prefix=$source_map -C relocation-model=static -C code-model=large -C link-arg=-nostdlib -C link-arg=-static -C link-arg=-no-pie -C link-arg=-Wl,-T,$root/user/linker.ld" \
     "${CARGO:-cargo}" build --quiet --release \
     --manifest-path "$root/user/Cargo.toml" \
     --target-dir "$target_dir" \

@@ -1,0 +1,13 @@
+create f: 0 0
+access f X_OK: -1 EINVAL
+chmod f 0600: -1 EPERM
+chmod f 0755: -1 EPERM
+mkdir d 0777: 0 0
+chmod d 0700: -1 EPERM
+mkdir r 0555: -1 EPERM
+stat r: -1 ENOENT
+mkdir m 0777: 0 0
+stat m: mode=0644 0
+--
+--
+status=0

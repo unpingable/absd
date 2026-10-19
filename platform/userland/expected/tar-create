@@ -1,0 +1,6 @@
+status 0
+--- stdout
+--- stderr
+--- files
+file made.ustar 132
+[["words-short.txt","file","620a610a610a"],["tree","directory"],["tree/sub","directory"],["tree/sub/leaf.txt","file","6c6561660a"]]

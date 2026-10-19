@@ -150,13 +150,12 @@ there is the correct result, not a defect to route around.
   surrounding file is written by `scripts/font-8x13.py`. Recorded as
   generated, Apache-2.0 for the surrounding file; the glyph bytes are not
   relicensed and the file is not declared public domain.
-- No third-party source is on `main`; `REUSE.toml` and `LICENSES/` carry
-  only the first-party licence.
-- The I219 driver on `lane/native-hardware-a1-20261009` is adapted from
-  Intel's BSD-3-Clause shared code in FreeBSD and keeps Intel's header. The
-  owner decided on 2026-10-10 to keep it with that attribution, and
-  `provenance.toml` already carries the rule for `src/i219.rs`. Merging the
-  lane will fail this check until the merge adds `LICENSES/BSD-3-Clause.txt`.
+- The I219 driver (`src/i219.rs`, from `lane/native-hardware-a1-20261009`)
+  is adapted from Intel's BSD-3-Clause shared code in FreeBSD and keeps
+  Intel's header. The owner decided on 2026-10-10 to keep it with that
+  attribution, and `provenance.toml` carries the rule for `src/i219.rs`.
+  The licence text is at
+  `LICENSES/BSD-3-Clause.txt`, added by the merge `7aaed9e`.
   `i219_device.rs`, `i219_pci.rs` and `i219_ring.rs` are first-party by
   derivation: a textual comparison found nothing from FreeBSD or Linux in
   them and they follow this kernel's own e1000 driver. They were written in

@@ -1,0 +1,4 @@
+malloc(908673) failed at 4733 live=32650518
+kept=3564 sum=4085259631
+40MiB: refused
+realloc huge: refused, original intact

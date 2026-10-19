@@ -15,6 +15,9 @@ use absd_user::{
 
 absd_user::entry!(main);
 
+#[path = "../usb_console_test.rs"]
+mod usb_console_test;
+
 const LINE_CAPACITY: usize = 96;
 const MAX_JOBS: usize = 8;
 
@@ -32,6 +35,9 @@ struct Shell {
 }
 
 fn main(start: Start) -> i32 {
+    if start.arg == 1 {
+        return usb_console_test::run(start.console);
+    }
     let mut shell = Shell {
         console: start.console,
         jobs: [None; MAX_JOBS],

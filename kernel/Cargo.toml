@@ -12,6 +12,13 @@ absd-abi = { path = "abi" }
 absd-fbcon = { path = "fbcon" }
 
 [features]
+# Isolated frame-admission experiment. No supported ABI is added.
+frame-reservation-experiment = ["frame-admission-core"]
+# Shared accounting without private dispatch.
+frame-admission-core = []
+frame-admission-v0 = ["frame-admission-core"]
+# Private negative controls for construction/publication, never a supported ABI.
+frame-admission-qualification = ["frame-reservation-experiment"]
 arm64 = []
 # Explicit local-VM follow-on gate; also requires matching FDT boot request.
 arm64-smp-qualification = ["arm64"]
@@ -26,6 +33,9 @@ ap-userspace = []
 smp-user-test = []
 # Isolated scheduler tranche, requiring the explicit preemptive test boot.
 smp-scheduler-test = ["smp-user-test"]
+# Local VM qualification only: syscall 31's reserved word bounds allocations
+# made during that one spawn_image call. Ordinary builds retain reserved=0.
+spawn-image-rollback-test = []
 
 # The kernel is built optimized but keeps the dev profile's checks: debug
 # assertions (interrupts disabled at entry, among others), overflow
@@ -54,3 +64,7 @@ path = "src/arch/aarch64/kernel.rs"
 test = false
 bench = false
 required-features = ["arm64"]
+
+[[example]]
+name = "frame_vm_qualification"
+required-features = ["frame-admission-core"]

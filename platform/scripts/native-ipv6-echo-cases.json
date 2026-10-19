@@ -1,0 +1,10 @@
+{
+  "schema": "absd-native-ipv6-echo-cases/1",
+  "runtime": "62a27858e601cbf51c32fcbe909f1dcd5240693b",
+  "kernel": "ed6a15ea7c7c999422e1e294e139b6119619b06c",
+  "cases": {
+    "positive": {"preassigned_candidate": false, "echo_ignore_all": 0, "qemu_exit": 3},
+    "preassigned-conflict": {"preassigned_candidate": true, "echo_ignore_all": 0, "qemu_exit": 7},
+    "no-reply": {"preassigned_candidate": false, "echo_ignore_all": 1, "qemu_exit": 7}
+  }
+}

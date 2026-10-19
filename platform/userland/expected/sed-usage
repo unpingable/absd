@@ -1,0 +1,6 @@
+status 1
+--- stdout
+--- stderr
+usage: sed [-nrE] script [file ...]
+       sed [-nrE] -e script [-e script] ... [-f scriptfile] ... [file ...]
+       sed [-nrE] [-e script] ... -f scriptfile [-f scriptfile] ... [file ...]

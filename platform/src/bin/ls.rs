@@ -7,23 +7,26 @@
 //!
 //! `-l` adds what the filesystem records and nothing else: the kind (`d`
 //! directory, `-` file), the read-only flag (`ro`, or `--` when clear),
-//! the link count, and the size in bytes. ABSD files have no owner, group,
-//! mode, or times, so those columns do not exist.
+//! the link count, the size in bytes and modification time in UTC to the
+//! minute (`-` if unknown). ABSD files have no owner, group, or mode.
 
 #[path = "../cmd_flags.rs"]
 mod cmd_flags;
+#[path = "../cmd_mtime.rs"]
+mod cmd_mtime;
 
 use std::io::{ErrorKind, StdoutLock, Write};
 use std::os::absd::fs::MetadataExt;
 
-fn long(meta: &std::fs::Metadata, name: &str, width: usize) -> String {
-    format!(
-        "{} {} {} {:>width$} {name}",
+fn long(meta: &std::fs::Metadata, name: &str, width: usize) -> std::io::Result<String> {
+    Ok(format!(
+        "{} {} {} {:>width$} {} {name}",
         if meta.is_dir() { "d" } else { "-" },
         if meta.permissions().readonly() { "ro" } else { "--" },
         meta.links(),
-        meta.len()
-    )
+        meta.len(),
+        cmd_mtime::display(meta, false)?
+    ))
 }
 
 /// A line of output; when the output has failed there is nothing more to
@@ -38,20 +41,21 @@ fn emit(out: &mut StdoutLock, line: &str) {
 }
 
 /// Names, each with its metadata under `-l`.
-fn print(out: &mut StdoutLock, rows: Vec<(String, Option<std::fs::Metadata>)>) {
+fn print(out: &mut StdoutLock, rows: Vec<(String, Option<std::fs::Metadata>)>) -> std::io::Result<()> {
     let width = rows.iter().filter_map(|(_, m)| m.as_ref()).map(|m| m.len().to_string().len()).max().unwrap_or(1);
     for (name, meta) in rows {
         match meta {
-            Some(meta) => emit(out, &long(&meta, &name, width)),
+            Some(meta) => emit(out, &long(&meta, &name, width)?),
             None => emit(out, &name),
         }
     }
+    Ok(())
 }
 
 fn list(out: &mut StdoutLock, path: &str, header: bool, detail: bool) -> Result<(), std::io::Error> {
     let metadata = std::fs::metadata(path)?;
     if !metadata.is_dir() {
-        print(out, vec![(path.to_owned(), detail.then_some(metadata))]);
+        print(out, vec![(path.to_owned(), detail.then_some(metadata))])?;
         return Ok(());
     }
     let mut rows = Vec::new();
@@ -68,8 +72,7 @@ fn list(out: &mut StdoutLock, path: &str, header: bool, detail: bool) -> Result<
     if header {
         emit(out, &format!("{path}:"));
     }
-    print(out, rows);
-    Ok(())
+    print(out, rows)
 }
 
 fn main() {

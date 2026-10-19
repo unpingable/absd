@@ -1,0 +1,113 @@
+#!/bin/sh
+# C++ compiler and linker driver for ABSD programs (C++0, cxx/README.md).
+# Compiles with the C kit's clang 18 under the kit's own flags (read from the
+# kit's bin/absd-cc, never restated; for C++ units -fno-builtin replaces
+# -ffreestanding, see below) plus -fno-exceptions -fno-rtti, with
+# libc++'s headers ahead of the kit's Picolibc headers; links like absd-cc
+# (ld.lld-17, static ET_EXEC at the image window, absd-c.ld) with libc++.a and
+# libc++abi.a before the kit's group, and leaves OUT.map and OUT.toolchain.
+# The runtime is $ABSD_CXX_BUILD, or the directory above this script when
+# it holds lib/libc++.a (the installed copy), or cxx-build beside the
+# repository; the kit is $ABSD_CKIT or the one the runtime's BUILT-FROM
+# names, and a kit whose libc.a differs from the one the runtime was built
+# against is refused.
+# Usage: absd-c++ [-c] [-o OUT] [-O0..3|-Os|-Oz] [-I dir] [-D...] [-std=...] FILE...
+# Inputs: .cpp .cc .cxx .C (C++), .c (C, the kit's flags), .s .S, objects
+# and archives. Set ABSD_CC_VERBOSE=1 to print the commands.
+set -eu
+here=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+die() { echo "absd-c++: $*" >&2; exit 2; }
+if [ -n "${ABSD_CXX_BUILD:-}" ]; then cxx=$ABSD_CXX_BUILD
+elif [ -f "$here/lib/libc++.a" ]; then cxx=$here
+else cxx=$(dirname "$(dirname "$here")")/cxx-build
+fi
+for f in lib/libc++.a lib/libc++abi.a include/c++/v1/__config_site BUILT-FROM; do
+    [ -f "$cxx/$f" ] || die "$cxx/$f absent: build the runtime with scripts/build-cxx-runtime.sh (or set ABSD_CXX_BUILD)"
+done
+kit=${ABSD_CKIT:-$(sed -n 's/^kit //p' "$cxx/BUILT-FROM")}
+[ -x "$kit/bin/absd-cc" ] || die "$kit is not a C kit (ABSD_CKIT)"
+want=$(sed -n 's|^kit-lib/libc.a ||p' "$cxx/BUILT-FROM")
+got=$(sha256sum "$kit/lib/libc.a" | cut -d' ' -f1)
+[ "$want" = "$got" ] || die "$kit/lib/libc.a is $got; the C++ runtime was built against $want"
+clang=${ABSD_CLANG:-clang-18}
+clang_version=$("$clang" -dumpversion 2>/dev/null) || die "$clang not found: the kit needs clang 18 (clang-18, or ABSD_CLANG)"
+[ "${clang_version%%.*}" = 18 ] || die "$clang is clang $clang_version: the kit needs clang 18"
+resource=$("$clang" -print-resource-dir)
+clang_include=$resource/include
+builtins=$resource/lib/linux/libclang_rt.builtins-x86_64.a
+kit_cflags=$(sed -n 's/^cflags="\(.*\)"$/\1/p' "$kit/bin/absd-cc")
+tail_isystem='-isystem $kit/include -isystem $clang_include'
+case $kit_cflags in
+    *"$tail_isystem") ;;
+    *) die "the kit's cflags no longer end in its two -isystem directories" ;;
+esac
+code_flags=${kit_cflags%" $tail_isystem"}
+cflags="$code_flags -isystem $kit/include -isystem $clang_include"
+# C++ units are hosted: under -ffreestanding clang gives C++ no special main
+# (it is mangled _Z4mainv) and libc++ is a hosted library, built the same way
+# (scripts/build-cxx-runtime.sh). -fno-builtin keeps what -ffreestanding
+# meant for code generation. libc++'s headers wrap the C headers
+# (#include_next), so they come first.
+case " $code_flags " in *" -ffreestanding "*) ;; *) die "the kit's cflags no longer carry -ffreestanding" ;; esac
+cxx_code_flags=$(printf '%s' "$code_flags" | sed 's/ -ffreestanding / -fno-builtin /')
+cxxflags="$cxx_code_flags -fno-exceptions -fno-rtti -nostdinc++ -isystem $cxx/include/c++/v1 -isystem $kit/include -isystem $clang_include"
+compile_only=0 out= opt=-O2 inputs= extra=
+usage() { echo "usage: absd-c++ [-c] [-o OUT] [-O0..3|-Os|-Oz] [-I dir] [-D...] FILE..." >&2; exit 2; }
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -c) compile_only=1 ;;
+        -o) [ "$#" -ge 2 ] || usage; out=$2; shift ;;
+        -O*) opt=$1 ;;
+        -Wl,*|-fpic|-fPIC|-fpie|-fPIE|-fstack-protector*|-mcmodel=*|-march=*)
+            die "unsupported option $1 (the kit fixes code model, PIC and link form)" ;;
+        -fexceptions|-fcxx-exceptions|-frtti|-pthread|-fthreadsafe-statics|-stdlib=*|-nostdinc++)
+            die "unsupported option $1 (C++0 has no exceptions, RTTI or threads, and one library)" ;;
+        -ffreestanding) die "unsupported option $1 (C++ units are hosted: under it clang mangles main; cxx/README.md)" ;;
+        -I*|-D*|-U*|-W*|-f*|-g*|-std=*) extra="$extra $1" ;;
+        -*) die "unsupported option $1" ;;
+        *) inputs="$inputs $1" ;;
+    esac
+    shift
+done
+test -n "$inputs" || { echo "absd-c++: no input files" >&2; usage; }
+run() { [ "${ABSD_CC_VERBOSE:-0}" = 1 ] && echo "+ $*" >&2; "$@"; }
+is_source() { case $1 in *.cpp|*.cc|*.cxx|*.C|*.c|*.s|*.S) return 0 ;; *) return 1 ;; esac; }
+# Compiles one source; a compiler failure ends the driver with the
+# compiler's status (its diagnostics are already on stderr), so a source
+# that did not compile never reaches ld.lld.
+compile() {   # source, output (may be empty)
+    status=0
+    case $1 in
+        *.cpp|*.cc|*.cxx|*.C) run "$clang" -x c++ $cxxflags $opt $extra -c "$1" ${2:+-o "$2"} || status=$? ;;
+        *) run "$clang" $cflags $opt $extra -c "$1" ${2:+-o "$2"} || status=$? ;;
+    esac
+    [ "$status" = 0 ] || { echo "absd-c++: compiling $1 failed (status $status)" >&2; exit "$status"; }
+}
+if [ "$compile_only" = 1 ]; then
+    set -- $inputs
+    [ "$#" = 1 ] || [ -z "$out" ] || die "-c -o with more than one input"
+    for input in $inputs; do
+        is_source "$input" || die "$input: not a source file"
+        compile "$input" "$out"
+    done
+    exit 0
+fi
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/absd-c++.XXXXXX"); trap 'rm -rf "$tmp"' EXIT
+objs= n=0
+for input in $inputs; do
+    n=$((n + 1)); base=$(basename "$input"); obj=$tmp/$n-${base%.*}.o
+    if is_source "$input"; then compile "$input" "$obj"; objs="$objs $obj"; else objs="$objs $input"; fi
+done
+out=${out:-a.out}
+# absd-cc's link with the C++ runtime added: libc++ and libc++abi come
+# before the kit's group, whose libc.a and libabs.a (malloc, aligned_alloc,
+# abort) and Picolibc's __cxa_atexit/__dso_handle they call into.
+run ld.lld-17 -static -no-pie --gc-sections -T "$kit/absd-c.ld" -Map="$out.map" -o "$out" \
+    "$kit/lib/crt0.o" $objs "$cxx/lib/libc++.a" "$cxx/lib/libc++abi.a" \
+    --start-group "$kit/lib/libabs.a" "$kit/lib/libc.a" "$kit/lib/libm.a" \
+    "$kit/lib/libabs_builtins.a" "$builtins" --end-group
+{ printf 'clang %s %s\n' "$(command -v "$clang")" "$("$clang" --version | head -n 1)"
+  printf 'ld.lld %s %s\n' "$(command -v ld.lld-17)" "$(ld.lld-17 --version)"
+  printf 'builtins %s %s\n' "$builtins" "$(sha256sum "$builtins" | cut -d' ' -f1)"
+  printf 'libc++.a %s\n' "$(sha256sum "$cxx/lib/libc++.a" | cut -d' ' -f1)"
+  printf 'libc++abi.a %s\n' "$(sha256sum "$cxx/lib/libc++abi.a" | cut -d' ' -f1)"; } > "$out.toolchain"

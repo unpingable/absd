@@ -1,0 +1,66 @@
+#!/bin/sh
+# Compiler and linker driver for ABSD C programs. Compiles with host clang 18
+# (clang-18, or ABSD_CLANG; any other major version is refused) for the
+# none-elf target under the kit flags; links a static ET_EXEC with ld.lld-17
+# at the image window from crt0, libabs, Picolibc and that clang's builtins
+# archive, and leaves the link map at OUT.map for scripts/check-c-elf.py and
+# the toolchain that produced OUT (compiler, linker, builtins archive and its
+# sha256) at OUT.toolchain.
+# Usage: absd-cc [-c] [-o OUT] [-O0..3] [-I dir] [-D...] FILE...
+# Set ABSD_CC_VERBOSE=1 to print the commands.
+set -eu
+kit=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+clang=${ABSD_CLANG:-clang-18}
+clang_version=$("$clang" -dumpversion 2>/dev/null) ||
+    { echo "absd-cc: $clang not found: the kit needs clang 18 (clang-18, or ABSD_CLANG)" >&2; exit 2; }
+[ "${clang_version%%.*}" = 18 ] ||
+    { echo "absd-cc: $clang is clang $clang_version: the kit needs clang 18" >&2; exit 2; }
+resource=$("$clang" -print-resource-dir)
+clang_include=$resource/include
+builtins=$resource/lib/linux/libclang_rt.builtins-x86_64.a
+# The clang driver drops -fstack-clash-protection for non-Linux triples (it
+# warns "argument unused"); -Xclang hands it to cc1, which emits the probes.
+cflags="--target=x86_64-unknown-none-elf -U_FORTIFY_SOURCE -ffreestanding -nostdinc -nostdlib -mcmodel=large -fno-pic -fno-pie -fno-stack-protector -mno-avx -march=x86-64 -fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections -Xclang -fstack-clash-protection -isystem $kit/include -isystem $clang_include"
+compile_only=0 out= opt=-O2 inputs= extra=
+usage() { echo "usage: absd-cc [-c] [-o OUT] [-O0..3] [-I dir] [-D...] FILE..." >&2; exit 2; }
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -c) compile_only=1 ;;
+        -o) [ "$#" -ge 2 ] || usage; out=$2; shift ;;
+        -O*) opt=$1 ;;
+        -Wl,*|-fpic|-fPIC|-fpie|-fPIE|-fstack-protector*|-mcmodel=*|-march=*)
+            echo "absd-cc: unsupported option $1 (the kit fixes code model, PIC and link form)" >&2; exit 2 ;;
+        -I*|-D*|-U*|-W*|-f*|-g*|-std=*) extra="$extra $1" ;;
+        -*) echo "absd-cc: unsupported option $1" >&2; exit 2 ;;
+        *) inputs="$inputs $1" ;;
+    esac
+    shift
+done
+test -n "$inputs" || { echo "absd-cc: no input files" >&2; usage; }
+run() { [ "${ABSD_CC_VERBOSE:-0}" = 1 ] && echo "+ $*" >&2; "$@"; }
+if [ "$compile_only" = 1 ]; then
+    run "$clang" $cflags $opt $extra -c $inputs ${out:+-o "$out"}
+    exit 0
+fi
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/absd-cc.XXXXXX"); trap 'rm -rf "$tmp"' EXIT
+objs=
+for input in $inputs; do
+    case $input in
+        *.c|*.s|*.S) base=$(basename "$input"); obj=$tmp/${base%.*}.o
+            run "$clang" $cflags $opt $extra -c "$input" -o "$obj"; objs="$objs $obj" ;;
+        *) objs="$objs $input" ;;
+    esac
+done
+out=${out:-a.out}
+# ld.lld takes the first archive on the line that offers a symbol. libabs.a
+# (kit C objects and the Rust runtime) comes first so its definitions win over
+# Picolibc's libos fallbacks and mem*; libc.a and libm.a come before
+# libabs_builtins.a (the Rust compiler_builtins member) so Picolibc's strong
+# libm definitions are pulled before its weak ones can satisfy a reference;
+# the clang builtins archive is last.
+run ld.lld-17 -static -no-pie --gc-sections -T "$kit/absd-c.ld" -Map="$out.map" -o "$out" \
+    "$kit/lib/crt0.o" $objs --start-group "$kit/lib/libabs.a" "$kit/lib/libc.a" "$kit/lib/libm.a" \
+    "$kit/lib/libabs_builtins.a" "$builtins" --end-group
+{ printf 'clang %s %s\n' "$(command -v "$clang")" "$("$clang" --version | head -n 1)"
+  printf 'ld.lld %s %s\n' "$(command -v ld.lld-17)" "$(ld.lld-17 --version)"
+  printf 'builtins %s %s\n' "$builtins" "$(sha256sum "$builtins" | cut -d' ' -f1)"; } > "$out.toolchain"

@@ -1,0 +1,9 @@
+status 0
+--- stdout
+[b]
+a
+a
+c
+c
+c
+--- stderr

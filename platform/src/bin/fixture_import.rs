@@ -19,6 +19,11 @@
 //! (created new, after removing a stale one), are synced and checked, and
 //! `PATH.new` is renamed over `PATH`, so a stop at any point leaves the old
 //! file or the new one (the operator image's reconfiguration of `/etc`).
+//! 5 removes trees: every entry is a directory entry (`PATH/`, zero bytes),
+//! and the directory at `PATH`, with everything below it, is removed in one
+//! commit, so a stop at any point leaves the whole tree or none of it (the
+//! host tool's release removal, `scripts/release.py remove`); `/` is
+//! refused, and so is a path that is absent or not a directory.
 //! 0 does nothing, so a durable boot can run only its reader.
 
 use std::io::{Read, Seek as _, SeekFrom, Write as _};
@@ -39,7 +44,7 @@ fn hex(bytes: &[u8]) -> String {
 /// Streams each file straight to the filesystem in bounded chunks: no
 /// allocation grows with the fixture (ABSD maps at most 256 KiB at once).
 fn import(step: u64) -> Result<usize, String> {
-    let (format, append, replace) = (step == 1, step == 3, step == 4);
+    let (format, append, replace, remove) = (step == 1, step == 3, step == 4, step == 5);
     let mut input = std::io::stdin().lock();
     let mut magic = [0u8; 8];
     exact(&mut input, &mut magic)?;
@@ -68,6 +73,30 @@ fn import(step: u64) -> Result<usize, String> {
         let size = u64::from_le_bytes(size);
         let mut digest = [0u8; 32];
         exact(&mut input, &mut digest)?;
+        if remove {
+            let Some(directory) = path.strip_suffix('/') else {
+                return Err(format!("{path}: step 5 removes directories only"));
+            };
+            if size != 0 || digest != <[u8; 32]>::from(Sha256::digest([])) {
+                return Err(format!("{path}: a directory carries no bytes"));
+            }
+            if directory.is_empty() || !directory.starts_with('/') {
+                return Err(format!("{path}: not a removable directory"));
+            }
+            if !std::fs::metadata(directory).map_err(|e| format!("{path}: {e}"))?.is_dir() {
+                return Err(format!("{path}: not a directory"));
+            }
+            let removed = storage::with_fs(|fs| fs.remove_tree(directory.as_bytes(), true))
+                .ok_or_else(|| "no filesystem mounted".to_owned())?
+                .map_err(|e| format!("{path}: {e:?}"))?;
+            match std::fs::metadata(directory) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                _ => return Err(format!("{path}: still present after its removal")),
+            }
+            println!("FIXTURE REMOVED path={directory} objects={removed}");
+            files += 1;
+            continue;
+        }
         if let Some(directory) = path.strip_suffix('/') {
             if size != 0 || digest != <[u8; 32]>::from(Sha256::digest([])) {
                 return Err(format!("{path}: a directory carries no bytes"));
@@ -140,7 +169,7 @@ fn main() {
     absd_runtime::link_anchor();
     match absd_runtime::step() {
         0 => println!("FIXTURE IMPORT SKIPPED"),
-        step @ (1..=4) => match import(step) {
+        step @ (1..=5) => match import(step) {
             Ok(files) => println!("FIXTURE IMPORT OK files={files}"),
             Err(error) => {
                 println!("FIXTURE IMPORT FAILED {error}");

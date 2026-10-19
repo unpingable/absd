@@ -12,6 +12,23 @@ the primary IDE master or one NVMe namespace, TCG or KVM. Nothing here
 claims a physical machine; see `docs/MATURITY-BACKLOG.md` (kernel) items
 4, 7, 9, 14, 15, and 17 for what this gate decides and what it leaves.
 
+With frame-admission-v0, served QEMU boots require at least **256 MiB guest
+RAM**. Platform launchers use `scripts/served_ram.py` beside the build-time
+feature policy in `scripts/served_kernel.py`. The default is `-m 256M`;
+`ABSD_GUEST_RAM=512M`, a launcher's explicit memory argument, or an existing
+larger QEMU `-m` can raise it. Every supplied size below 256M is refused on
+the host; larger existing sizes are preserved. This is the runner floor,
+not a workload-capacity guarantee. The observation matrix's non-served 32M
+pressure probe retains its qualification configuration.
+
+The served matrix includes one deliberate 128M negative boot, requiring
+status 7 and `SERVED FRAME BOOT REFUSED reason=ram_below_minimum` with
+measured usable/minimum byte counts, before any service starts or reset.
+`run-served-matrix.sh --only ram-below-minimum` selects that case; its
+normal full run also includes it. Qualification must separately demonstrate
+256M workload feasibility and a served boot above 256M (for example repeat
+with `ABSD_GUEST_RAM=512M`). Host tests cannot establish either result.
+
 ## 1. The release unit
 
 One ABSD release is the pair the operator boots and the tree it serves:
@@ -110,7 +127,19 @@ Importer operations also require a parseable `release-manifest.toml` of the
 current schema, matching release/ABI identity fields and a full exact kernel
 revision. Missing, malformed or mismatched source metadata refuses before an
 importer writes; an absent manifest never disables the source-pair check.
-Artifact integrity is independently checked by `release_manifest.py verify`.
+Install, stage and migrate also check what they are about to write against
+the manifest's `artifacts.files` digests, before any importer boot: every
+file of the release tree and the release record, and for install the site
+defaults (`/etc` files and `authorized_keys`). Each check is on the exact
+bytes the importer then writes. The importer `fixture-import.elf` is copied
+into a private directory and that copy, the one the kernel build embeds, is
+checked. Every copy of the boot image into the operator directory is checked
+after copying, and a mismatching copy is removed. A file that differs, a file
+the manifest does not list, a listed file that is gone, a malformed digest, or
+a manifest without an `artifacts.files` table refuses (`manifest_mismatch …`
+or `manifest_unverifiable …`, naming every file).
+`release_manifest.py verify` remains the whole-directory check, including
+the boot image's contents.
 
 ## 4. Boot-failure semantics
 
@@ -131,11 +160,11 @@ evidence survives.
 
 ## 5. Install, update, acceptance, rollback
 
-**Slots.** The disk holds at most two release trees under `/releases/`.
+**Slots.** The disk holds at most two release trees under `/releases/`. `scripts/release.py remove` retires a tree that is neither selected nor the ledger's last accepted release, on a halted image: importer step 5 removes `/releases/<id>/` whole in one commit (a stop leaves the whole tree or none of it), the host reader confirms it gone and every other file unchanged, and only then does the operator directory drop that release's boot image and selection cache; a third release can then be staged; removing a release gives up rollback to it.
 `/absd/selected` names the one the file server binds at boot; the boot
 image booted must be that release's. The host tool keeps a ledger
 (`RELEASES` in the operator directory) of every release it installed,
-selected, accepted, or rolled back, with the receipts.
+selected, accepted, or rolled back, with the receipts. Procedure: [OPERATOR-RUNBOOK.md](OPERATOR-RUNBOOK.md).
 
 **Install** (`scripts/release.py install`): formats the target image,
 installs the release tree, the site defaults (`/etc` from the operator's
@@ -148,14 +177,46 @@ existing QEMU and `nvme-write` conventions.
 **Update** (`scripts/release.py stage`, `select`): with release A selected
 and accepted, B's tree is staged into `/releases/B/` by B's importer (B's
 image must read the disk's format; otherwise migrate first, section 6).
-Staging never touches `/releases/A/` or `/absd/selected`. The host reader
-verifies B's record. `select B` rewrites `/absd/selected` whole, in one
+Staging never touches `/releases/A/` or `/absd/selected`. B's tree and
+record are checked against B's manifest before the first write (section 3),
+and afterwards the host reader compares every staged file with those
+verified bytes and verifies B's record. `select B` rewrites `/absd/selected` whole, in one
 commit. The operator then boots B's image.
+
+Every caught staging failure writes `receipts/stage-failed-<attempt>-<time>.toml`,
+with a unique attempt id, release source, error, phase and effect disposition.
+`REFUSED` means staging did not enter its importer call; the disk, existing
+release images, selection cache and ledger were not written. A private build
+scratch directory may have been created and removed. `INDETERMINATE` means the
+importer call began or a later step failed; files may already be committed,
+even when a boot reports failure. It is not rollback, and the tool does not
+infer a successful stage from a failed boot. Inspect the halted target with
+`status` and the host reader before recovery. Failure receipts do not append a
+`staged` ledger entry. An error after the STAGED receipt was written can leave
+that receipt alongside a later INDETERMINATE operation outcome; the phase
+identifies the unfinished bookkeeping.
+
+The command reports the receipt path with its error. If the receipt destination
+is unwritable, it reports `receipt unavailable` with the original failure and
+effect disposition; it cannot promise durable evidence in that case. Receipts
+use UTF-8, escape control characters including DEL, and replace surrogate code
+points in diagnostic strings with U+FFFD. A caught
+keyboard interrupt records the same conservative outcome and propagates the
+interrupt. An abrupt process or host loss can prevent a terminal receipt.
+These are staging attempt receipts; other commands retain their existing
+receipt behavior.
+
+Importer steps 1-3 still write new files or append chunks at their final paths
+and verify afterwards; only step 4 uses write-verify-rename. A failed stage can
+therefore leave a partial tree. Atomic new-file and append construction is a
+separate follow-on with space, worker-deadline and interruption qualification.
 
 The states, and exactly when each holds:
 
 | State | Holds when |
 |---|---|
+| `REFUSED` | staging stopped before its importer call; see the failure receipt and any receipt-write error |
+| `INDETERMINATE` | a staging failure occurred after its importer call began; target effects need inspection |
 | `STAGED` | `/releases/B/release` is present, well-formed, and verified by the host reader, and every file of B's tree matches the release manifest |
 | `BOOT_SELECTED` | `/absd/selected` reads `B` (one commit) and B's image is the one to boot |
 | `BOOTING` | B's image has been started against the disk |
@@ -169,11 +230,11 @@ The states, and exactly when each holds:
 accepted release remains known good until B is accepted.
 
 **Rollback** (`scripts/release.py rollback`): refuses unless the ledger's
-last accepted release has its tree on the disk; otherwise rewrites
+last accepted release other than the selected one has its tree on the disk; otherwise rewrites
 `/absd/selected` to it, in one commit, and tells the operator which image
 to boot. State created under B stays on the disk (B wrote under the same
 format into the same site directories); nothing of it is rolled back, and
-nothing of it is interpreted by A except through the format both read.
+nothing of it is interpreted by A except through the format both read. Install, stage and migrate keep each release's selection image (the importer step 4 image that selects it, built by its kernel) with the kernel's boot script in `releases/<id>/` of the operator directory, their digests in `releases/<id>/select.toml` and the receipt, so `rollback` without `--kernel` boots that image and needs no build host; it refuses `select_cache_missing` or `select_cache_mismatch` rather than build one, and `--release` with `--kernel` remains the explicit way to build the selection.
 
 **Rollback across a format migration** is not a selection: the migration
 retains the pre-migration image file, and rolling back means restoring
@@ -280,7 +341,7 @@ qualification is `POWER_LOSS_DURABILITY_QUALIFICATION`, not this gate).
 
 Restore-same-machine is a restore; clone-into-a-second-machine is a restore
 followed by host-key regeneration, and `scripts/release.py restore
---clone` does both. Full second-machine operation remains U3.
+--clone` does both. Full second-machine operation remains U3. A clone takes a target identity other than the backup's, refused before the image is replaced, and keeps the selected release's selection image (section 5) built by that release's kernel; a backup carries no selection image, so the clone's receipt names every other release on the disk as without one, and a rollback to it needs `--release` and `--kernel`.
 
 ## 11. Release manifest, reconstruction, integrity
 
@@ -297,7 +358,13 @@ duplicate it.
 
 Reconstruction (`scripts/reconstruct-release.sh`): from a clean clone of
 both repositories at the manifest's commits and the pinned toolchain, build
-and compare every artifact's digest to the manifest. ELFs and commands are
+and compare every artifact's digest to the manifest. The boot-image recipe
+records `build.kernel_image.EXTERNAL_KERNEL_FEATURES`, including an explicitly
+empty selection. Reconstruction uses that recorded selection rather than the
+current served builder's policy and refuses a manifest without the field.
+The schema is `absd-release-manifest/2`; reconstruct a /1 manifest with
+reconstruct-release.sh at its own platform commit.
+ELFs and commands are
 byte-identical (the platform's reproducibility gate) when rebuilt at the
 manifest's `build.platform_root`: they embed that root, the sibling staging
 directories, and `CARGO_HOME` in panic locations, so a rebuild elsewhere is
@@ -344,10 +411,16 @@ is introduced. Actual successor acceptance still requires all paired gates.
 `scripts/release-matrix.py` exercises, each as a QEMU boot or a host
 operation with a named expected refusal: mismatched kernel and release
 tree; an unsupported filesystem format; a missing update artifact; a
-corrupted staged release; failure before the selection switch; failure
+corrupted staged release (a release directory whose tree differs from its
+manifest is refused by `stage`, and a record altered on the disk is refused
+by `select`); failure before the selection switch; failure
 after selection before served readiness; a failed served boot and manual
 rollback; the previous release selected again; restore from a known-good
 backup; restore from a corrupt backup; migration from format 1; an
 attempted rollback across the migration boundary. The gate record in the
 kernel repository (`docs/install-update-recovery/README.md`) lists the
-results and the receipts.
+results and the receipts. Optional case 16 (`--only 16`) alters a source tree
+file after the build and requires a named `manifest_mismatch` refusal, one
+parseable REFUSED receipt, and identical hashes for every pre-existing target
+file. Case 4 retains its corrupted-source and corrupted-staged-record checks;
+its pre-write refusal permits only the additional failure receipt.

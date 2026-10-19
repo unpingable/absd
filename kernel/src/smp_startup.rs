@@ -321,11 +321,11 @@ fn finish_multicore(pid: u64) -> ! {
 }
 
 fn kernel_frame_census() -> usize {
-    use absd_kernel::memory::{Frame, FrameOwner, FrameState, MAX_TRACKED_FRAMES, PAGE_SIZE};
+    use absd_kernel::memory::{Frame, FrameOwner, FrameState, PAGE_SIZE};
     crate::kernel_lock::assert_held(0);
     let frames = unsafe { crate::vm::frames() };
     let mut allocated = 0;
-    for index in 0..MAX_TRACKED_FRAMES {
+    for index in 0..frames.tracked_frames() {
         if let FrameState::Allocated(owner) = frames.state(Frame(index as u64 * PAGE_SIZE)) {
             assert_eq!(
                 owner,

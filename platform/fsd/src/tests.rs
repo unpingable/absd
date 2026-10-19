@@ -62,6 +62,70 @@ fn image() -> Disk {
     disk
 }
 
+#[test]
+fn network_sample_day_count_is_bounded_and_preserves_startup_history() {
+    use crate::net_status::{BYTES, Carrier, Listener, Origin, PERIOD_TICKS, Record, PATH};
+    let disk=image();
+    let mut fs=Fs::mount(disk.clone(),true).unwrap();
+    fs.mkdir(b"/var").unwrap();fs.mkdir(b"/var/log").unwrap();
+    let startup=b"- sshd: network 10.0.2.15/24 gateway 10.0.2.2\n- sshd: host key public fixture\n";
+    put(&mut fs,b"/var/log/sshd",startup);
+    put(&mut fs,PATH.as_bytes(),&[0;BYTES]);
+    let handle=fs.open(PATH.as_bytes(),OpenFlags {read:true,write:true,..Default::default()}).unwrap();
+    let objects=fs.object_count();let blocks=fs.free_blocks();
+    let mut record=Record {boot:*b"0123456789abcdef0123456789abcdef",recovery:7,start:0,end:0,
+        address:[10,0,2,15],prefix:24,gateway:Some([10,0,2,2]),carrier:Carrier::Up,
+        disabled:Some(false),origin:Origin::Defaults,listener:Listener::Listening,port:22};
+    let mut read=[0;BYTES];
+    // 18,000 periodic writes plus readiness conservatively exceed 24h at
+    // the pinned PIT divisor 1193 / 1193181.67 Hz. This is a publication-count
+    // fixture, not native elapsed duration or timer-accuracy qualification.
+    for publication in 0..=18_000 {
+        let tick=publication*PERIOD_TICKS;
+        record.start=tick;record.end=tick;
+        let bytes=record.encode().unwrap();
+        fs.write_at(handle,0,&bytes[..256]).unwrap();
+        assert_eq!(fs.read_at(handle,0,&mut read).unwrap(),BYTES);
+        assert!(Record::parse(&read).is_none(),"mixed version must refuse at tick {tick}");
+        fs.write_at(handle,256,&bytes[256..]).unwrap();
+        assert_eq!(fs.read_at(handle,0,&mut read).unwrap(),BYTES);
+        assert_eq!(Record::parse(&read),Some(record));
+        assert_eq!(fs.fstat(handle).unwrap().size,BYTES as u64);
+        assert_eq!(fs.object_count(),objects);assert_eq!(fs.free_blocks(),blocks);
+    }
+    fs.close(handle).unwrap();fs.sync().unwrap();
+    let mut h=Harness {server:Server::new(fs,6,vec![Mount::new(b"/var/log",true)]),pipes:quiet,now:1};
+    assert_eq!(h.bind(1,&[],&[Mount::new(b"/var/log",false)]),0);
+    assert_eq!(h.read_all(1,b"/var/log/sshd").unwrap(),startup);
+    assert_eq!(Record::parse(&h.read_all(1,PATH.as_bytes()).unwrap()),Some(record));
+    assert_eq!(h.open(1,2,PATH.as_bytes()),status::READ_ONLY);
+    assert!(h.open(CONTROL,2,PATH.as_bytes())>0);
+    assert_eq!(h.server.fs.stat(b"/var/log/sshd.0"),Err(Error::NotFound));
+}
+
+#[test]
+fn sessions_can_read_the_recovery_projection_but_cannot_write_it_or_read_the_ledger() {
+    let disk = image();
+    let mut fs = Fs::mount(disk.clone(), true).unwrap();
+    fs.mkdir(b"/var").unwrap();
+    fs.mkdir(b"/var/log").unwrap();
+    let boot = *b"0123456789abcdef0123456789abcdef";
+    let (ledger, _) = crate::recovery::charge(&mut fs, &boot).unwrap();
+    crate::recovery::publish_projection(&mut fs, &ledger).unwrap();
+    let mut h = Harness {
+        server: Server::new(fs, 6, vec![Mount::new(b"/var/log", true)]),
+        pipes: quiet, now: 1,
+    };
+    assert_eq!(h.bind(1, &[], &[Mount::new(b"/var/log", false)]), 0);
+    let path = crate::recovery::PROJECTION.as_bytes();
+    let bytes = h.read_all(1, path).unwrap();
+    assert_eq!(bytes.len(), crate::recovery::LEDGER_BYTES);
+    assert_eq!(crate::recovery::parse_ledger(&bytes), Some(ledger));
+    assert_eq!(h.open(1, 2, path), status::READ_ONLY);
+    assert!(h.read_all(1, crate::recovery::LEDGER).is_err());
+    assert!(h.open(CONTROL, 2, path) > 0);
+}
+
 fn server(disk: &Disk) -> Server<Disk> {
     let fs = Fs::mount(disk.clone(), true).unwrap();
     Server::new(
@@ -814,6 +878,154 @@ fn bind_rechecks_keeper_after_directory_preparation() {
             status: status::BUSY,
         }]
     );
+}
+
+#[test]
+fn nested_mounts_pin_rename_endpoints_and_rmdir() {
+    // A mount can name a currently absent subtree. Its namespace anchor
+    // remains pinned, whether the nested mount is read-only or writable.
+    // Writable bindings create their mount paths; absent mounts are read-only.
+    for (writable, exists) in [(false, false), (false, true), (true, true)] {
+        let disk = image();
+        let mut h = Harness::new(&disk);
+        assert_eq!(h.bind(1, &[], &session_mounts(b"s1")), 0);
+        assert_eq!(h.path_op(1, op::MKDIR, b"/home/operator/a"), 0);
+        assert_eq!(h.path_op(1, op::MKDIR, b"/home/operator/z"), 0);
+        if exists {
+            assert_eq!(h.path_op(1, op::MKDIR, b"/home/operator/a/b"), 0);
+        }
+        assert_eq!(h.bind(2, &[], &[
+            Mount::new(b"/home/operator", true),
+            Mount::new(b"/home/operator/a/b", writable),
+        ]), 0);
+        for noreplace in [false, true] {
+            assert_eq!(h.rename(2, b"/home/operator/a", b"/home/operator/moved", noreplace), status::BUSY);
+            assert_eq!(h.rename(2, b"/home/operator/z", b"/home/operator/a", noreplace), status::BUSY);
+            // Both endpoints are normalized before checking ancestry.
+            assert_eq!(h.rename(2, b"/home/operator/z/../a/.", b"/home/operator/moved", noreplace), status::BUSY);
+            assert_eq!(h.rename(2, b"/home/operator/z", b"/home/operator/z/../a/.", noreplace), status::BUSY);
+        }
+        assert_eq!(h.path_op(2, op::RMDIR, b"/home/operator/a"), status::BUSY);
+        assert_eq!(h.names(2, b"/home/operator").unwrap(), names(&[b"a", b"z"]));
+    }
+}
+
+#[test]
+fn nested_readonly_mount_does_not_freeze_writable_siblings() {
+    let disk = image();
+    let mut h = Harness::new(&disk);
+    assert_eq!(h.bind(1, &[], &session_mounts(b"s1")), 0);
+    for path in [b"/home/operator/a".as_slice(), b"/home/operator/a/b", b"/home/operator/a/beside"] {
+        assert_eq!(h.path_op(1, op::MKDIR, path), 0);
+    }
+    assert_eq!(h.write_file(1, b"/home/operator/a/b/secret", b"orig"), 0);
+    assert_eq!(h.bind(2, &[], &[
+        Mount::new(b"/home/operator", true),
+        Mount::new(b"/home/operator/a/b", false),
+    ]), 0);
+    assert_eq!(h.write_file(2, b"/home/operator/a/b/secret", b"changed"), status::READ_ONLY);
+    assert_eq!(h.rename(2, b"/home/operator/a/b", b"/home/operator/b", false), status::READ_ONLY);
+    assert_eq!(h.path_op(2, op::RMDIR, b"/home/operator/a/b"), status::READ_ONLY);
+    // A byte prefix is not a path ancestor; ordinary siblings still move.
+    assert_eq!(h.rename(2, b"/home/operator/a/beside", b"/home/operator/a/beside2", false), 0);
+    assert_eq!(h.path_op(2, op::RMDIR, b"/home/operator/a/beside2"), 0);
+    assert_eq!(h.write_file(2, b"/home/operator/a/sibling", b"ok"), 0);
+    assert_eq!(h.rename(2, b"/home/operator/a/sibling", b"/home/operator/a/other", false), 0);
+    assert_eq!(h.read_all(2, b"/home/operator/a/other").unwrap(), b"ok");
+    assert_eq!(h.read_all(2, b"/home/operator/a/b/secret").unwrap(), b"orig");
+}
+
+#[test]
+fn deep_mount_ancestors_and_absent_destinations_stay_pinned() {
+    let disk = image();
+    let mut h = Harness::new(&disk);
+    assert_eq!(h.bind(1, &[], &session_mounts(b"s1")), 0);
+    for path in [b"/home/operator/a".as_slice(), b"/home/operator/a/b", b"/home/operator/a/b/c", b"/home/operator/z"] {
+        assert_eq!(h.path_op(1, op::MKDIR, path), 0);
+    }
+    assert_eq!(h.bind(2, &[], &[
+        Mount::new(b"/home/operator", true),
+        Mount::new(b"/home/operator/a/b/c", false),
+        Mount::new(b"/home/operator/q/r", false),
+    ]), 0);
+    for from in [b"/home/operator/a".as_slice(), b"/home/operator/a/b", b"//home//operator/a/", b"//home//operator/a//b//"] {
+        assert_eq!(h.rename(2, from, b"/home/operator/moved", false), status::BUSY);
+        assert_eq!(h.path_op(2, op::RMDIR, from), status::BUSY);
+    }
+    for to in [b"/home/operator/q".as_slice(), b"//home//operator//q//"] {
+        assert_eq!(h.rename(2, b"/home/operator/z", to, false), status::BUSY);
+    }
+    assert_eq!(h.names(2, b"/home/operator").unwrap(), names(&[b"a", b"z"]));
+}
+
+#[test]
+fn a_derived_list_cannot_drop_a_parents_readonly_carveout() {
+    let disk = image();
+    let mut h = Harness::new(&disk);
+    assert_eq!(h.bind(1, &[], &session_mounts(b"seed")), 0);
+    assert_eq!(h.path_op(1, op::MKDIR, b"/home/operator/a"), 0);
+    assert_eq!(h.path_op(1, op::MKDIR, b"/home/operator/a/b"), 0);
+    assert_eq!(h.write_file(1, b"/home/operator/a/b/secret", b"orig"), 0);
+    assert_eq!(h.bind(3, &[4], &[
+        Mount::new(b"/home/operator", true),
+        Mount::new(b"/home/operator/a/b", false),
+    ]), 0);
+    assert_eq!(h.write_file(3, b"/home/operator/a/b/secret", b"parent"), status::READ_ONLY);
+    h.pipes = |_| Some(PipeState {
+        request_available: 0, request_writers: 2, reply_available: 0, reply_readers: 2,
+    });
+    let derive = |mounts: &[Mount]| Frame::request(op::DERIVE)
+        .u8(1).u8(derive::LIST).mounts(mounts).finish();
+    assert_eq!(h.status(3, derive(&[Mount::new(b"/home/operator", true)])), status::DENIED);
+    assert_eq!(h.write_file(4, b"/home/operator/a/b/secret", b"child"), status::DENIED);
+    assert_eq!(h.read_all(3, b"/home/operator/a/b/secret").unwrap(), b"orig");
+}
+
+#[test]
+fn derived_lists_compare_effective_access_across_nested_mounts() {
+    let disk = image();
+    let mut h = Harness::new(&disk);
+    assert_eq!(h.bind(1, &[3], &[
+        Mount::new(b"/home/operator", true),
+        Mount::new(b"/home/operator/a/b", false),
+        Mount::new(b"/home/operator/a/b/write", true),
+    ]), 0);
+    h.pipes = |_| Some(PipeState {
+        request_available: 0, request_writers: 2, reply_available: 0, reply_readers: 2,
+    });
+    let derive = |mounts: &[Mount]| Frame::request(op::DERIVE)
+        .u8(1).u8(derive::LIST).mounts(mounts).finish();
+    // A wider read-only overlay may replace the exact carve-out. A child
+    // may retain a nested writable island the parent really has.
+    let narrowed = [
+        Mount::new(b"/home/operator", true),
+        Mount::new(b"/home/operator/a", false),
+        Mount::new(b"/home/operator/a/b/write", true),
+    ];
+    assert_eq!(h.status(1, derive(&narrowed)), 0);
+    assert_eq!(h.write_file(3, b"/home/operator/a/b/write/ok", b"ok"), 0);
+    assert_eq!(h.write_file(3, b"/home/operator/a/b/secret", b"no"), status::READ_ONLY);
+    for wider in [
+        vec![Mount::new(b"/home/operator", true)],
+        vec![Mount::new(b"/home/operator/a", true)],
+        vec![Mount::new(b"/home/operator/a/b/secret", true)],
+        vec![Mount::new(b"/home/operator", false), Mount::new(b"/home/operator/a/b", true)],
+        vec![Mount::new(b"/home", false)],
+    ] {
+        assert_eq!(h.status(1, derive(&wider)), status::DENIED);
+        // A refused replacement must not reset the old binding.
+        assert_eq!(h.read_all(3, b"/home/operator/a/b/write/ok").unwrap(), b"ok");
+        assert_eq!(h.write_file(3, b"/home/operator/a/b/secret", b"no"), status::READ_ONLY);
+    }
+    for allowed in [
+        vec![Mount::new(b"/home/operator", false)],
+        vec![Mount::new(b"/home/operator/a/b/write", true)],
+        vec![Mount::new(b"/home/operator/a/beside", true)],
+        vec![Mount::new(b"/home/operator/a/b", false), Mount::new(b"/home/operator", true)],
+        vec![],
+    ] {
+        assert_eq!(h.status(1, derive(&allowed)), 0);
+    }
 }
 
 #[test]
@@ -1755,6 +1967,49 @@ fn a_full_filesystem_still_binds_a_session_after_a_reboot() {
     }
 }
 
+/// First publication after an upgrade is diagnostic: a full disk must
+/// still let the operator bind and delete, then allow publication again.
+#[test]
+fn missing_recovery_projection_on_a_full_disk_does_not_prevent_session_repair() {
+    let disk = image();
+    let mut h = Harness::new(&disk);
+    h.server.fs.mkdir(b"/var").unwrap();
+    h.server.fs.mkdir(b"/var/log").unwrap();
+    crate::recovery::charge(&mut h.server.fs, b"00000000000000000000000000000001").unwrap();
+    assert_eq!(h.bind(1, &[], &session_mounts(b"session-fill")), 0);
+    let handle = h.server.fs.open(b"/home/operator/filler", OpenFlags {
+        write: true, create: true, create_new: true, ..OpenFlags::default()
+    }).unwrap();
+    let mut offset = 0;
+    loop {
+        match h.server.fs.write_at(handle, offset, &[0xa5; 4096]) {
+            Ok(n) => offset += n as u64,
+            Err(Error::NoSpace) => break,
+            Err(error) => panic!("{error:?}"),
+        }
+    }
+    h.server.fs.close(handle).unwrap();
+    h.server.fs.sync().unwrap();
+    assert_eq!(h.server.fs.free_blocks(), 0);
+    drop(h);
+    let mut h = Harness::new(&disk);
+    h.server.sweep_scratch().unwrap();
+    let (ledger, _) = crate::recovery::charge(&mut h.server.fs, b"00000000000000000000000000000002").unwrap();
+    assert_eq!(crate::recovery::publish_projection(&mut h.server.fs, &ledger), Err(Error::NoSpace));
+    assert_eq!(h.server.fs.stat(crate::recovery::PROJECTION.as_bytes()), Err(Error::NotFound));
+    assert_eq!(h.bind(1, &[], &session_mounts(b"session-repair")), 0);
+    assert_eq!(h.read_all(1, b"/bin/ls").unwrap(), b"ELF ls");
+    assert_eq!(h.path_op(1, op::UNLINK, b"/home/operator/filler"), 0);
+    assert!(h.server.fs.free_blocks() > 0);
+    crate::recovery::publish_projection(&mut h.server.fs, &ledger).unwrap();
+    let path = crate::recovery::PROJECTION.as_bytes();
+    let handle = h.server.fs.open(path, OpenFlags { read: true, ..OpenFlags::default() }).unwrap();
+    let mut bytes = [0; crate::recovery::LEDGER_BYTES];
+    assert_eq!(h.server.fs.read_at(handle, 0, &mut bytes).unwrap(), bytes.len());
+    h.server.fs.close(handle).unwrap();
+    assert_eq!(crate::recovery::parse_ledger(&bytes), Some(ledger));
+}
+
 /// Heap attribution from the repair's 300-cycle churn (kernel
 /// docs/architecture-audit-20261002/REPAIR.md): a channel's receive buffer
 /// doubled from 64 KiB to 128 KiB the first time it carried a frame over
@@ -2272,4 +2527,76 @@ fn a_bind_that_takes_over_a_quiet_draining_channel_counts_its_settlement() {
         assert!(h.server.settle(channel, quiet(channel)));
     }
     assert_eq!(h.server.settled(), 6);
+}
+
+/// N6: on the server route `canonical` answers -22 only for a component over
+/// `MAX_NAME` (255) bytes or a path over `MAX_PATH` (4096) bytes (as for an
+/// empty path or a NUL, which `realpath` never sends); dot components are
+/// normalized, not refused. The runtime adds -22 for a result over the
+/// caller's capacity (storage.rs, not reachable on the host).
+#[test]
+fn canonical_refuses_invalid_only_for_long_names_and_long_paths() {
+    let disk = image();
+    let mut h = Harness::new(&disk);
+    let mut canonical =
+        |path: &[u8]| h.call(CONTROL, Frame::request(op::CANONICAL).bytes(path).finish());
+    let mut name = b"/bin/".to_vec();
+    name.extend(core::iter::repeat_n(b'a', 256));
+    assert_eq!(canonical(&name).0, status::INVALID);
+    name.pop();
+    assert_eq!(canonical(&name).0, status::NOT_FOUND, "255 bytes is a valid name");
+    let mut deep = b"/bin".to_vec();
+    while deep.len() <= proto::MAX_PATH {
+        deep.push(b'/');
+        deep.extend(core::iter::repeat_n(b'b', 200));
+    }
+    assert_eq!(canonical(&deep).0, status::INVALID);
+    assert_eq!(canonical(b"").0, status::INVALID);
+    assert_eq!(canonical(b"/bin/./../bin//ls"), (7, b"/bin/ls".to_vec()));
+}
+
+#[test]
+fn health_reads_this_boots_recovery_line_and_nothing_else() {
+    use crate::log::{Generation, Unknown, generation, line};
+    let a = "aa".repeat(16);
+    let b = "bb".repeat(16);
+    let log = |lines: &[(&str, &str)]| -> Vec<u8> {
+        lines.iter().flat_map(|(program, text)| line(Some(1_792_052_576), program, text)).collect()
+    };
+    let boot_a = log(&[
+        ("fsd", &format!("started: boot {a}, uptime 412 ms")),
+        ("fsd", "FSD HOST KEY ed25519 path=/ssh/host_ed25519_seed"),
+        ("fsd", "FSD RECOVERY seq=7 streak=0 previous=ended"),
+        ("fsd", "FSD READY channels=11 slots=10 fs_seq=90 formatted=false fs_objects=84"),
+    ]);
+    let boot_b = log(&[
+        ("fsd", &format!("started: boot {b}, uptime 405 ms")),
+        ("fsd", "FSD RECOVERY seq=8 streak=1 previous=failed"),
+    ]);
+    let both: Vec<u8> = [boot_a.clone(), boot_b.clone()].concat();
+    // This boot's line, never the other boot's.
+    assert_eq!(generation(b"", &both, &b), Ok(Generation { seq: 8, streak: 1, previous: "failed" }));
+    assert_eq!(generation(b"", &both, &a), Ok(Generation { seq: 7, streak: 0, previous: "ended" }));
+    // Rotated between the start and the recovery line: still found.
+    let (head, tail) = boot_b.split_at(boot_b.iter().position(|&c| c == b'\n').unwrap() + 1);
+    assert_eq!(generation(head, tail, &b), Ok(Generation { seq: 8, streak: 1, previous: "failed" }));
+    // Rotated out entirely, or never written.
+    assert_eq!(generation(b"", &boot_a, &b), Err(Unknown::NoBootLine));
+    assert_eq!(generation(b"", b"", &b), Err(Unknown::NoBootLine));
+    // Started, but the recovery line was dropped; a later start does not lend its line.
+    let dropped = log(&[("fsd", &format!("started: boot {b}, uptime 1 ms")), ("fsd", "log: 1 lines dropped")]);
+    assert_eq!(generation(b"", &dropped, &b), Err(Unknown::NoRecoveryLine));
+    let restarted = [dropped.clone(), log(&[("fsd", &format!("started: boot {b}, uptime 9 ms")),
+                                            ("fsd", "FSD RECOVERY seq=9 streak=0 previous=none")])].concat();
+    assert_eq!(generation(b"", &restarted, &b), Err(Unknown::NoRecoveryLine));
+    // Malformed recovery lines are refused, not read.
+    for bad in ["seq=8 streak=1 previous=maybe", "seq=8 streak=x previous=failed", "seq=8 streak=1",
+                "seq=8 streak=1 previous=failed extra", "streak=1 seq=8 previous=failed", "seq= streak=1 previous=none"] {
+        let text = log(&[("fsd", &format!("started: boot {b}, uptime 1 ms")), ("fsd", &format!("FSD RECOVERY {bad}"))]);
+        assert_eq!(generation(b"", &text, &b), Err(Unknown::Malformed), "{bad}");
+    }
+    // Another program's lines and an unstamped line are not the file server's.
+    let foreign = log(&[("sshd", &format!("started: boot {b}, uptime 1 ms")), ("sshd", "FSD RECOVERY seq=1 streak=0 previous=none")]);
+    assert_eq!(generation(b"", &foreign, &b), Err(Unknown::NoBootLine));
+    assert_eq!(generation(b"", format!("started: boot {b}, x\n").as_bytes(), &b), Err(Unknown::NoBootLine));
 }

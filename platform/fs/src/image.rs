@@ -195,38 +195,86 @@ pub fn valid_name(name: &[u8]) -> bool {
         && !name.iter().any(|byte| *byte == b'/' || *byte == 0)
 }
 
+/// Borrowed fields for one synchronous encoding pass, never a transfer layout.
+#[derive(Clone, Copy)]
+pub(crate) struct RecordRef<'a> {
+    pub serial: u64,
+    pub parent: u64,
+    pub name: &'a [u8],
+    pub kind: Kind,
+    pub readonly: bool,
+    pub size: u64,
+    pub blocks: &'a [u32],
+    pub mtime: u64,
+}
+
+impl<'a> From<&'a Record> for RecordRef<'a> {
+    fn from(record: &'a Record) -> Self {
+        Self {
+            serial: record.serial,
+            parent: record.parent,
+            name: &record.name,
+            kind: record.kind,
+            readonly: record.readonly,
+            size: record.size,
+            blocks: &record.blocks,
+            mtime: record.mtime,
+        }
+    }
+}
+
+/// The immutable record sequence is counted and sized before encoding.
+/// Callers keep its source borrowed until the output buffer is complete.
+pub(crate) fn encode_records<'a>(
+    fs_id: u64,
+    seq: u64,
+    next_serial: u64,
+    geometry: Geometry,
+    records: impl Iterator<Item = RecordRef<'a>> + Clone,
+) -> Vec<u8> {
+    let count = records.clone().count();
+    // The complete generation is already known. Avoid temporary small
+    // buffers and doubling while commits serialize large block maps.
+    let length = HEADER_BYTES
+        + records.clone().map(|record| {
+            record_bytes(record.name.len()) + record.blocks.len() * size_of::<u32>()
+        }).sum::<usize>();
+    let mut bytes = Vec::with_capacity(length);
+    bytes.extend_from_slice(IMAGE_MAGIC);
+    bytes.extend_from_slice(&VERSION.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&fs_id.to_le_bytes());
+    bytes.extend_from_slice(&seq.to_le_bytes());
+    bytes.extend_from_slice(&next_serial.to_le_bytes());
+    bytes.extend_from_slice(&geometry.data_blocks.to_le_bytes());
+    bytes.extend_from_slice(&(count as u32).to_le_bytes());
+    bytes.extend_from_slice(&geometry.region_sectors.to_le_bytes());
+    bytes.extend_from_slice(&geometry.half_sectors.to_le_bytes());
+    debug_assert_eq!(bytes.len(), HEADER_BYTES);
+    for record in records {
+        bytes.extend_from_slice(&record.serial.to_le_bytes());
+        bytes.extend_from_slice(&record.parent.to_le_bytes());
+        bytes.extend_from_slice(&record.size.to_le_bytes());
+        bytes.push(match record.kind {
+            Kind::File => 1,
+            Kind::Dir => 2,
+        });
+        bytes.push(u8::from(record.readonly));
+        bytes.extend_from_slice(&(record.name.len() as u16).to_le_bytes());
+        bytes.extend_from_slice(&(record.blocks.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&record.mtime.to_le_bytes());
+        bytes.extend_from_slice(record.name);
+        for block in record.blocks {
+            bytes.extend_from_slice(&block.to_le_bytes());
+        }
+    }
+    bytes
+}
+
 impl Image {
     pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(IMAGE_MAGIC);
-        bytes.extend_from_slice(&VERSION.to_le_bytes());
-        bytes.extend_from_slice(&0u32.to_le_bytes());
-        bytes.extend_from_slice(&self.fs_id.to_le_bytes());
-        bytes.extend_from_slice(&self.seq.to_le_bytes());
-        bytes.extend_from_slice(&self.next_serial.to_le_bytes());
-        bytes.extend_from_slice(&self.geometry.data_blocks.to_le_bytes());
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(&self.geometry.region_sectors.to_le_bytes());
-        bytes.extend_from_slice(&self.geometry.half_sectors.to_le_bytes());
-        debug_assert_eq!(bytes.len(), HEADER_BYTES);
-        for record in &self.records {
-            bytes.extend_from_slice(&record.serial.to_le_bytes());
-            bytes.extend_from_slice(&record.parent.to_le_bytes());
-            bytes.extend_from_slice(&record.size.to_le_bytes());
-            bytes.push(match record.kind {
-                Kind::File => 1,
-                Kind::Dir => 2,
-            });
-            bytes.push(u8::from(record.readonly));
-            bytes.extend_from_slice(&(record.name.len() as u16).to_le_bytes());
-            bytes.extend_from_slice(&(record.blocks.len() as u32).to_le_bytes());
-            bytes.extend_from_slice(&record.mtime.to_le_bytes());
-            bytes.extend_from_slice(&record.name);
-            for block in &record.blocks {
-                bytes.extend_from_slice(&block.to_le_bytes());
-            }
-        }
-        bytes
+        encode_records(self.fs_id, self.seq, self.next_serial, self.geometry,
+                       self.records.iter().map(RecordRef::from))
     }
 
     /// Decodes and checks every structural rule a mount relies on. Anything

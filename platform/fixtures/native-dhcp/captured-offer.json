@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "source": "dnsmasq Linux positive46771e55 accepted bysteward191418",
+  "capture": "native-dhcp.pcap (development capture not included)",
+  "capture_sha256": "fc2c88865999ee230df09a026dc3405670f3fdc1d9d164f1a726fd76aefd5fc0",
+  "zero_based_frame_index": 1,
+  "frame_bytes": 342,
+  "frame_sha256": "c30957276bebc3453619aff29807576f693714a99833a8ed21566247a11245a0",
+  "payload_bytes": 300,
+  "payload_sha256": "587d7a8693bd0026833a99e6be9bda7f1465f0745159816016bbb30299b34e1c",
+  "transformation": "Verbatim DHCP payload. Runtime fixture replaces only xid bytes4..8 and chaddr bytes28..34, then adds duplicate53 for malformed or changes54 for unauthorized; all capture/header/checksum fields separately observed. No general DHCP encoder claim."
+}

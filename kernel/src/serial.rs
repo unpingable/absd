@@ -1,5 +1,6 @@
 //! COM1 diagnostics, mirrored to the framebuffer console when one exists.
 
+use absd_kernel::console_input::{Input, Source};
 use core::arch::asm;
 use core::fmt;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -41,24 +42,9 @@ pub fn enable_input() {
     }
 }
 
-const INPUT_CAPACITY: usize = 256;
-
-/// Bytes received from COM1 and not yet read by a process. Filled from the
-/// interrupt handler, drained by the console read path; both run with
-/// interrupts disabled on the single CPU, so no other synchronisation.
-struct InputRing {
-    bytes: [u8; INPUT_CAPACITY],
-    head: usize,
-    len: usize,
-    dropped: u64,
-}
-
-static mut INPUT: InputRing = InputRing {
-    bytes: [0; INPUT_CAPACITY],
-    head: 0,
-    len: 0,
-    dropped: 0,
-};
+/// The Console stream, filled by COM1 IRQ or the BSP keyboard pump and
+/// drained by Console reads, always with IF clear on the BSP.
+static mut INPUT: Input = Input::new();
 
 /// Moves every byte the UART holds into the input ring. Called from the
 /// COM1 interrupt stub; bytes beyond the ring's capacity are dropped and
@@ -73,12 +59,7 @@ pub unsafe fn drain_input() {
                 break;
             }
             let byte = inb(COM1);
-            if ring.len == INPUT_CAPACITY {
-                ring.dropped += 1;
-                continue;
-            }
-            ring.bytes[(ring.head + ring.len) % INPUT_CAPACITY] = byte;
-            ring.len += 1;
+            ring.push(Source::Serial, byte);
         }
     }
 }
@@ -87,23 +68,39 @@ pub unsafe fn drain_input() {
 pub fn take_input(buffer: &mut [u8]) -> usize {
     unsafe {
         let ring = &mut *core::ptr::addr_of_mut!(INPUT);
-        let count = buffer.len().min(ring.len);
-        for slot in buffer[..count].iter_mut() {
-            *slot = ring.bytes[ring.head];
-            ring.head = (ring.head + 1) % INPUT_CAPACITY;
-        }
-        ring.len -= count;
-        count
+        ring.take(buffer)
     }
 }
 
 pub fn input_available() -> usize {
-    unsafe { (*core::ptr::addr_of!(INPUT)).len }
+    unsafe { (*core::ptr::addr_of!(INPUT)).available() }
 }
 
 /// Bytes discarded because the ring was full.
 pub fn input_dropped() -> u64 {
-    unsafe { (*core::ptr::addr_of!(INPUT)).dropped }
+    unsafe { (*core::ptr::addr_of!(INPUT)).total_dropped() }
+}
+
+/// One report's translated bytes. The small ISR never enters this path.
+pub fn keyboard_input(bytes: &[u8]) -> usize {
+    crate::debug_assert_interrupts_disabled();
+    crate::kernel_lock::assert_bsp_device_access();
+    crate::kernel_lock::assert_held(crate::kernel_lock::BSP);
+    assert!(bytes.len() <= 6);
+    unsafe {
+        let ring = &mut *core::ptr::addr_of_mut!(INPUT);
+        bytes
+            .iter()
+            .filter(|&&byte| ring.push(Source::Keyboard, byte))
+            .count()
+    }
+}
+
+pub fn input_counts(source: Source) -> (u64, u64) {
+    unsafe {
+        let ring = &*core::ptr::addr_of!(INPUT);
+        (ring.accepted(source), ring.dropped(source))
+    }
 }
 
 pub fn write(s: &str) {

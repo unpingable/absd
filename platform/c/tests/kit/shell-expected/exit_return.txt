@@ -1,0 +1,9 @@
+ctor
+main
+atexit 2
+atexit 1
+dtor
+--
+absd-sh: /bin/exit: exit status 7
+--
+status=7

@@ -1,0 +1,13 @@
+# Programs of the C ecosystem campaign, stage 2 (docs/c-ecosystem-20261010/SPEC.md 5,
+# docs/c-ecosystem-20261010/posix/CPORTS-HARNESS.md). Tab-separated:
+# NAME VERSION URL SHA256 EXPECT [NOTE]. SHA256 is over the downloaded file and was
+# recorded before extraction; NOTE names the publisher's own digest it was checked
+# against. EXPECT is "run" (built for ABSD and run by cports-matrix.py), "input"
+# (a source or test archive another row consumes; not run by itself) or "fail"
+# (the ABSD build must fail with the named signature). Downloads live in
+# the source-download directory selected by the C-port build scripts.
+lua	5.4.9	https://www.lua.org/ftp/lua-5.4.9.tar.gz	2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6	run	sha256 equals lua.org/ftp listing
+lua-tests	5.4.9	https://www.lua.org/tests/lua-5.4.9-tests.tar.gz	7d971845f545ffc09fbb3128a86b2c6524161c70d0fdf0154a16e8c00c343fca	input	sha256 equals lua.org/tests listing
+zlib	1.3.2	https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz	bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16	run	sha256 equals the GitHub release asset digest
+sqlite-amalgamation	3.54.0	https://www.sqlite.org/2026/sqlite-amalgamation-3540000.zip	68e913b0fe8ec6b4e5f391c594a28872884e80d6cd042a1e50c957be46b5aa4d	run	SHA3-256 7b670a62fdfbd672b75fef004cb703c8a3e87d3a5cc7d675b4a08337004a2d93 equals sqlite.org/download.html
+sqlite-src	3.54.0	https://www.sqlite.org/2026/sqlite-src-3540000.zip	8847659821e0c5116bd14a94644c82ba932b2d9a05ac81af2e34af814aad7c58	input	test/speedtest1.c only; SHA3-256 a5c29342ca185abcda332448fbb27c536661245be27e20199b46c49099b0e15e equals sqlite.org/download.html

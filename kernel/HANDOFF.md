@@ -835,7 +835,8 @@ hands back the newest PID of a process that never ran or that the kernel's own
 boot-time self-tests spawned and killed (`sched::exhaustion_test` mints and
 rewinds PID 1 before init, so sealed logs show `SPAWN OK pid=1` twice;
 `smp_startup` rewinds its startup actors). No handle to a rewound process can
-exist (architecture audit 2026-10-02, finding A4, deferred). Each live entry owns a PID, parent PID, program index,
+exist (architecture audit 2026-10-02, finding A4; the allocation comment now
+records the exception, and self-test behaviour is unchanged). Each live entry owns a PID, parent PID, program index,
 address-space record, a 32 KiB contiguous kernel stack, a 1024-page reserved
 user stack with its lowest mapped page, a 20-word saved frame, an FXSAVE image, a handle table, lifecycle
 state, and (while `Waiting`) either the awaited child and record address
@@ -895,8 +896,11 @@ exactly the pre-`init` baseline.
 
 ## Current memory model
 
-`FrameAllocator` (`src/memory.rs`) keeps one 32-bit tag per 4 KiB frame below
-256 MiB (`TRACKED_PHYSICAL_LIMIT`): unavailable, free, or allocated to
+`FrameAllocator` (`src/memory.rs`) keeps one 32-bit tag per tracked 4 KiB
+frame: a built-in table for 256 MiB (`TRACKED_PHYSICAL_LIMIT`, what ARM64 and
+host tests use), or on x86 a boot-placed table sized to the highest usable
+frame up to the 64 GiB bound (`PHYSICAL_TRACKING_BOUND`;
+docs/x86-whole-ram-20261015/RESULT.md). Each tag is unavailable, free, or allocated to
 `Kernel`, `PageTable(pid)`, `UserPage(pid)`, or `KernelStack(pid)`. Type-1
 Multiboot2 ranges become free frames; low memory below 1 MiB, the kernel
 image, and the Multiboot information block are reserved before any
@@ -910,10 +914,15 @@ frame larger each time until the load succeeds) and prove that each
 failure returns `NoMemory`, gives back every frame, and leaves no process
 slot or PID behind, and that the one success reclaims when ended
 (`SPAWN EXHAUSTION frames_per_process=N`, then `SPAWN EXHAUSTION OK`). Counters expose allocated, free, and peak
-frames and the number of frames owned by a PID. Memory above 256 MiB is
-ignored. The instance is a single global in `src/vm.rs`.
+frames and the number of frames owned by a PID. Usable RAM above the bound,
+and the sub-2 MiB edges of usable rows above 1 GiB, are clipped; the boot
+discloses it on `FRAMES TRACKED usable=.. limit=.. clipped=..`. The instance
+is a single global in `src/vm.rs`.
 
-Boot assembly identity-maps the first GiB with 2 MiB supervisor pages. Each
+Boot assembly identity-maps the first GiB with 2 MiB supervisor pages;
+`src/whole_ram.rs` adds supervisor, no-execute 2 MiB identity mappings of
+every tracked page above it in the same boot PDPT, so every tracked frame is
+reachable at its physical address from every CR3. Each
 user address space (`vm::create`) allocates a PML4 whose entry 0 points at
 the shared boot PDPT (supervisor only, never owned) and whose entry 1 leads to
 a process-owned PDPT and page directory; user page tables are installed on
@@ -992,8 +1001,8 @@ Kernel panics print their message and location before exiting QEMU with status
 
 - a 44-entry embedded program catalog addressed by index, and a 16-slot
   process table;
-- fixed ELF image window, user-stack address, stack sizes, and a 256 MiB
-  tracked-physical-memory ceiling;
+- fixed ELF image window, user-stack address, stack sizes, and a 64 GiB
+  tracked-physical-memory bound on x86 (256 MiB on ARM64);
 - fixed-capacity arrays for processes, ELF segments, and page tables;
 - seven object kinds (console, child process, cell, pipe, block device, NIC, machine) in a
   fixed 64-slot handle table, a 32-slot cell table, and a 48-slot pipe table;

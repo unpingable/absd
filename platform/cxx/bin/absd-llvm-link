@@ -1,0 +1,48 @@
+#!/bin/sh
+# The fixed ABSD link for C++ programs built by CMake against the C kit
+# (cxx/absd-llvm-toolchain.cmake; scripts/build-llvm-kit.sh). It is
+# absd-c++'s link (ld.lld-17, static ET_EXEC at the image window,
+# absd-c.ld, crt0, libc++ and libc++abi before the kit's group) with the
+# POSIX adapter at the head of the group, as tcc's share libc.a has it
+# (C-INTERFACE.md section 8), and --icf=all. The compiler driver is not
+# used to link: for x86_64-unknown-none-elf clang hands links to the host
+# g++. CMake's link flags arrive driver-style: -Wl,a,b becomes a b;
+# -static, -no-pie and -fno-pie are what the link is anyway, and -lm names the kit's
+# libm.a, already in the group; any other option (any other -l) is
+# refused, so nothing is dropped silently. Leaves OUT.map and
+# OUT.toolchain beside OUT.
+# Usage: absd-llvm-link --kit=DIR --cxx=DIR --posix=FILE [-Wl,...] OBJ... -o OUT [ARCHIVE|@RSP...]
+set -eu
+die() { echo "absd-llvm-link: $*" >&2; exit 2; }
+kit= cxx= posix= out=
+for a in "$@"; do
+    case $a in --kit=*) kit=${a#--kit=} ;; --cxx=*) cxx=${a#--cxx=} ;; --posix=*) posix=${a#--posix=} ;; esac
+done
+[ -f "$kit/absd-c.ld" ] && [ -f "$kit/lib/crt0.o" ] || die "--kit=$kit is not a C kit"
+[ -f "$cxx/lib/libc++.a" ] && [ -f "$cxx/lib/libc++abi.a" ] || die "--cxx=$cxx is not a C++ runtime"
+[ -f "$posix" ] || die "--posix=$posix absent"
+builtins=$(clang-18 -print-resource-dir)/lib/linux/libclang_rt.builtins-x86_64.a
+set -- "$@" --absd-end
+while [ "$1" != --absd-end ]; do
+    a=$1; shift
+    case $a in
+        --kit=*|--cxx=*|--posix=*) ;;
+        -o) out=$1; set -- "$@" -o "$1"; shift ;;
+        -static|-no-pie|-fno-pie) ;;
+        -lm) ;;   # the kit's libm.a, an empty stub kept so a link that names it works, is in the group
+        -Wl,*) old_ifs=$IFS; IFS=,; for w in ${a#-Wl,}; do set -- "$@" "$w"; done; IFS=$old_ifs ;;
+        -*) die "unsupported link option $a" ;;
+        *) set -- "$@" "$a" ;;
+    esac
+done
+shift
+[ -n "$out" ] || die "no -o"
+ld.lld-17 -static -no-pie --gc-sections --icf=all -T "$kit/absd-c.ld" -Map="$out.map" \
+    "$kit/lib/crt0.o" "$@" "$cxx/lib/libc++.a" "$cxx/lib/libc++abi.a" \
+    --start-group "$posix" "$kit/lib/libabs.a" "$kit/lib/libc.a" "$kit/lib/libm.a" \
+    "$kit/lib/libabs_builtins.a" "$builtins" --end-group
+{ printf 'ld.lld %s %s\n' "$(command -v ld.lld-17)" "$(ld.lld-17 --version)"
+  printf 'builtins %s %s\n' "$builtins" "$(sha256sum "$builtins" | cut -d' ' -f1)"
+  printf 'libc++.a %s\n' "$(sha256sum "$cxx/lib/libc++.a" | cut -d' ' -f1)"
+  printf 'libc++abi.a %s\n' "$(sha256sum "$cxx/lib/libc++abi.a" | cut -d' ' -f1)"
+  printf 'libabsd-posix.a %s\n' "$(sha256sum "$posix" | cut -d' ' -f1)"; } > "$out.toolchain"

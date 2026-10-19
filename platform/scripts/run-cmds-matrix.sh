@@ -2,7 +2,8 @@
 # The /bin command set over SSH (scripts/cmds-matrix.py): every installed
 # command run in a real session against its expected output and refusals,
 # and the manual through man(1), on a `net fsd` boot. Needs a kernel with the fsd boot mode in
-# ABSD_KERNEL_RUN. Builds the platform and the ports unless ABSD_SKIP_BUILD=1.
+# ABSD_KERNEL_RUN. Builds the platform and the ports (the Rust ports and the
+# sbase ports, scripts/build-ports.sh) unless ABSD_SKIP_BUILD=1.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -24,9 +25,11 @@ for command in echo pwd ls cat printenv uname mkdir rm mv cp head tail wc sha256
     test -f "$root/commands/$command"
 done
 test -f "$root/manpages/whatis"
-for port in basename seq cut fold nl uniq base64 rg; do
+for port in basename seq cut fold nl uniq base64 rg printf test grep sort sed od cmp ed find; do
     test -f "$root/ports/$port"
 done
+# The sbase ports against their manifest and the image's list (no boot).
+python3 -I "$root/scripts/cmds-matrix.py" --host-check
 rm -rf "${work:?}"
 mkdir -p "$work"
 python3 "$root/scripts/cmds-matrix.py" --work "$work" --kernel "$kernel" --shell "$root/commands/absd-sh" \

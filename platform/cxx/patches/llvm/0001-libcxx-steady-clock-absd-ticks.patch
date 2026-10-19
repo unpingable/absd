@@ -1,0 +1,47 @@
+libc++: steady_clock over the ABSD kit's tick counter
+
+Failure: libc++ built with threads (the external thread API, which the
+LLVM profile needs for std::mutex) requires the monotonic clock
+(libcxx/CMakeLists.txt: LIBCXX_ENABLE_MONOTONIC_CLOCK may be OFF only with
+threads OFF), and chrono.cpp then stops with
+`#error "Monotonic clock not implemented on this platform"`: Picolibc
+defines _POSIX_TIMERS only for RTEMS and the kit has no clock_gettime.
+Change: under _LIBCPP_ABSD_KIT (set by scripts/build-cxx-runtime.sh,
+profile llvm, only), steady_clock::now() returns the kit's times() tick
+count as milliseconds: the kernel's boot tick counter, monotonic
+(C-INTERFACE.md section 7: one tick is about 0.99985 ms, counted from
+boot; the kit's clock() makes the same ms reading).
+Behaviour preserved: every other platform's branch is unchanged;
+system_clock keeps its existing gettimeofday branch on the kit.
+Upstreamability: low as written (a lane-local macro); an upstream ABSD
+port would key this on the target OS macro and a kit clock_gettime.
+
+--- a/libcxx/src/chrono.cpp
++++ b/libcxx/src/chrono.cpp
+@@ -27,6 +27,10 @@
+ #  include <unistd.h> // _POSIX_TIMERS
+ #endif
+ 
++#if defined(_LIBCPP_ABSD_KIT)
++#  include <sys/times.h> // times()
++#endif
++
+ #if __has_include(<sys/time.h>)
+ #  include <sys/time.h> // for gettimeofday and timeval
+ #endif
+@@ -212,6 +216,15 @@
+   return steady_clock::time_point(nanoseconds(_zx_clock_get_monotonic()));
+ }
+ 
++#  elif defined(_LIBCPP_ABSD_KIT)
++
++// The ABSD C kit has no clock_gettime; its monotonic clock is the kernel's
++// boot tick count, which times() returns (C-INTERFACE.md section 7).
++static steady_clock::time_point __libcpp_steady_clock_now() {
++  struct tms __unused_times;
++  return steady_clock::time_point(milliseconds(static_cast<long long>(times(&__unused_times))));
++}
++
+ #  elif defined(_LIBCPP_HAS_CLOCK_GETTIME)
+ 
+ static steady_clock::time_point __libcpp_steady_clock_now() {

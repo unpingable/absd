@@ -218,6 +218,7 @@ pub fn probe(nvme_write: Option<&[u8]>) -> Result<u64, BlockError> {
                     serial::write("NVME READ FAILED lba=0 ");
                     let _ = write!(Serial, "{error:?}");
                     serial::write("\n");
+                    nvme::withdraw_failed_probe();
                     return Err(nvme_error(error));
                 }
             }

@@ -1,0 +1,71 @@
+ABSD per-port patch for sbase 0.1 test (userland/README.md, "Patches").
+
+Failure: test.c answers -e -r -w -x with faccessat(AT_FDCWD, path, mode,
+AT_EACCESS). Neither the kit nor the POSIX adapter defines faccessat, so
+the link fails (userland/DEMAND.tsv: test faccessat MISSING). And -nt/-ot
+compare st_mtime, which is 0 for every file on ABSD (C-INTERFACE.md 11),
+so both would silently answer false.
+
+Change: -e -r -w -x call access(path, mode) (the adapter's, over the file
+server: a probe open for R_OK/W_OK on a file). When access fails with
+ENOSYS (W_OK on a directory: refused, SPEC A11) or EINVAL (X_OK on a
+file: no execute permission exists), test reports the check as not
+supported and exits 2 instead of answering false. With ABSD_NO_MTIME
+defined (the ABSD build defines it while C-INTERFACE.md 11 holds), -nt
+and -ot are refused the same way; temporary until R3 brings file times
+to C, when the define and this hunk go.
+
+Preserved: every answer the platform can give is the one upstream gives.
+ABSD's identity is fixed (one uid, real == effective, SPEC A8), so
+access() and faccessat(..., AT_EACCESS) agree; on Linux (the reference
+build, no ABSD_NO_MTIME) access never fails with ENOSYS or EINVAL for
+these modes and the program behaves as upstream. Exit status 2 is test's
+own error status (enprintf(2, ...)). No adapter or kit change.
+
+--- a/test.c
++++ b/test.c
+@@ -48,6 +48,13 @@
+ static int
+ mtimecmp(struct stat *buf1, struct stat *buf2)
+ {
++#ifdef ABSD_NO_MTIME
++	/* ABSD (userland/patches/test-access-mtime.patch): no modification time
++	   reaches a program (st_mtime is 0 for every file, C-INTERFACE.md 11),
++	   so -nt and -ot cannot be answered; they are refused, status 2. */
++	(void)buf1; (void)buf2;
++	enprintf(2, "-nt/-ot: file modification times are not available on this system\n");
++#endif
+ 	if (buf1->st_mtime < buf2->st_mtime) return -1;
+ 	if (buf1->st_mtime > buf2->st_mtime) return +1;
+ #ifdef st_mtime
+@@ -72,10 +79,26 @@
+ static int unary_n(char *s) { return  *s; }
+ static int unary_z(char *s) { return !*s; }
+ 
+-static int unary_e(char *s) { return !faccessat(AT_FDCWD, s, F_OK, AT_EACCESS); }
+-static int unary_r(char *s) { return !faccessat(AT_FDCWD, s, R_OK, AT_EACCESS); }
+-static int unary_w(char *s) { return !faccessat(AT_FDCWD, s, W_OK, AT_EACCESS); }
+-static int unary_x(char *s) { return !faccessat(AT_FDCWD, s, X_OK, AT_EACCESS); }
++/* ABSD (userland/patches/test-access-mtime.patch): access() in place of
++   faccessat(AT_FDCWD, ..., AT_EACCESS), which ABSD does not provide; the
++   identity is fixed (one real and effective uid), so the answers are the
++   same. A check the platform refuses is reported, never answered false:
++   ENOSYS (write check on a directory) and EINVAL (execute check on a file:
++   no execute permission exists) end test with status 2. */
++#include <errno.h>
++static int
++absd_access(char *s, int mode, char *op)
++{
++	if (!access(s, mode))
++		return 1;
++	if (errno == ENOSYS || errno == EINVAL)
++		enprintf(2, "%s %s: check not supported on this system: %s\n", op, s, strerror(errno));
++	return 0;
++}
++static int unary_e(char *s) { return absd_access(s, F_OK, "-e"); }
++static int unary_r(char *s) { return absd_access(s, R_OK, "-r"); }
++static int unary_w(char *s) { return absd_access(s, W_OK, "-w"); }
++static int unary_x(char *s) { return absd_access(s, X_OK, "-x"); }
+ 
+ static int unary_t(char *s) { int fd = enstrtonum(2, s, 0, INT_MAX); return isatty(fd); }
+ 

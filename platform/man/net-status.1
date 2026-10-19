@@ -1,0 +1,75 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 17, 2026
+.Dt NET-STATUS 1
+.Os ABSD
+.Sh NAME
+.Nm net-status
+.Nd inspect the SSH owner's retained static network sample
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+.Nm
+shows the static IPv4 address, prefix, gateway, SSH port and input origin
+actually consumed by the SSH owner, its device carrier and disabled reading,
+and local listener state.
+Draining means an operator shutdown or reboot is latched and new sessions
+are no longer accepted; it does not establish that unlisten succeeded.
+It is published only if a fresh device read follows before the owner exits;
+a quick exit may leave the earlier retained listening sample.
+The fixed sample is in
+.Pa /var/log/network-status ;
+sessions can read it but cannot write it.
+.Pp
+The output names the boot and served recovery sequence, the device read's
+kernel tick interval and the retained sample's age.
+Stable state is published at most once per 3600000 raw ticks
+(approximately hourly on the pinned x86 PIT), with earlier device or local
+listener-phase transitions.
+A sample older than 3615000 raw ticks is stale; its age may therefore be
+about an hour even while the owner keeps reading the device.
+The heartbeat is retained evidence, not a service-liveness check.
+An old boot, superseded recovery sequence, unavailable identity, malformed or
+missing sample, future interval or changed recovery during acquisition is
+reported as unavailable instead of a successful network observation.
+An unknown device read never repeats an older up indication.
+.Pp
+A retained sample is not proof that its service is alive now, that a remote
+peer is reachable or that every network event was retained.
+The command neither probes a peer nor changes the network.
+It does not report DHCP, IPv6 or DAD probe state.
+The existing file server call can stall; a caller needs its own acquisition
+timeout.
+.Pp
+The owner overwrites a fixed 512-byte file on transitions and periodically.
+It does not append periodic records to the SSH log or console.
+Every publication can change mtime and cause a full filesystem metadata
+commit. Stable state causes at most about 24 heartbeat publications per
+nominal day after readiness; transitions add writes. This is not a bound on
+physical media writes or commits caused by other filesystem activity.
+The current recovery binding comes from the file server's fixed 128-byte
+.Pa /var/log/network-recovery
+projection, checked against the current kernel boot before and after
+reading the network sample.
+It uses the existing recovery-ledger encoding; the canonical ledger stays
+private.
+The file server writes it, and sshd's existing control mount can also write it.
+It is not an independent file-server attestation.
+Future ledger versions must update this public diagnostic consumer together.
+The file server attempts publication only at startup or recovery, before readiness.
+It repairs wrong-shaped objects at this diagnostic path.
+Failure logs a named unavailable record and still permits readiness, so an
+operator can log in to free space; failed copies are best-effort removed.
+Log rotation does not remove it.
+A missing or invalid projection makes the binding unavailable, without a
+fallback to log history.
+This does not establish a latest live server identity.
+.Sh EXIT STATUS
+.Ex -std
+Status 1 means that the sample or binding is unavailable, or that the device
+reading is unknown.
+Status 2 is usage error.
+A successful sample does not establish reachability or general system health.
+.Sh SEE ALSO
+.Xr health 1 ,
+.Xr network.conf 5 ,
+.Xr afterboot 8

@@ -182,6 +182,8 @@ kind = "mechanical"
 applies_to = ["source"]
 origin = "audit-20261010"
 status = "open"
+# 15 again since 2026-10-12: c/absd-c/Cargo.toml reaches ../../../runtime
+# through its tree/ symlinks, which the pattern does not count.
 detect = { kind = "grep", files = ["Cargo.toml", "*/Cargo.toml"], pattern = "path *= *\"(\\.\\./)+absd-std-staged|path *= *\"\\.\\./\\.\\./", max = 15 }
 note = "Raised from 10 to 15 on 2026-10-10: the root manifest's five Pulse dependencies moved here from absolute paths (PORT-ABSOLUTE-PATHS). The staged copies are made by the stage scripts from inputs scripts/inputs.sh locates, including the examples of a source distribution."
 

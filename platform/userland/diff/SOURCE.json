@@ -1,0 +1,8 @@
+{
+  "archive_url": "https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz",
+  "archive_sha256": "44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e",
+  "upstream_sha256": "ebe3a398549fba73a4a05a61a8982302281070db6ea42bfe14305c613b56ddd8",
+  "license_sha256": "948039f91e7e23916019047a035c69214447323c5fc272aefc0fd21e505bf41d",
+  "patch_sha256": "5a9b41231610d9a0f2f806ece7e1fdf25fd9cc886c0bbff834f396baaea632bc",
+  "adapted_sha256": "b34d063aa43b0579db59fa0929dc2475ba942693e0ee29f65a52c35e2955e0ea"
+}

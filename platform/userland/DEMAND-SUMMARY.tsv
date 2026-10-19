@@ -1,0 +1,100 @@
+# userland/DEMAND-SUMMARY.tsv: written by scripts/userland-demand.py. One row per sbase utility.
+# libutil/libutf members that did not compile under absd-cc: none
+# utility	compiles	links	elf_gate	names	PICOLIBC	KIT	ADAPTER	REFUSED	MISSING	disposition	blocker
+basename	yes	yes	OK	14	14	0	0	0	0	uutils-present	
+cal	yes	yes	OK	19	18	1	0	0	0	candidate	
+cat	yes	yes	undefined symbol stdout (weak)	13	9	4	0	0	0	native-present	gate: undefined symbol stdout (weak)
+chgrp	yes	no	-	25	15	4	2	0	4	not-planned	unresolved: fchownat fdopendir fstatat openat
+chmod	yes	no	-	24	13	4	2	0	5	do-not-port	unresolved: fchmodat fdopendir fstatat openat umask
+chown	yes	no	-	27	17	4	2	0	4	do-not-port	unresolved: fchownat fdopendir fstatat openat
+chroot	yes	no	-	15	10	1	1	2	1	not-planned	unresolved: chroot execve
+cksum	yes	yes	OK	17	14	3	0	0	0	candidate	
+cmp	yes	yes	OK	16	16	0	0	0	0	T2	
+cols	no	-	-	0	0	0	0	0	0	not-planned	compile: cols.c:24:17: error: variable has incomplete type 'struct winsize'
+comm	yes	yes	OK	17	17	0	0	0	0	candidate	
+cp	yes	no	-	35	17	5	9	1	3	native-present	unresolved: fstatat mknod utimensat
+cron	no	-	-	0	0	0	0	0	0	not-planned	compile: cron.c:13:10: fatal error: 'syslog.h' file not found
+cut	yes	yes	OK	24	23	1	0	0	0	uutils-present	
+date	yes	no	-	22	21	0	0	0	1	native-present	unresolved: clock_settime
+dd	yes	yes	undefined symbol stdout (weak)	27	19	8	0	0	0	not-planned	gate: undefined symbol stdout (weak)
+dirname	yes	yes	OK	13	13	0	0	0	0	candidate	
+du	yes	no	-	30	21	4	2	0	3	not-planned	unresolved: fdopendir fstatat openat
+echo	yes	yes	OK	13	13	0	0	0	0	native-present	
+ed	yes	no	-	49	37	7	1	4	0	T3	unresolved: sigaction
+env	yes	no	-	21	17	2	0	2	0	not-planned	unresolved: execve
+expand	yes	yes	OK	26	23	3	0	0	0	candidate	
+expr	yes	yes	OK	31	27	4	0	0	0	candidate	
+false	yes	yes	OK	0	0	0	0	0	0	candidate	
+find	yes	no	-	44	26	7	5	4	2	T3	unresolved: clock_gettime execve fork umask waitpid
+flock	yes	no	-	17	9	3	0	4	1	not-planned	unresolved: execve flock fork waitpid
+fold	yes	yes	OK	20	20	0	0	0	0	uutils-present	
+getconf	no	-	-	0	0	0	0	0	0	not-planned	compile: getconf.c:15:10: fatal error: 'getconf.h' file not found
+grep	yes	yes	OK	32	29	3	0	0	0	T2	
+head	yes	yes	OK	21	20	1	0	0	0	native-present	
+hostname	yes	no	-	14	12	0	0	1	1	not-planned	unresolved: sethostname
+join	yes	yes	OK	27	25	2	0	0	0	candidate	
+kill	yes	yes	OK	18	17	1	0	0	0	do-not-port	
+link	yes	no	-	9	8	0	0	0	1	not-planned	unresolved: link
+ln	yes	no	-	16	10	1	1	0	4	do-not-port	unresolved: fstatat linkat symlinkat unlinkat
+logger	no	-	-	0	0	0	0	0	0	not-planned	compile: logger.c:7:10: fatal error: 'syslog.h' file not found
+logname	yes	yes	OK	13	13	0	0	0	0	candidate	
+ls	yes	yes	OK	40	28	4	8	0	0	native-present	
+md5sum	yes	yes	OK	22	18	4	0	0	0	candidate	
+mkdir	yes	no	-	14	11	0	2	0	1	native-present	unresolved: umask
+mkfifo	yes	no	-	12	10	0	0	0	2	not-planned	unresolved: mkfifo umask
+mknod	no	-	-	0	0	0	0	0	0	not-planned	compile: mknod.c:5:10: fatal error: 'sys/sysmacros.h' file not found
+mktemp	yes	no	-	19	16	2	0	0	1	not-planned	unresolved: mkdtemp
+mv	yes	no	-	43	17	9	10	1	6	native-present	unresolved: fdopendir fstatat mknod openat unlinkat utimensat
+nice	no	-	-	0	0	0	0	0	0	not-planned	compile: nice.c:31:45: error: use of undeclared identifier 'NZERO'
+nl	yes	yes	OK	37	33	4	0	0	0	uutils-present	
+nohup	yes	no	-	17	9	4	0	4	0	not-planned	unresolved: dup2 execve
+od	yes	yes	OK	29	22	7	0	0	0	T2	
+paste	yes	yes	OK	26	25	1	0	0	0	candidate	
+pathchk	yes	yes	undefined symbol stdout (weak)	18	14	3	1	0	0	not-planned	gate: undefined symbol stdout (weak)
+printenv	yes	yes	OK	14	13	1	0	0	0	native-present	
+printf	yes	yes	OK	31	27	4	0	0	0	T2	
+pwd	yes	yes	OK	15	13	0	2	0	0	native-present	
+readlink	yes	yes	OK	14	12	0	2	0	0	candidate	
+renice	no	-	-	0	0	0	0	0	0	not-planned	compile: renice.c:28:12: error: use of undeclared identifier 'NZERO'
+rev	yes	yes	OK	16	16	0	0	0	0	candidate	
+rm	yes	no	-	23	13	4	2	0	4	native-present	unresolved: fdopendir fstatat openat unlinkat
+rmdir	yes	yes	undefined symbol stdout (weak)	11	10	0	1	0	0	not-planned	gate: undefined symbol stdout (weak)
+sed	yes	yes	OK	47	43	4	0	0	0	T2	
+seq	yes	yes	OK	21	21	0	0	0	0	uutils-present	
+setsid	yes	no	-	16	9	2	0	3	2	not-planned	unresolved: execve fork getpgrp setsid
+sha1sum	yes	yes	OK	22	18	4	0	0	0	candidate	
+sha224sum	yes	yes	OK	22	18	4	0	0	0	candidate	
+sha256sum	yes	yes	OK	22	18	4	0	0	0	native-present	
+sha384sum	yes	yes	OK	22	18	4	0	0	0	candidate	
+sha512sum	yes	yes	OK	22	18	4	0	0	0	candidate	
+sha512-224sum	yes	yes	OK	22	18	4	0	0	0	candidate	
+sha512-256sum	yes	yes	OK	22	18	4	0	0	0	candidate	
+sleep	yes	yes	undefined symbol stdout (weak)	11	10	1	0	0	0	not-planned	gate: undefined symbol stdout (weak)
+sort	yes	yes	OK	33	29	4	0	0	0	T2	
+split	yes	yes	OK	21	21	0	0	0	0	candidate	
+sponge	yes	yes	undefined symbol stdout (weak)	14	10	4	0	0	0	not-planned	gate: undefined symbol stdout (weak)
+strings	yes	yes	OK	28	24	4	0	0	0	candidate	
+sync	yes	no	-	9	8	0	0	0	1	native-present	unresolved: sync
+tail	yes	yes	OK	28	18	10	0	0	0	native-present	
+tar	no	-	-	0	0	0	0	0	0	T6	compile: tar.c:328:33: error: call to undeclared function 'makedev'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+tee	yes	yes	undefined symbol stdout (weak)	17	10	6	0	1	0	not-planned	gate: undefined symbol stdout (weak)
+test	yes	no	-	16	12	1	2	0	1	T2	unresolved: faccessat
+tftp	no	-	-	0	0	0	0	0	0	not-planned	compile: tftp.c:4:10: fatal error: 'sys/socket.h' file not found
+time	yes	no	-	16	9	3	0	4	0	not-planned	unresolved: execve fork waitpid
+touch	no	-	-	0	0	0	0	0	0	do-not-port	compile: touch.c:16:48: error: use of undeclared identifier 'UTIME_NOW'
+tr	yes	yes	OK	25	23	2	0	0	0	candidate	
+true	yes	yes	OK	0	0	0	0	0	0	candidate	
+tsort	yes	yes	OK	24	20	4	0	0	0	candidate	
+tty	yes	no	-	13	12	0	0	0	1	not-planned	unresolved: ttyname
+uname	no	-	-	0	0	0	0	0	0	native-present	compile: uname.c:2:10: fatal error: 'sys/utsname.h' file not found
+unexpand	yes	yes	OK	26	23	3	0	0	0	candidate	
+uniq	yes	yes	OK	27	24	3	0	0	0	uutils-present	
+unlink	yes	yes	undefined symbol stdout (weak)	9	8	1	0	0	0	not-planned	gate: undefined symbol stdout (weak)
+uudecode	yes	yes	OK	26	22	1	2	0	1	candidate	
+uuencode	yes	yes	OK	20	19	1	0	0	0	candidate	
+wc	yes	yes	OK	19	19	0	0	0	0	native-present	
+which	yes	no	-	23	15	6	0	0	2	not-planned	unresolved: faccessat fstatat
+whoami	yes	yes	OK	15	14	0	1	0	0	candidate	
+xargs	yes	no	-	34	23	6	0	5	0	not-planned	unresolved: execve fork waitpid
+xinstall	yes	yes	undefined symbol stdout (weak)	33	20	5	7	0	1	not-planned	unresolved: umask
+yes	yes	yes	OK	9	9	0	0	0	0	candidate	

@@ -1,0 +1,4 @@
+status 1
+--- stdout
+--- stderr
+/bin/find: -exec: cannot run commands on this system: Function not implemented

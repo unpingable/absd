@@ -28,6 +28,15 @@ pub const ROLE_FS_REPLY: u8 = 14;
 /// stop right only, to a qualification durable worker, never in a served
 /// boot.
 pub const ROLE_MACHINE: u8 = 15;
+// Roles 16 and 17 are the platform's session control channels (sshd to
+// its session children); init never writes them.
+/// A served service's liveness cell (docs/service-lifecycle-20261008/
+/// LIVENESS.md): init creates one cell per essential service (the file
+/// server, sshd) in a served boot and copies it with read and write rights;
+/// the service transitions it once per loop pass, and init treats a cell
+/// unchanged for `program::SERVED_LIVENESS_TICKS` after readiness as that
+/// service's fault. Never present outside a served boot.
+pub const ROLE_LIVENESS: u8 = 18;
 
 pub const REQUEST_SPAWN: u8 = 1;
 pub const REPLY_STARTED: u8 = 1;

@@ -80,6 +80,16 @@ for part in sys.argv[2].split("."):
 print(doc)' "$manifest" "$1"
 }
 
+# Only this script's own schema: /2 records the kernel feature selection
+# (build.kernel_image.EXTERNAL_KERNEL_FEATURES) that /1 lacks.
+schema=$(field schema 2>/dev/null) || fail "manifest has no schema"
+case $schema in
+absd-release-manifest/2) ;;
+absd-release-manifest/1)
+    fail "an absd-release-manifest/1 manifest is not reconstructed by this script; reconstruct a /1 manifest with reconstruct-release.sh at its own platform commit ($(field source.platform_commit 2>/dev/null || echo unrecorded))" ;;
+*) fail "unsupported manifest schema $schema" ;;
+esac
+
 # (a) The toolchain.
 if ! $tool toolchain-check --manifest "$manifest" ${tarball:+--rust-src-tarball "$tarball"}; then
     fail "this host's toolchain is not the manifest's (each mismatch named above)"
@@ -101,6 +111,8 @@ options=$(field build.kernel_image.DURABLE_OPTIONS)
 worker=$(field build.kernel_image.EXTERNAL_USER_ELF)
 server=$(field build.kernel_image.FILE_SERVER_ELF)
 wait_ticks=$(field build.kernel_image.NET_WAIT_TICKS)
+features=$(field build.kernel_image.EXTERNAL_KERNEL_FEATURES 2>/dev/null) || \
+    fail "manifest lacks build.kernel_image.EXTERNAL_KERNEL_FEATURES; the kernel feature selection must be recorded"
 test -z "$(field build.kernel_image.EXTERNAL_READER_ELF)" || fail "a reader ELF in the boot image is not reconstructed"
 test "$(field build.kernel_image.EXTERNAL_INPUT_sha256)" = \
     e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 || \
@@ -167,7 +179,7 @@ fi
 # (c) The boot image, as scripts/operator_image.py kernel_iso makes it.
 input=$workdir/empty-input.bin
 : > "$input"
-make --no-print-directory -C "$kernel_dir" durable-iso DURABLE_STEP="$step" \
+make --no-print-directory -C "$kernel_dir" durable-iso DURABLE_STEP="$step" EXTERNAL_KERNEL_FEATURES="$features" \
     EXTERNAL_USER_ELF="$platform/$worker" EXTERNAL_INPUT="$input" EXTERNAL_READER_ELF= \
     EXTERNAL_READER_INPUT= DURABLE_OPTIONS="$options" FILE_SERVER_ELF="$platform/$server" \
     NET_WAIT_TICKS="$wait_ticks" >"$workdir/kernel-build.log" 2>&1 || \

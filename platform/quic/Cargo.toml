@@ -1,0 +1,47 @@
+[package]
+name = "absd-native-quic-fixture"
+version = "0.1.0"
+edition = "2024"
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "quic_echo"
+path = "src/bin/quic_echo.rs"
+
+[[bin]]
+name = "quic_service_probe"
+path = "src/bin/quic_service_probe.rs"
+
+[dependencies]
+absd-net = { path = "../net" }
+absd-native-tls-fixture = { path = "../tls" }
+bytes = "=1.12.1"
+quinn-proto = { version = "=0.11.19", default-features = false, features = ["rustls-ring"] }
+rand = { version = "=0.10.3", default-features = false, features = ["std_rng"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
+ring = { version = "=0.17.14", features = ["less-safe-getrandom-custom-or-rdrand"] }
+getrandom-new = { package = "getrandom", version = "=0.4.3", features = ["std", "sys_rng"] }
+zeroize = "=1.8.2"
+
+[target.'cfg(target_os = "absd")'.dependencies]
+absd-runtime = { path = "../runtime" }
+absd-broker = { path = "../broker" }
+
+[patch.crates-io]
+ring = { path = "tree/ring" }
+
+[workspace]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("absd"))', 'cfg(getrandom_backend, values("custom"))'] }

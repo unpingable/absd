@@ -1,0 +1,206 @@
+{
+  "all_stripped_match": true,
+  "all_unstripped_match": true,
+  "platform_catalog_revision": "0fada7ed031bd84e3a469e717c1d0be5dbefedd6",
+  "rows": [
+    {
+      "archive_member_counts": {
+        "libabs.a": 14,
+        "libabs_builtins.a": 1,
+        "libc.a": 39,
+        "libutf.a": 4,
+        "libutil.a": 7
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "af4d73c1aa51ee6dca5ef35d9097725ff9501698d113d7d11d71bf1fe03d3ff6",
+      "name": "printf",
+      "stripped_bytes": 176632,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "42fc554b25717fc08ef5cb40826a0d73fc2c300eaa298cb67867e753c3fc789e",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "b23b08d26fdeb6e804a20ded73105e58ead01f34f4a562586062f21e31fb0217"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 14,
+        "libabs_builtins.a": 1,
+        "libabsd-posix.a": 2,
+        "libc.a": 25,
+        "libutil.a": 2
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "69a23f16b02532662ed6e3092608181b6bfbed881bce0b1d855c66719e4712b5",
+      "name": "test",
+      "stripped_bytes": 197112,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "e49278923c88493c4d1ad8a58e3f1296614c356d3b89ff83e6630ca6b197364d",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "7edb2f44ceafa0d67ca30933585963f22fb8ae93cea2674e146e2e1f9bb50d0e"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 15,
+        "libabs_builtins.a": 1,
+        "libc.a": 50,
+        "libutil.a": 5
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "3eb791210c9fe453b31471b9050fe2ee35ed52a7bcf2655a49b0e002db18b571",
+      "name": "grep",
+      "stripped_bytes": 225928,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "c8b96cb40d3808a37b5d7e42c071acfa7cfeec507c828b756e7b233982cd69c1",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "8d15d2c2f1baf48845319d629bac913c8091fddd4ff46112bea7e09b9dd59790"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 15,
+        "libabs_builtins.a": 1,
+        "libc.a": 46,
+        "libutf.a": 9,
+        "libutil.a": 8
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "e96bf404dbf5bf437e0a6f0970cb878cb7e153e9e402e7cbe5958990001ee01e",
+      "name": "sort",
+      "stripped_bytes": 213656,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "be8e810da20bef4efffdda6b7a2595b90c6a85ba6ac85b006ead42e6dff97416",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "4e341676cd56f6c993eda2acc0a536be06c897b346a03984f4523510d4761857"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 15,
+        "libabs_builtins.a": 1,
+        "libc.a": 55,
+        "libutf.a": 5,
+        "libutil.a": 6
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "f8586148d05138d05dbd576255aa1ff1bca21355c3553365e05ba0f0cdf438cf",
+      "name": "sed",
+      "stripped_bytes": 250504,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "2313fe7ee5c683eea7a8310127ec550f112025feb670700620ed3f2f769047fd",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "6eb594d930b82031238b4bfeb044125524b51fcaef5d9fe24359d4ca50ec41a7"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 15,
+        "libabs_builtins.a": 1,
+        "libc.a": 30,
+        "libutil.a": 4
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "e77ab2be36c0ca2c59fe40234bccb1614dccf3a9d7cd244c788496bb94ef8c21",
+      "name": "od",
+      "stripped_bytes": 197160,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "c6bc54ae93dcb93030b3f25ebed8231574b8459420f6379d3a144d95b08f386e",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "44f582dccbf9375d4e8d35fff9f2fd938ab02764d89f077114b78a190b17c8a0"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 14,
+        "libabs_builtins.a": 1,
+        "libc.a": 32,
+        "libutil.a": 2
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "1cfc5e83cba7d95babcacacd05fbf0269e5d9b00bd8aa49cf8502574979782cb",
+      "name": "cmp",
+      "stripped_bytes": 193160,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "6bde08fa4d1827979377ee00298e7eb78863f5b3c2779687f2e23163c9094a57",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "3dda8cab5a32398d796ece6059e41149eaae0a2cf0f86d7e6a6286288234c656"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 15,
+        "libabs_builtins.a": 1,
+        "libc.a": 57,
+        "libutil.a": 2
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "f55784e532c8a61c7bcb26ab16059f2e27df67c5dc32fbc075ef7bd652c63e7a",
+      "name": "ed",
+      "stripped_bytes": 258712,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "dd2cab5ef8e46dded67d5af263548668f4edbe3e72fc1122560952a1139a23a8",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "36693a98cdc54c90cf10185d5196d1ca81bd55983a17ac0d4c67e8ebfbb013e4"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 15,
+        "libabs_builtins.a": 1,
+        "libabsd-posix.a": 2,
+        "libc.a": 65,
+        "libutil.a": 7
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "33b76bc23b2c0ff1fa6a4e6673f5c0395bf836c2ef50b3459f866892dc83a575",
+      "name": "find",
+      "stripped_bytes": 218672,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "c4d3e8cb21c5f25e5b40e1253ac6a6dd0308876485c05cfb935b77c5741b7f75",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "e72dedac6405d92eb0d435468830cf531ce2e1d93e6892a1c51b12840766b666"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 13,
+        "libabs_builtins.a": 1,
+        "libabsd-posix.a": 1,
+        "libc.a": 35
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "b9a48775b6f1002c3c724931ae4c554ebd36c36c41852c3702ed08d82c9b0b4f",
+      "name": "diff",
+      "stripped_bytes": 197056,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "3f169fcbc29b2c85d9583ea032bdf13bab101658b82121dca65c295abc0b33f0",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "dabeaddaa28fa6f145a44010112cfeb47edee5f69ccdb9aa99bd107cfc9ea697"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 12,
+        "libabs_builtins.a": 1,
+        "libc.a": 24
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "a5bbdcedea2135970273d5a6207943d4a85033e820902679cb0d226ae86132a9",
+      "name": "hexdump",
+      "stripped_bytes": 188880,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "eb5db4049bdb1c710184e90ee32380368b32793b1e450838500b0047c53b6ea5",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "73fe8e2e2497a03d7dd2095a4315ba75c1641ece24988491fec9bab63aa7065b"
+    },
+    {
+      "archive_member_counts": {
+        "libabs.a": 15,
+        "libabs_builtins.a": 1,
+        "libabsd-posix.a": 3,
+        "libc.a": 26,
+        "libutil.a": 1
+      },
+      "map_association": "same local build basename; stripping reproduces catalog is checked below",
+      "map_sha256": "25f8b8fab11a9c3bb8911051516063f959dea3c417017252fe88eda8be746a52",
+      "name": "tar",
+      "stripped_bytes": 217592,
+      "stripped_matches_catalog": true,
+      "stripped_sha256": "3969d81900e1b7f51bc81082729d906451e8490ab470d54598aaa652dd5c336f",
+      "unstripped_matches_catalog": true,
+      "unstripped_sha256": "d4fc29013dbf7b12dd137a26aa157f121ead95cd4de0b4afadf6a06a28f8f3fa"
+    }
+  ],
+  "schema": "absd-rc1-c-link-correspondence/1",
+  "scope": "Read-only local C build link maps associated by basename and exact unstripped+stripped catalog correspondence; not independently observed original link invocations or guest execution. Archive-member sets conservatively include map entries, not a whole-image symbol proof."
+}

@@ -47,6 +47,14 @@ mappings for reuse; this repair does not claim transactional allocator
 growth or elimination of all fragmentation. Kernel page tables can remain
 until process teardown.
 
+Since R16 (SPEC A23), pooled pages stay mapped until the process exits,
+except that when a request for pages of its own (4096 bytes to 64 pages)
+finds no room in the window, the allocator unmaps one free, page-aligned
+pooled run of at most 64 pages and retries the request once; a block the
+program still holds is never moved or unmapped, and a request that still
+fails after the retry is refused as before (`tests/runtime_allocator.rs`,
+`r16_*`, run by `scripts/check-runtime-allocator.sh`).
+
 `scripts/check-runtime-allocator.sh`, included in `scripts/check-all.sh`,
 imports the actual allocator into a bounded host page arena. It checks
 exclusive page return with live neighbors, the concrete one-hole contiguous
@@ -91,3 +99,58 @@ is not a transfer schema; no hardware-transfer or post-effect rollback
 claim follows. The isolated candidate requires whole-platform qualification
 before main integration; a passing heap matrix alone does not accept or
 seal a release.
+
+## A3 free-pool telemetry
+
+The capacity readers now recognize a final `heap_free_pages=N` on
+`SERVED CAPACITY ... heap_pages_peak=N link=up|down|unknown` and
+`FSD CAPACITY ... heap_pages_peak=N`. Both current emitters append this field, sampled through
+`absd_runtime::heap_free_pooled_pages()` before formatting. Historical readers
+continue to accept older records without asserting that those implement A3.
+
+The controller's A3 metric is `floor(sum(free-list byte lengths) / 4096)`:
+process-local reusable pooled storage, including free-node storage. It
+excludes held allocations and outstanding dedicated mappings. Fragment
+bytes are summed before rounding; two disjoint 2048-byte free runs count
+as one page-equivalent. This is not the number of page-aligned runs that
+can be unmapped, the largest available allocation, or kernel free frames.
+The production accessor traverses the free list under its existing allocator
+lock, without allocation, logging, syscalls or callbacks; its guard drops before
+returning to the emitter. It makes no change to allocation, insertion hints,
+coalescing, growth or R16 trim/retry behavior. Cost is O(free nodes), only at
+quiescent reporting boundaries, not per allocation. Separate capacity fields are not one atomic global
+snapshot, and telemetry does not qualify live allocator replacement.
+
+Named current consumers `contain-matrix.py`, `agent-exec.py` (also used by
+`agent-job.py`), and `link-matrix.py` preserve their old line validation and
+accept only this additional numeric tail. The first two preserve missing
+telemetry as `None` (JSON `null`: unknown), not zero. Existing U1 and
+frame-retention readers keep their prefix fields and do not interpret this
+new metric; survival-recovery reads boot identity only. This field adds no
+resource-equality or leak acceptance allowance. A check for the new A3
+producer contract must require an actual numeric field; optional parsing
+of an old receipt does not establish that the producer implements A3.
+`scripts/test_capacity_line.py` covers old/new forms and malformed tails
+without executing the guest harnesses. It derives new-contract fixture lines
+from both actual producer format strings, checks the production accessor binding,
+and also checks c-kit, cports, clang, agent-job and boot-only recovery readers.
+Prefix readers retain earlier fields; they do not validate or infer the new
+metric. Historical absent telemetry remains unknown.
+
+Runtime host-model tests exercise the production sum against a separate visitor
+oracle, including fragmented subpage totals, dedicated mappings, alignment,
+coalescing and successful/refused R16 pool returns. They do not prove kernel
+mapping effects or whole-platform guest behavior. Runtime source changes also
+change the C kit and downstream binary identities: recompose and measure real
+port hashes under steward authority; never silently reuse or repin accepted
+PORTS.tsv digests.
+
+Formalization consideration: the proposition is floor(sum(valid disjoint free
+node bytes)/4096) under the existing exclusive lock, with unchanged allocation
+transitions and explicit parser history boundaries. The bounded heap invariant
+keeps this sum representable; practical oracle/transition/negative tests and
+independent lock-lifetime review suffice for this observation change. This is
+process-generation telemetry, not stable service identity or a transferred
+allocator schema. Replacement still needs external quiescence/fencing and
+explicit ownership reconstruction; no native Rust state transfer, successor
+validation, rollback guarantee or authority revival is provided.

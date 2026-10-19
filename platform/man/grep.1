@@ -1,0 +1,64 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt GREP 1
+.Os ABSD
+.Sh NAME
+.Nm grep
+.Nd search files for lines matching a regular expression (sbase)
+.Sh SYNOPSIS
+.Nm
+.Op Fl EFHchilnqsvwx
+.Op Fl e Ar pattern
+.Op Fl f Ar file
+.Op Ar pattern
+.Op Ar file ...
+.Sh DESCRIPTION
+.Nm
+is sbase 0.1's
+.Nm grep ,
+built unpatched for ABSD with the C kit; see
+.Xr sbase 7 .
+It prints the lines of the named files, or of standard input when none is
+named, that match a POSIX basic
+.Pq or with Fl E No extended
+regular expression, or with
+.Fl F
+a fixed string.
+Unlike
+.Xr rg 1 ,
+it reads standard input when no file is named, so
+.Ql cat f | grep pattern
+works, and it does not search directories.
+.Sh UNSUPPORTED ON ABSD
+.Bl -tag -width Ds
+.It regular expressions
+Picolibc's
+.Fn regcomp
+and
+.Fn regexec ;
+C locale only (R14), so
+.Fl i
+and character classes are ASCII.
+.It messages
+prefixed with
+.Ql argv[0]
+as invoked;
+.Ql strerror
+texts are Picolibc's.
+.El
+.Pp
+Nothing else is refused.
+Behaviour on ABSD is predicted until the guest qualification
+.Pq Xr sbase 7 .
+.Sh EXIT STATUS
+0 when a line matched, 1 when none did, 2 on an error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ grep -n session /var/log/sshd
+absd$ cat /etc/network.conf | grep -c address
+.Ed
+.Sh SEE ALSO
+.Xr ed 1 ,
+.Xr rg 1 ,
+.Xr sed 1 ,
+.Xr sbase 7

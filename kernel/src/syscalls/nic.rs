@@ -4,13 +4,15 @@
 //! timer path (`wake_nic_receivers`) completes it when a frame arrives.
 
 use super::{WaitOutcome, handle_error};
-use crate::e1000;
+use crate::nic_device as e1000;
 use crate::sched::{deadline, stats, table};
 use absd_kernel::arch::ExecutionState;
 use absd_kernel::handle::{HandleError, Object, RIGHT_READ, RIGHT_WRITE};
 use absd_kernel::nic::{NIC_FRAME_MAX, NIC_INFO_BYTES};
 use absd_kernel::process::{AddressSpace, MAX_PROCESSES, ProcessState, TransferWait, WaitKind};
-use absd_kernel::syscall::{ERROR_AGAIN, ERROR_FAULT, ERROR_INVALID, ERROR_IO, ERROR_TIMEOUT};
+use absd_kernel::syscall::{
+    ERROR_AGAIN, ERROR_FAULT, ERROR_INVALID, ERROR_IO, ERROR_NO_CARRIER, ERROR_TIMEOUT,
+};
 use absd_kernel::user_memory::{check_user_range, copy_from_user, copy_to_user};
 
 /// Resolves a NIC handle carrying `rights`.
@@ -62,6 +64,7 @@ pub(super) unsafe fn syscall_nic_send(current: usize, handle: u64, frame: u64, l
         Err(e1000::SendError::Length) => ERROR_INVALID,
         Err(e1000::SendError::Copy) => pointer_refused(),
         Err(e1000::SendError::Disabled) => ERROR_IO,
+        Err(e1000::SendError::NoCarrier) => ERROR_NO_CARRIER,
     }
 }
 

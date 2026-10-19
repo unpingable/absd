@@ -1,0 +1,6 @@
+status 1
+--- stdout
+Binary files "bin.dat"
+and "empty.txt"
+differ
+--- stderr

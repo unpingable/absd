@@ -1,0 +1,62 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt SORT 1
+.Os ABSD
+.Sh NAME
+.Nm sort
+.Nd sort lines of text (sbase)
+.Sh SYNOPSIS
+.Nm
+.Op Fl Cbcdfimnru
+.Op Fl o Ar outfile
+.Op Fl t Ar delim
+.Op Fl k Ar def ...
+.Op Ar file ...
+.Sh DESCRIPTION
+.Nm
+is sbase 0.1's
+.Nm sort ,
+built unpatched for ABSD with the C kit; see
+.Xr sbase 7 .
+It sorts the lines of the named files, or of standard input, by whole
+line or by the keys
+.Fl k
+and
+.Fl t
+define, and writes them to standard output or, with
+.Fl o ,
+to
+.Ar outfile .
+.Fl c
+and
+.Fl C
+check that the input is already sorted.
+.Sh UNSUPPORTED ON ABSD
+.Bl -tag -width Ds
+.It input size
+in memory, bounded by the 32 MiB heap
+.Pq Pa docs/C-INTERFACE.md ;
+what happens at exhaustion is the guest qualification's to show.
+.It Fl o Ar outfile
+writes only where the session may write
+.Pq Pa /home/operator , Pa /tmp/session-N .
+.It ordering
+C locale only (R14): bytes compare as unsigned characters.
+.El
+.Pp
+Behaviour on ABSD is predicted until the guest qualification
+.Pq Xr sbase 7 .
+.Sh EXIT STATUS
+0 on success; with
+.Fl c
+or
+.Fl C ,
+1 when the input is not sorted; 2 on an error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ sort -n -k 2 /home/operator/sizes.txt
+absd$ cat /etc/words.txt | sort | uniq -c
+.Ed
+.Sh SEE ALSO
+.Xr intro 1 ,
+.Xr sbase 7

@@ -52,6 +52,8 @@ import tomllib
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
+from served_ram import served_qemu
+from served_kernel import kernel_make
 import absd_fs  # noqa: E402
 import release_record  # noqa: E402
 import ssh_absd  # noqa: E402
@@ -69,8 +71,10 @@ IMAGE = "absd-operator.img"
 # uutils and ripgrep): every command /bin carries. No test helper (sshtest,
 # fsd-probe, sh-probe, exec-probe) is installed.
 NATIVE = ["echo", "pwd", "ls", "cat", "printenv", "uname", "mkdir", "rm", "mv", "cp", "head", "tail",
-          "wc", "sha256sum", "stat", "df", "sync", "man", "date", "uptime", "release", "sysinfo"]
-PORTS = ["basename", "seq", "cut", "fold", "nl", "uniq", "base64", "rg"]
+          "wc", "sha256sum", "stat", "df", "sync", "man", "date", "uptime", "release", "sysinfo", "health", "net-status"]
+PORTS = ["basename", "seq", "cut", "fold", "nl", "uniq", "base64", "rg",
+         # sbase ports (userland/PORTS.tsv, base-userland lane 2026-10-12; owner D-01)
+         "printf", "test", "grep", "sort", "sed", "od", "cmp", "ed", "find", "diff", "hexdump", "tar"]
 QEMU = "qemu-system-x86_64 -cpu max,vendor=GenuineIntel,+rdrand"
 
 
@@ -108,7 +112,7 @@ def authorized(path):
 def kernel_iso(kernel, step, worker, options="", server="", input_bytes=b"", work=None):
     input_path = pathlib.Path(work) / f"input-{hashlib.sha256(input_bytes).hexdigest()}.bin"
     input_path.write_bytes(input_bytes)
-    subprocess.run(["make", "--no-print-directory", "-C", str(kernel), "durable-iso", f"DURABLE_STEP={step}",
+    subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(kernel), "durable-iso", f"DURABLE_STEP={step}",
                     f"EXTERNAL_USER_ELF={worker}", f"EXTERNAL_INPUT={input_path}", "EXTERNAL_READER_ELF=",
                     "EXTERNAL_READER_INPUT=", f"DURABLE_OPTIONS={options}", f"FILE_SERVER_ELF={server}"],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
@@ -120,7 +124,7 @@ def import_boots(kernel, image, plan, work, qemu=QEMU, root=ROOT, log=print):
         iso = kernel_iso(kernel, step, root / "fixture-import.elf", input_bytes=em.stream(entries), work=work)
         serial = pathlib.Path(work) / f"import-{index:03d}.serial.log"
         status = subprocess.run([str(pathlib.Path(kernel) / "scripts" / "durable-boot.sh"), str(iso), str(image),
-                                 str(serial), "900", *qemu.split()], check=True, capture_output=True,
+                                 str(serial), "900", *served_qemu(qemu)], check=True, capture_output=True,
                                 text=True).stdout.strip()
         text = ssh_absd.captured(serial.read_bytes())
         if status != "3" or f"FIXTURE IMPORT OK files={len(entries)}" not in text:

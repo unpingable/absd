@@ -1,0 +1,11 @@
+# Cases whose ABSD outcome must differ from the host REFERENCE pin in
+# userland/expected/ (scripts/check-userland.py requires every ID to be a case).
+# Tab-separated: ID ABSD_STATUS ABSD_STDERR REASON. ABSD_STDERR carries the argv[0]
+# prefix as the guest prints it (/bin/NAME, CPA-066, D-21). ABSD stdout is empty for every
+# row. These are predictions from the patches and the contract, unverified
+# until the guest run (T5) pins them.
+test-writable-dir	2	/bin/test: -w dir: check not supported on this system: Function not implemented	access(dir, W_OK) is ENOSYS (SPEC A11, c/posix/unistd_more.c); test-access-mtime.patch reports it instead of answering false
+test-exec-file	2	/bin/test: -x words.txt: check not supported on this system: Invalid argument	access(file, X_OK) is EINVAL: no execute permission exists (c/posix/unistd_more.c); test-access-mtime.patch
+test-newer	2	/bin/test: -nt/-ot: file modification times are not available on this system	st_mtime is 0 for every file (C-INTERFACE.md 11); the ABSD build defines ABSD_NO_MTIME; test-access-mtime.patch
+find-mtime	1	/bin/find: -atime/-ctime/-mtime/-newer: file times are not available on this system	st_mtime is 0 for every file and no clock_gettime exists (C-INTERFACE.md 11); the ABSD build defines ABSD_NO_MTIME; find-absd.patch
+find-newer	1	/bin/find: -atime/-ctime/-mtime/-newer: file times are not available on this system	as find-mtime; find-absd.patch

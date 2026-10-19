@@ -54,7 +54,7 @@ if [ "$absd_target" = true ] && [ "$library_crate" = false ]; then
         ppv_lite86|absd_broker|absd_runtime|absd_durable|absd_fs|absd_sqlite|absd_std_probe|panic_std|exit_std|text_stats|pulse_std|ag_authority|pulse_journal_std|ag_sqlite|fixture_import|broker_echo|broker_requester|absd_net|netd_probe|ctrlc|libc)
             exec "$real" -Zunstable-options "$@"
             ;;
-        ag_primitives|ag_kernel|serde_jcs|pulse_runtime|pulse_nq_load_support|pulse_absd_frame_pressure|pulse_agent|pulse_l3_bridge|libsqlite3_sys|rusqlite|nightshiftd|nightshift_observation_resolver|nightshift|ag_store|anstream|ag_campaign|strsim|clap_lex|is_terminal_polyfill|anstyle_query|tempfile|nq_app|nq|nq_core|nq_store|nq_protocol|nq_profiles|nq_helper_sandbox|nq_build_info|serde_spanned|toml_datetime|toml_edit|toml|tokio|ag_protocol|ag_session|ag_app|ag_loopctl)
+        quinn_proto|ag_primitives|ag_kernel|serde_jcs|pulse_runtime|pulse_nq_load_support|pulse_absd_frame_pressure|pulse_agent|pulse_l3_bridge|libsqlite3_sys|rusqlite|nightshiftd|nightshift_observation_resolver|nightshift|ag_store|anstream|ag_campaign|strsim|clap_lex|is_terminal_polyfill|anstyle_query|tempfile|nq_app|nq|nq_core|nq_store|nq_protocol|nq_profiles|nq_helper_sandbox|nq_build_info|serde_spanned|toml_datetime|toml_edit|toml|tokio|ag_protocol|ag_session|ag_app|ag_loopctl)
             attribute='feature(restricted_std)'
             ;;
         *)

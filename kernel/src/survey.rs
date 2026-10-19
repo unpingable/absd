@@ -265,7 +265,14 @@ fn record(function: pci::Function) {
 
 /// The rest of the survey, from the Multiboot2 tags to the summary; never
 /// returns to the ordinary boot path.
-pub fn finish(info: *const u8, total_size: usize, readback: bool, ticks: u64, tsc: u64) -> ! {
+pub fn finish(
+    info: *const u8,
+    total_size: usize,
+    readback: bool,
+    ticks: u64,
+    tsc: u64,
+    calibration: &Result<facts::TimerCalibration, &'static str>,
+) -> ! {
     let block = unsafe { core::slice::from_raw_parts(info, total_size) };
     let efi = facts::has_tag(block, facts::TAG_EFI64) || facts::has_tag(block, facts::TAG_EFI32);
     let acpi = if facts::has_tag(block, facts::TAG_ACPI_NEW) {
@@ -326,7 +333,7 @@ pub fn finish(info: *const u8, total_size: usize, readback: bool, ticks: u64, ts
     hex(map.highest_end);
     write("\n");
     write("MEMORY OK tracked_limit=");
-    mib(absd_kernel::memory::TRACKED_PHYSICAL_LIMIT);
+    mib(frames.tracked_limit());
     write(" free_frames=");
     decimal(free);
     write(" (");
@@ -337,6 +344,21 @@ pub fn finish(info: *const u8, total_size: usize, readback: bool, ticks: u64, ts
     write(" tsc_cycles=");
     decimal(tsc);
     write(" (uncalibrated) lapic=unused ioapic=unused\n");
+    // Clock 6a: the same line the boot printed, as a survey fact.
+    match calibration {
+        Ok(c) => {
+            let mut buf = [0u8; facts::TIMER_CALIBRATION_LINE_MAX];
+            write(
+                facts::format_timer_calibration(c, &mut buf)
+                    .unwrap_or("TIMER CALIBRATION FAILED reason=format"),
+            );
+        }
+        Err(reason) => {
+            write("TIMER CALIBRATION FAILED reason=");
+            write(reason);
+        }
+    }
+    write("\n");
 
     let mut entries = [None::<PciEntry>; MAX_ENTRIES];
     let mut count = 0usize;
@@ -429,7 +451,7 @@ fn summary(
     write(" regions=");
     decimal(u64::from(map.usable_regions));
     write(" used=first ");
-    mib(absd_kernel::memory::TRACKED_PHYSICAL_LIMIT);
+    mib(unsafe { crate::vm::frames() }.tracked_limit());
     write(" free_frames=");
     decimal(free);
     write("\n");

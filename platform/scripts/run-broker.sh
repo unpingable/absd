@@ -20,11 +20,11 @@ fi
 rm -rf "${work:?}"
 mkdir -p "$work"
 : > "$work/empty"
-make -C "$kernel" --no-print-directory durable-iso DURABLE_STEP=1 \
+python3 "$root/scripts/served_kernel.py" -C "$kernel" --no-print-directory durable-iso DURABLE_STEP=1 \
     EXTERNAL_USER_ELF="$root/broker-requester.elf" EXTERNAL_INPUT="$work/empty" \
     BROKER_POLICY="$root/broker-policy.txt" OWNER_1_ELF="$root/broker-echo.elf" >/dev/null
 truncate -s 2M "$work/broker.img"
-status=$("$kernel/scripts/durable-boot.sh" "$kernel/build/durable/absd-durable-1.iso" \
+status=$(python3 "$root/scripts/served_ram.py" --durable-boot "$kernel/scripts/durable-boot.sh" "$kernel/build/durable/absd-durable-1.iso" \
     "$work/broker.img" "$work/broker.log" 180 $qemu -cpu max,vendor=GenuineIntel,+rdrand)
 test "$status" -eq 3
 python3 "$kernel/scripts/check-external-output.py" "$work/broker.log" "$root/broker-expected.txt"

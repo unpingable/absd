@@ -1,0 +1,4 @@
+status 2
+--- stdout
+--- stderr
+diff: input must be a named regular file

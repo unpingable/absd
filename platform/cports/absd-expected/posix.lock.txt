@@ -1,0 +1,15 @@
+open l a: 0 0
+open l b: 0 0
+a F_WRLCK whole: 0 0
+b F_RDLCK whole: -1 EAGAIN
+a F_UNLCK whole: 0 0
+a F_RDLCK 1..1: -1 EINVAL
+a F_GETLK whole: -1 EINVAL
+a F_SETLKW whole: -1 EINVAL
+b F_WRLCK whole: 0 0
+b F_UNLCK whole: 0 0
+a F_WRLCK 0x40000002+510: 0 0
+b F_RDLCK whole: -1 EAGAIN
+--
+--
+status=0

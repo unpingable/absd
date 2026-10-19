@@ -423,6 +423,36 @@ pub unsafe fn spawn_many_copy(
     unsafe { spawn_transferred(program, parent, transfers, 0, true) }
 }
 
+#[cfg(feature = "frame-admission-v0")]
+pub unsafe fn spawn_many_copy_reserved(
+    program: usize,
+    parent: u64,
+    transfers: &[Transfer],
+    total: usize,
+) -> Result<u64, SpawnError> {
+    let image = PROGRAMS.get(program).ok_or(SpawnError::UnknownProgram)?;
+    if !uses_multi_start(program) {
+        return Err(SpawnError::BadImage);
+    }
+    let parsed = elf::parse(image.bytes).map_err(|_| SpawnError::BadImage)?;
+    let minimum =
+        absd_kernel::frame_admission::construction_frames(&parsed).ok_or(SpawnError::BadImage)?;
+    if total < minimum {
+        return Err(SpawnError::BadImage);
+    }
+    unsafe {
+        spawn_from_budget(
+            program,
+            image.bytes,
+            parent,
+            transfers,
+            0,
+            true,
+            Some(total),
+        )
+    }
+}
+
 /// An image in the calling process's memory (`spawn_image`). The caller
 /// has already checked that the whole range is mapped user memory; the
 /// loader copies from it through the parent's page tables, a header or
@@ -466,6 +496,30 @@ pub unsafe fn spawn_image(
     unsafe { spawn_from(IMAGE_PROGRAM, image, parent, transfers, 0, true) }
 }
 
+/// Experimental image admission shares the normal loader and teardown.
+#[cfg(feature = "frame-reservation-experiment")]
+pub unsafe fn spawn_image_reserved(
+    image: &UserImage,
+    parent: u64,
+    transfers: &[Transfer],
+    total: usize,
+) -> Result<u64, SpawnError> {
+    if transfers.len() > MAX_SPAWN_HANDLES {
+        return Err(SpawnError::NoHandles);
+    }
+    unsafe {
+        spawn_from_budget(
+            IMAGE_PROGRAM,
+            image,
+            parent,
+            transfers,
+            0,
+            true,
+            Some(total),
+        )
+    }
+}
+
 unsafe fn spawn_transferred(
     program: usize,
     parent: u64,
@@ -482,6 +536,29 @@ unsafe fn spawn_transferred(
     unsafe { spawn_from(program, image.bytes, parent, transfers, arg, vector_start) }
 }
 
+#[cfg(feature = "frame-reservation-experiment")]
+pub unsafe fn spawn_reserved(
+    program: usize,
+    parent: u64,
+    total: usize,
+    transfer: Option<Transfer>,
+) -> Result<u64, SpawnError> {
+    let image = PROGRAMS.get(program).ok_or(SpawnError::UnknownProgram)?;
+    let one = [transfer.unwrap_or(Transfer::EMPTY)];
+    let transfers = if transfer.is_some() { &one[..] } else { &[] };
+    unsafe {
+        spawn_from_budget(
+            program,
+            image.bytes,
+            parent,
+            transfers,
+            0,
+            uses_multi_start(program),
+            Some(total),
+        )
+    }
+}
+
 unsafe fn spawn_from<S: ImageSource + ?Sized>(
     program: usize,
     image: &S,
@@ -490,6 +567,20 @@ unsafe fn spawn_from<S: ImageSource + ?Sized>(
     arg: u64,
     vector_start: bool,
 ) -> Result<u64, SpawnError> {
+    unsafe { spawn_from_budget(program, image, parent, transfers, arg, vector_start, None) }
+}
+
+unsafe fn spawn_from_budget<S: ImageSource + ?Sized>(
+    program: usize,
+    image: &S,
+    parent: u64,
+    transfers: &[Transfer],
+    arg: u64,
+    vector_start: bool,
+    budget: Option<usize>,
+) -> Result<u64, SpawnError> {
+    #[cfg(not(feature = "frame-admission-core"))]
+    let _ = budget;
     let table = unsafe { table() };
     // PID 0 is the kernel's single root grant to init. Every userspace child
     // derives its default console authority from console handles the parent
@@ -532,6 +623,13 @@ unsafe fn spawn_from<S: ImageSource + ?Sized>(
     // starts with it; the spawn syscalls clear it when asked.
     process.may_spawn = true;
     let frames = unsafe { vm::frames() };
+    #[cfg(feature = "frame-admission-core")]
+    if let Some(total) = budget
+        && frames.admit(pid as u32, total).is_err()
+    {
+        table.unclaim(index);
+        return Err(SpawnError::NoMemory);
+    }
     if let Err(error) = unsafe { load_process(frames, process, image, default_console_rights) } {
         unsafe { release_resources(frames, process) };
         table.unclaim(index);
@@ -558,7 +656,7 @@ unsafe fn spawn_from<S: ImageSource + ?Sized>(
     // entry argument). Init hands it to exactly one child at a time.
     if parent == 0
         && matches!(boot_mode(), BootMode::Durable | BootMode::NetProbe)
-        && crate::e1000::present()
+        && crate::nic_device::present()
         && let Ok(handle) = process
             .handles
             .insert(Object::Nic, RIGHT_READ | RIGHT_WRITE)
@@ -827,6 +925,12 @@ unsafe fn populate<S: ImageSource + ?Sized>(
 /// Returns every frame a process owns: its address space and kernel stack.
 /// Must not run while that process's CR3 or kernel stack is active.
 unsafe fn release_resources(frames: &mut FrameAllocator, process: &mut Process) {
+    #[cfg(feature = "frame-admission-v0")]
+    {
+        process.may_admit_frames = false;
+        unsafe { crate::syscalls::retire_frame_bootstrap(process.pid) };
+    }
+
     assert!(
         process.cpu_owner.is_none(),
         "reclaim while CPU owns address space"
@@ -864,6 +968,10 @@ unsafe fn release_resources(frames: &mut FrameAllocator, process: &mut Process) 
         process.task.kernel_stack_base = 0;
         process.task.kernel_stack_top = 0;
     }
+    #[cfg(feature = "frame-admission-core")]
+    frames
+        .retire_reservation(owner)
+        .expect("reservation retired before frames returned");
     let remaining = frames.frames_owned_by(owner);
     if remaining != 0 {
         panic!(
@@ -1041,6 +1149,8 @@ unsafe fn prepare_runnable() {
         // The AP can prepare ordinary object/time waits under serialization,
         // but must never read BSP interrupt input or enter a NIC controller.
         if cpu::is_bootstrap_processor() {
+            #[cfg(target_arch = "x86_64")]
+            crate::xhci::keyboard_progress();
             wake_console_readers();
             wake_nic_receivers();
         }
@@ -1179,6 +1289,11 @@ pub extern "C" fn idle_loop() -> ! {
                         || matches!(entry.wait_kind, WaitKind::Console | WaitKind::StopFence)
                         || entry.class.rt().is_some())
             }) {
+                #[cfg(target_arch = "x86_64")]
+                if crate::xhci::keyboard_stop_before_finish() {
+                    crate::kernel_lock::idle_wait();
+                    continue;
+                }
                 finish_process_suite();
             }
             if boot_mode() == BootMode::RtClass {

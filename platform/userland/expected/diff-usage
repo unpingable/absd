@@ -1,0 +1,4 @@
+status 2
+--- stdout
+--- stderr
+diff: usage: diff [-u] [--] file1 file2

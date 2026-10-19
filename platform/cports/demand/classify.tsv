@@ -1,0 +1,92 @@
+# Classification of every symbol in the stage-2 demand (DEMAND.md). Tab-separated:
+# SYMBOL BUCKET NOTE. A symbol Picolibc 1.8.12 defines (nm --defined-only of the configured
+# libc.a/libm.a) and that is not listed here is PICOLIBC with no note. Buckets: PICOLIBC,
+# KIT-FIVE, ADAPTER, REFUSED, KIT-GAP, UNKNOWN (brief section D1).
+# --- KIT-FIVE: the C lane's libabs (C-INTERFACE.md): the five calls and the other kit-owned
+# functions (R4, R9 dispositions); listed so the table names the owner.
+open	KIT-FIVE	descriptor table over __absd_std_fs_open; O_CLOEXEC and O_NOFOLLOW accepted as honest no-ops (R1 accepted)
+close	KIT-FIVE	descriptor table
+read	KIT-FIVE	descriptor table, 256-byte transfers looped
+write	KIT-FIVE	descriptor table, 256-byte transfers looped
+lseek	KIT-FIVE	userspace position; ESPIPE on pipes (zlib gz_open probes it on stdin)
+fsync	KIT-FIVE	__absd_std_fs_sync; returns after the file server's commit (FILESYSTEM.md operation contract)
+ftruncate	KIT-FIVE	__absd_std_fs_set_len
+fstat	KIT-FIVE	__absd_std_fs_fstat through the kit's absd_stat_from_attr (R7 accepted); st_mtime 0 until R3 (deferred)
+unlink	KIT-FIVE	__absd_std_fs_unlink
+malloc	KIT-FIVE	allocation adapter over __absd_std_alloc
+free	KIT-FIVE	allocation adapter
+calloc	KIT-FIVE	allocation adapter
+realloc	KIT-FIVE	allocation adapter
+_exit	KIT-FIVE	__absd_std_exit
+gettimeofday	KIT-FIVE	wall_clock, whole seconds; refusal surfaced (C plan Task 4)
+times	KIT-FIVE	ticks; elapsed, not CPU time (catalog CPA-018)
+getpid	KIT-FIVE	__absd_std_getpid; overrides Picolibc's libos fallback (which returns 1)
+isatty	KIT-FIVE	0 with ENOTTY for every descriptor (no terminals)
+raise	KIT-FIVE	_exit(128+sig); overrides Picolibc's libos fallback (catalog CPA-005)
+getentropy	KIT-FIVE	RDRAND
+# --- ADAPTER: userspace over existing hooks (ADAPTER-DESIGN.md).
+stat	ADAPTER	__absd_std_fs_stat through the kit's absd_stat_from_attr (R7); st_mtime 0 until R3 (deferred)
+lstat	ADAPTER	== stat: the platform has exactly two object kinds, file and directory (A13 invariant, ADAPTER-DESIGN.md 6.2)
+readlink	ADAPTER	EINVAL for every existing path (nothing is a symlink); ENOENT when absent
+realpath	ADAPTER	__absd_std_fs_canonical after cwd resolution; not in Picolibc
+rename	ADAPTER	__absd_std_fs_rename(noreplace=0); not in Picolibc
+mkdir	ADAPTER	__absd_std_fs_mkdir; mode not applied (declared divergence CPA-014); mode without S_IWUSR EPERM
+rmdir	ADAPTER	__absd_std_fs_rmdir
+chdir	ADAPTER	__absd_std_chdir
+getcwd	ADAPTER	__absd_std_getcwd
+opendir	ADAPTER	__absd_std_fs_readdir by index; the file server snapshots the listing at index 0
+readdir	ADAPTER	as opendir
+closedir	ADAPTER	as opendir
+chmod	ADAPTER	__absd_std_fs_set_readonly_path on files: 0444/0644 only; other modes and every directory EPERM (A14 audit)
+fchmod	ADAPTER	__absd_std_fs_set_readonly; as chmod
+fchown	ADAPTER	always EPERM (SPEC A8: no ownership; setuid/setgid/chown family refused)
+getuid	ADAPTER	synthetic 1000 (SPEC A8), same as st_uid; conveys no authority
+geteuid	ADAPTER	as getuid
+fcntl	ADAPTER	F_SETLK on the whole file only, through the kit's absd_fd_lock (SPEC A10); byte ranges EINVAL, recorded (CPA-008), so every SQLite lock call is EINVAL unless the unix-excl range is admitted as a declared divergence; every other command EINVAL (CPA-009, CPA-034)
+dup2	ADAPTER	reached only through Picolibc's popen; not built (popen is refused)
+pipe	ADAPTER	reached only through Picolibc's popen; not built
+waitpid	ADAPTER	reached only through Picolibc's popen/system; not built
+_setjmp	ADAPTER	lua-posix configuration only: alias of setjmp (no signal mask exists) plus a declaration Picolibc's setjmp.h lacks; not built (Lua is built with the generic configuration)
+_longjmp	ADAPTER	as _setjmp
+# --- REFUSED: explicit refusal by doctrine.
+fork	REFUSED	ENOSYS; reached only through Picolibc's popen/system, which the adapter replaces
+execve	REFUSED	ENOSYS; as fork
+system	REFUSED	adapter replaces Picolibc's fork-based system(): system(NULL)=0 (no command processor), system(cmd)=-1/ENOSYS (CPA-003)
+popen	REFUSED	adapter replaces Picolibc's fork-based popen(): NULL/ENOSYS (CPA-003)
+pclose	REFUSED	-1/ECHILD (no stream can exist)
+signal	REFUSED	SIG_ERR/ENOSYS for every signal: no signal source exists (CPA-004); replaces Picolibc's libos fallback, which registers handlers that nothing can deliver
+sigaction	REFUSED	-1/ENOSYS (lua-posix only)
+ioctl	REFUSED	-1/ENOTTY (no terminals; shell screen width falls back to its default)
+mmap	REFUSED	-1/ENODEV (MAP_FAILED); WAL variant only (shared-memory wal-index); SQLITE-VFS.md 5
+munmap	REFUSED	-1/EINVAL (nothing can be mapped); WAL variant only
+symlink	REFUSED	-1/EPERM (the filesystem has no symlinks); shell writefile() only
+utimes	REFUSED	-1/ENOSYS (mtime is set by the file server's clock only); SQLite unix-dotfile and shell writefile() only
+getrusage	REFUSED	-1/ENOSYS (the kernel keeps no per-process CPU time); shell .timer only
+gethostname	REFUSED	-1/ENOSYS (no host name exists); shell prompt only; shell substitutes "?"
+# --- KIT-GAP: needs a C-lane or runtime change (REQUESTS.md). None after the 2026-10-11 dispositions.
+access	ADAPTER	F_OK stat; R_OK open-for-read probe; W_OK on a file open-for-write probe; X_OK on a directory stat; W_OK on a directory refused ENOSYS (SPEC A11; pending option __absd_std_fs_mounts)
+nanosleep	KIT-FIVE	the kit's clock.c over the kernel sleep syscall, ticks rounded up (R9 accepted)
+# --- PICOLIBC with notes.
+sysconf	KIT-FIVE	kit-owned explicit values or refusals (R4 accepted), replacing Picolibc's libos fallback; WAL variant only (getpagesize) (CPA-006)
+getpwuid	PICOLIBC	reads /etc/passwd through stdio; absent on ABSD, so NULL; shell falls back to $HOME
+setenv	PICOLIBC	process-local environ; the kit supplies environ from the startup record
+unsetenv	PICOLIBC	as setenv
+getenv	PICOLIBC	as setenv
+tmpfile	PICOLIBC	mkstemp in the working directory (P_tmpdir is "" in the kit's Picolibc) + unlink while open; EROFS where the working directory is read-only (SPEC A12, CPA-045)
+tmpnam	PICOLIBC	TXXXXXX-pattern names relative to the working directory (P_tmpdir ""); Lua os.tmpname (generic) (CPA-045)
+mkstemp	PICOLIBC	open(O_CREAT|O_EXCL) in the named directory; lua-posix os.tmpname (CPA-045)
+remove	PICOLIBC	unlink/rmdir
+clock	PICOLIBC	times(); elapsed ticks (CPA-018)
+time	PICOLIBC	gettimeofday
+localtime	PICOLIBC	no time-zone database: UTC (CPA-019)
+localtime_r	PICOLIBC	as localtime
+strftime	PICOLIBC	as localtime
+strerror	PICOLIBC	Picolibc's texts; byte comparison with glibc texts is a divergence class (CPA-020)
+perror	PICOLIBC	as strerror
+memcpy	PICOLIBC	also defined by the runtime (runtime/src/lib.rs:797-835, byte loops), which precedes libc.a in the link and wins
+memmove	PICOLIBC	as memcpy
+memset	PICOLIBC	as memcpy
+memcmp	PICOLIBC	as memcpy
+flockfile	PICOLIBC	no-op with stdio-locking=false (single thread)
+funlockfile	PICOLIBC	as flockfile
+setlocale	KIT-FIVE	c/libabs/locale.c: only "C", "POSIX", "" and the C-locale charset names; any other name returns NULL with the locale unchanged (R14)

@@ -59,6 +59,7 @@ dependencies = [
 name = "absd-std-probe"
 version = "0.1.0"
 dependencies = [
+ "absd-broker",
  "absd-fs",
  "absd-fsd",
  "absd-net",

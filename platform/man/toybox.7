@@ -1,0 +1,31 @@
+.Dd October 13, 2026
+.Dt TOYBOX 7
+.Os ABSD
+.Sh NAME
+.Nm toybox
+.Nd source and license of the bounded diff and hexdump ports
+.Sh DESCRIPTION
+ABSD adapts the pending diff and hexdump implementations from Toybox 0.8.15.
+This does not install the Toybox multicall program or imply full upstream
+option compatibility. Individual manual pages describe each admitted contract.
+Diff retains its upstream 2014 author notices; hexdump is Copyright 2021
+Moritz Roehrich. Exact archive, member and patch identities live in the source
+repository userland/diff and userland/hexdump SOURCE.json records.
+.Sh LICENSE
+.Bd -literal
+Copyright (C) 2006, 2019 by Rob Landley <rob@landley.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.Ed
+.Sh SEE ALSO
+.Xr diff 1 ,
+.Xr hexdump 1

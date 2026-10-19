@@ -32,6 +32,8 @@ import tempfile
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
+from served_ram import served_qemu
+from served_kernel import kernel_make
 import absd_fs  # noqa: E402
 import absd_inputs  # noqa: E402
 import pulse_fixture as pf  # noqa: E402
@@ -106,7 +108,7 @@ class Matrix:
             path = self.work / f"{kind}-{sha256(data)}.bin"
             path.write_bytes(data)
             paths.append(path)
-        subprocess.run(["make", "--no-print-directory", "-C", str(self.kernel), "durable-iso", "DURABLE_STEP=0",
+        subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(self.kernel), "durable-iso", "DURABLE_STEP=0",
                         f"EXTERNAL_USER_ELF={elf}", f"EXTERNAL_INPUT={paths[0]}",
                         f"EXTERNAL_READER_ELF={elf}", f"EXTERNAL_READER_INPUT={paths[1]}"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
@@ -116,7 +118,7 @@ class Matrix:
         self.boots += 1
         log = self.work / f"{name}.{self.boots:03d}.serial.log"
         result = subprocess.run([str(self.kernel / "scripts" / "durable-boot.sh"), str(iso), str(image), str(log),
-                                 "300", *self.qemu.split()], check=True, capture_output=True, text=True)
+                                 "300", *served_qemu(self.qemu)], check=True, capture_output=True, text=True)
         serial = log.read_bytes()
         require(b"PANIC" not in serial and b"KERNEL FAULT" not in serial, f"{name}: kernel fault")
         return int(result.stdout.strip()), serial, dm.Harness.captured(serial)
@@ -125,7 +127,7 @@ class Matrix:
         image = self.work / f"{name}.img"
         with open(image, "wb") as handle:
             handle.truncate(IMAGE_BYTES)
-        subprocess.run(["make", "--no-print-directory", "-C", str(self.kernel), "durable-iso", "DURABLE_STEP=1",
+        subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(self.kernel), "durable-iso", "DURABLE_STEP=1",
                         f"EXTERNAL_USER_ELF={self.importer}",
                         f"EXTERNAL_INPUT={self.write_input(stream(files))}",
                         "EXTERNAL_READER_ELF=", "EXTERNAL_READER_INPUT="],

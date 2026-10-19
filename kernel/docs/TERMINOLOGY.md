@@ -112,7 +112,8 @@ is materially different, and define it here.
   allocator (`src/memory.rs`). Outside the NIC's context "frame" means
   this. A frame the allocator tracks is **free** or **allocated** (tagged
   with its owner: a process, or the kernel); frames the firmware marked
-  unusable, frames above the tracked limit (256 MiB), and the ranges
+  unusable, frames above the tracked limit (the highest usable frame up to
+  64 GiB on x86, disclosed as `FRAMES TRACKED`; 256 MiB on ARM64), and the ranges
   reserved at boot are not tracked and never counted.
 - **Frame counts:** `frame_stats` returns the free and allocated counts,
   the allocation limit (none except during the kernel's own exhaustion
@@ -140,6 +141,18 @@ is materially different, and define it here.
   pausing the virtual machine, and lost ticks under emulation lengthen an
   epoch rather than break it; ticks measure guest time, never wall time.
   Human time (the wall clock, dates, file times) is a separate question.
+- **TSC calibration:** the `TIMER CALIBRATION` line, printed once after
+  `TIMER OK` and repeated as a survey fact: TSC cycles per PIT tick on the
+  boot CPU (the median of five pairs of tick edges 100 ticks apart, with
+  their min and max; a wide spread means lost ticks or stalls), the frequency
+  that implies (`tsc_hz`, from the PIT's 3 579 545 / 3 Hz input and divisor
+  1193), whether CPUID reports a hypervisor, what CPUID leaves 0x15 and 0x16
+  say (`absent` when out of range, `zero` when present but unenumerated),
+  and whether the TSC is invariant. A survey boot shows the line twice: once
+  from the boot step and once as a survey fact. A diagnostic only: the tick
+  stays the time base and nothing reads the value. `timer_test()`,
+  `TIMER OK ticks=` and the survey's `tsc_cycles` are unchanged by it
+  (docs/clock-contract-20261015 §3, §6a).
 
 ## Storage
 

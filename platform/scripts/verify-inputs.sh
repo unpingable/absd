@@ -101,7 +101,7 @@ if [ -n "${ABSD_RUST_SRC_TARBALL:-}" ]; then
 fi
 
 expect_file_hash \
-    a71cabccca743f7c0e0e48e8bbce9732a95362ec27ea6ecf7cbbf4cdc4b7eccd \
+    9e51d04ffd36db6416080f88d6a3de1963bc5d1d629a7cadc9921b623379423b \
     "$root/patches/rust-1.95.0-absd-std.patch"
 expect_extended_file_hash \
     c43c6822901c0ef4a00dfd63c9849f1f35e0bce69587c824a881f53843a53536 \
@@ -116,7 +116,7 @@ expect_file_hash \
     0558296e4ed45bb5abf111de1dad31dd9874926ce12c21d2b5f6e09b5a8a0faa \
     "$root/user-linker.ld"
 expect_file_hash \
-    9f5faa2ed635d3f8efabc6674673dd2ede386ad5284cc006b2e712bf0d5207be \
+    b3de7df4ee6a8a3a58eaff56ecf3ccf834eeb9cbbc32818bfc47a0ea355e5c97 \
     "$root/scripts/rustc-staged.sh"
 expect_file_hash \
     ec8167b113f25659f879487cd5d7bef7edfdbba81386fc2a72d01808d320cf9e \
@@ -176,7 +176,7 @@ expect_extended_file_hash \
     4588737203d6aae311aa8f4fb006009576c313a96e0bb80fe44c419e120b605a \
     "$root/pins/ag-absd.Cargo.lock"
 expect_file_hash \
-    5173dbad29eca9a673d5f17f57bb76d50d7139b2cc034cfe91762e7a0c90e2f6 \
+    25ba533215a70314c2e00e724d1c88da4049ea00dc51ec2db41f689862fc9a78 \
     "$root/Cargo.toml"
 expect_extended_file_hash \
     046ad6a0afe080669291f969e863491d07f0dbc9d97305fe3180921acfa74ffc \
@@ -185,7 +185,7 @@ expect_extended_file_hash \
     b666aeacbbb90b00f08c25242168fba668dcdab33ac99fd187debf59d7299acb \
     "$root/integration/Cargo.lock"
 expect_file_hash \
-    34fc1a0d6ffe2edeb5dad3f41450dfdeb75ff36d6627f26e24487d1a4245541f \
+    c2507edc9ad5190c7ca18cdb37632ad8cb3101bdd6498ee3b7ec659a68d20284 \
     "$root/Cargo.lock"
 
 vendor_hash=$(
@@ -319,7 +319,7 @@ expect_file_hash \
     370a2f637fbecf5963f39c7d6db455708319276afd3b8b4671a278399818f0f5 \
     "$root/patches/sunset-server-channel.patch"
 expect_file_hash \
-    922027e5d11127c4c6f0c8555bdfcbced8b487db7eb7e69c87c32374e7c8f510 \
+    106195da818e39b54428abf213b113a5c4a78ade606c777b5db9f92fda24571f \
     "$root/ssh/Cargo.toml"
 expect_file_hash \
     6d22e11ddaa76f1fbacce61cb9bcbde0d58a954fcf383b66871b73cabe565e96 \

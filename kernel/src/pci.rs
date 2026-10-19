@@ -1,5 +1,5 @@
-//! Just enough PCI for two polled bus-mastering drivers (NVMe and the
-//! e1000 NIC): configuration mechanism #1 through ports 0xcf8/0xcfc, a
+//! Just enough PCI for three polled bus-mastering drivers (NVMe, the
+//! e1000 NIC, and the xHCI bring-up in `src/xhci.rs`): configuration mechanism #1 through ports 0xcf8/0xcfc, a
 //! brute-force scan in bus/device/function order, and memory BARs.
 //! Firmware has already assigned bus numbers and BAR addresses; nothing
 //! here moves them.
@@ -10,7 +10,8 @@
 //! mastering, and a second claim of the same function is refused by name.
 //! DMA is bus-mastering into static, identity-mapped kernel memory only:
 //! no IOMMU is programmed, so no driver ever hands a device a user address.
-//! Interrupts stay masked (INTx disabled, no MSI); drivers poll.
+//! INTx stays masked. NVMe/e1000 and the xHCI probe poll; the bounded
+//! `xhci-controller` boot uses one BSP MSI-X vector (xhci_interrupt.rs).
 
 use core::arch::asm;
 
@@ -196,6 +197,89 @@ pub fn memory_bar(function: Function, index: u8) -> Result<u64, BarError> {
         return Err(BarError::Unassigned);
     }
     Ok(base)
+}
+
+/// The number of bytes memory BAR `index` decodes, by the standard sizing
+/// write: all ones, read back, restore, with memory decoding off for the
+/// duration so the BAR never decodes the probe value. Call only after
+/// `claim` and before `enable_polled_dma`.
+pub fn memory_bar_size(function: Function, index: u8) -> Result<u64, BarError> {
+    memory_bar(function, index)?;
+    let offset = BAR0 + 4 * index;
+    let low = read32(function, offset);
+    let wide = (low >> 1) & 3 == 2;
+    let command = read32(function, COMMAND) as u16;
+    write32(function, COMMAND, u32::from(command & !COMMAND_MEMORY));
+    write32(function, offset, u32::MAX);
+    let mut mask = u64::from(read32(function, offset) & !0xf) | 0xffff_ffff_0000_0000;
+    write32(function, offset, low);
+    if wide {
+        let high = read32(function, offset + 4);
+        write32(function, offset + 4, u32::MAX);
+        mask = (mask & 0xffff_ffff) | (u64::from(read32(function, offset + 4)) << 32);
+        write32(function, offset + 4, high);
+    }
+    // As in `enable_polled_dma`: zeros into the status half.
+    write32(function, COMMAND, u32::from(command));
+    match (!mask).wrapping_add(1) {
+        0 => Err(BarError::Unassigned),
+        size => Ok(size),
+    }
+}
+
+/// Enables memory decoding (register access) and masks legacy INTx, but
+/// leaves bus mastering as it is: a driver that must first stop a device
+/// firmware left running maps and halts it before it may DMA.
+pub fn enable_memory(function: Function) {
+    let value = read32(function, COMMAND);
+    let command = (value as u16) | COMMAND_MEMORY | COMMAND_INTX_DISABLE;
+    write32(function, COMMAND, u32::from(command));
+}
+
+/// Whether memory decoding is on.
+pub fn memory_enabled(function: Function) -> bool {
+    command(function) & COMMAND_MEMORY != 0
+}
+
+/// Turns on memory decoding only: bus mastering and the INTx mask stay as
+/// they are (the xHCI driver reads registers of a controller it does not
+/// own yet).
+pub fn enable_memory_decode(function: Function) {
+    let value = read32(function, COMMAND);
+    write32(
+        function,
+        COMMAND,
+        u32::from((value as u16) | COMMAND_MEMORY),
+    );
+}
+
+/// Turns memory decoding off again (after `enable_memory_decode`, when the
+/// driver leaves a function it did not take as it found it).
+pub fn disable_memory_decode(function: Function) {
+    let value = read32(function, COMMAND);
+    write32(
+        function,
+        COMMAND,
+        u32::from((value as u16) & !COMMAND_MEMORY),
+    );
+}
+
+/// Clears bus mastering: the function can no longer reach memory. Memory
+/// decoding and the INTx mask are kept.
+pub fn disable_dma(function: Function) {
+    let value = read32(function, COMMAND);
+    let command = (value as u16) & !COMMAND_BUS_MASTER;
+    write32(function, COMMAND, u32::from(command));
+}
+
+/// The command register, for reports.
+pub fn command(function: Function) -> u16 {
+    read32(function, COMMAND) as u16
+}
+
+/// Whether bus mastering is enabled.
+pub fn bus_master(function: Function) -> bool {
+    command(function) & COMMAND_BUS_MASTER != 0
 }
 
 /// Enables memory decoding and bus mastering (the controller DMAs queues

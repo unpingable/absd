@@ -1,0 +1,42 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt CMP 1
+.Os ABSD
+.Sh NAME
+.Nm cmp
+.Nd compare two files byte by byte (sbase)
+.Sh SYNOPSIS
+.Nm
+.Op Fl l | Fl s
+.Ar file1
+.Ar file2
+.Sh DESCRIPTION
+.Nm
+is sbase 0.1's
+.Nm cmp ,
+built unpatched for ABSD with the C kit; see
+.Xr sbase 7 .
+It reports the first byte and line where the two files differ;
+.Fl l
+lists every differing byte,
+.Fl s
+prints nothing and answers by status only.
+A file named
+.Ql -
+is standard input.
+.Sh UNSUPPORTED ON ABSD
+Nothing is refused.
+Messages begin with the name the program was run as, and their
+.Ql strerror
+texts are Picolibc's.
+Behaviour on ABSD is predicted until the guest qualification
+.Pq Xr sbase 7 .
+.Sh EXIT STATUS
+0 when the files are the same, 1 when they differ, 2 on an error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ cmp /home/operator/a.out /tmp/session-1/a.out
+.Ed
+.Sh SEE ALSO
+.Xr od 1 ,
+.Xr sbase 7

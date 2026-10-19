@@ -32,12 +32,27 @@ Markers (each printed only when every check behind it held):
                            without the manual by name, and `man -k` searches
                            the index; /share is read-only to sessions
   COMMAND SET OK names=... all of the above, for exactly these commands
+  COMMAND SBASE PRESENT    the base userland's sbase ports are under /bin
+                           (their behaviour is the guest qualification's,
+                           userland/README.md; not checked here)
+
+`--host-check` boots nothing: it checks the sbase ports against their
+manifest (userland/PORTS.tsv) and the image's command list
+(scripts/operator_image.py PORTS): every one listed for the image, none a
+native command, a Rust port, a shell builtin, or a command deliberately not
+provided (ABSENT, and `ps`); ports/NAME at the recorded digest; a manual
+page for each and sbase(7) carrying sbase's licence. It prints
+`COMMAND SBASE EXPECTED OK names=...`, or the first failure and status 1.
+With `--without-image-list` (scripts/install-userland-ports.sh) it checks
+everything but the image's list, and says so (`image_list=not-checked`).
 """
 
 import argparse
 import base64
 import calendar
 import hashlib
+import json
+import os
 import pathlib
 import re
 import sys
@@ -47,19 +62,30 @@ here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
 import absd_fs  # noqa: E402
 import ssh_absd  # noqa: E402
+import mtime_reference  # noqa: E402
 import importlib.util  # noqa: E402
 
 spec = importlib.util.spec_from_file_location("ssh_matrix", here / "ssh-matrix.py")
 sm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sm)
 
+health_spec = importlib.util.spec_from_file_location("health_json_validator", here / "validate-health-json.py")
+health_validator = importlib.util.module_from_spec(health_spec)
+health_spec.loader.exec_module(health_validator)
+
 PROMPT = b"absd$ "
 # The platform's own commands (commands/<name>) and the ports (ports/<name>:
 # uutils and ripgrep).
 NATIVE = ["echo", "pwd", "ls", "cat", "printenv", "uname", "mkdir", "rm", "mv",
           "cp", "head", "tail", "wc", "sha256sum", "stat", "df", "sync", "man", "date", "uptime", "release",
-          "sysinfo"]
+          "sysinfo", "health", "net-status"]
 PORTS = ["basename", "seq", "cut", "fold", "nl", "uniq", "base64", "rg"]
+# Historical SBASE label now groups sbase and Toybox C ports; source origin
+# is read from PORTS.tsv rather than inferred from this compatibility label.
+# The base userland C ports (userland/PORTS.tsv, installed into ports/
+# by scripts/install-userland-ports.sh): C programs through the C kit. A name
+# here must not be a native command, a Rust port, a shell builtin, or ABSENT.
+SBASE = ["printf", "test", "grep", "sort", "sed", "od", "cmp", "ed", "find", "diff", "hexdump", "tar"]
 # Deliberately not provided (README "Commands", "Not provided").
 # `ps` is a shell builtin answered by sshd (ps(1)), never a /bin program.
 ABSENT = ["kill", "chmod", "chown", "touch", "ln", "top", "mount"]
@@ -87,7 +113,7 @@ class CmdsTarget(ssh_absd.AbsdTarget):
     def files(self, authorized):
         files = [f for f in super().files(authorized) if f[0] not in {f"/bin/{n}" for n in NATIVE}]
         files += [(f"/bin/{name}", (self.root / "commands" / name).read_bytes()) for name in NATIVE]
-        files += [(f"/bin/{name}", (self.root / "ports" / name).read_bytes()) for name in PORTS]
+        files += [(f"/bin/{name}", (self.root / "ports" / name).read_bytes()) for name in PORTS + SBASE]
         files += list(FIXTURES.items())
         return files
 
@@ -201,7 +227,10 @@ class CmdsMatrix(sm.Matrix):
                           r"man: /share/man: .+: no manual is visible to this process\nabsd-sh: man: exit status 1\n")
         # The index.
         matches = b"".join(l + b"\n" for l in index.splitlines() if b"file" in l.lower())
-        self.check("the index has a filesystem line", matches.startswith(b"filesystem(7) - "), repr(matches))
+        # The base userland's pages (cmp, find, grep, od: "files") sort before filesystem(7) in the index, so
+        # the filesystem line is required among the matches, not first.
+        self.check("the index has a filesystem line",
+                   b"\nfilesystem(7) - the ABSD filesystem and its file server\n" in b"\n" + matches, repr(matches))
         self.expect(sh, "man -k FILE", matches, "man -k matches the index, case ignored")
         self.expect(sh, "man -k zzzz", b"man: zzzz: nothing appropriate\nabsd-sh: man: exit status 1\n")
         # /share is the session's read-only view.
@@ -223,6 +252,8 @@ class CmdsMatrix(sm.Matrix):
         bin_prefix = t.physical("/bin") + "/"
         installed = {p[len(bin_prefix):] for p in self.device() if p.startswith(bin_prefix)}
         self.check("the image carries every command", set(NATIVE + PORTS) <= installed, str(sorted(installed)))
+        self.check("the image carries the sbase ports", set(SBASE) <= installed, str(sorted(installed)))
+        self.mark(f"COMMAND SBASE PRESENT names={','.join(SBASE)}")
         system = {p: d for p, d in self.device().items() if p.startswith(ssh_absd.SYSTEM_PREFIXES)}
 
         sh = Shell(self)
@@ -254,17 +285,24 @@ class CmdsMatrix(sm.Matrix):
         motd = self.device()["/etc/motd"]
         self.expect_match(sh, "stat /etc/motd",
                           rf"path: /etc/motd\ntype: file\nsize: {len(motd)}\nread-only flag: no\n"
-                          r"object: filesystem=[0-9a-f]{16} serial=\d+\nlinks: 1\nmount: /etc \(read-only\)\n")
+                          r"object: filesystem=[0-9a-f]{16} serial=\d+\nlinks: 1\nmodified: unknown\nmount: /etc \(read-only\)\n")
+        metadata = mtime_reference.records(self.t.image)
+        home_time = mtime_reference.timestamp(metadata['/home/operator']['mtime'], True)
         self.expect_match(sh, "stat /home/operator",
                           r"path: /home/operator\ntype: directory\nsize: 0\nread-only flag: no\n"
-                          r"object: filesystem=[0-9a-f]{16} serial=\d+\nlinks: 1\nmount: /home/operator \(read-write\)\n")
+                          rf"object: filesystem=[0-9a-f]{{16}} serial=\d+\nlinks: 1\nmodified: {re.escape(home_time)}\nmount: /home/operator \(read-write\)\n")
+        self.check('directory metadata has a positive timestamp control',
+                   any(metadata[p]['mtime'] > 0 for p in ('/', '/home/operator')),
+                   {p: metadata[p]['mtime'] for p in ('/', '/home/operator')})
+        root_time = mtime_reference.timestamp(metadata['/']['mtime'], True)
         self.expect_match(sh, "stat /",
-                          r"path: /\ntype: directory\n.*mount: none \(a directory on the way to this session's mounts; read-only\)\n")
+                          rf"path: /\ntype: directory\n.*modified: {re.escape(root_time)}\nmount: none \(a directory on the way to this session's mounts; read-only\)\n")
         etc = {p[len("/etc/"):]: d for p, d in self.device().items() if p.startswith("/etc/")}
         width = max(len(str(len(d))) for d in etc.values())
-        self.expect(sh, "ls -l /etc", "".join(f"- -- 1 {len(d):>{width}} {n}\n" for n, d in sorted(etc.items())).encode(),
-                    "ls -l: kind, read-only flag, links, size")
-        self.expect_match(sh, "ls -l /", r"(d -- 1 0 (bin|etc|home|share|tmp|var)/\n){6}")
+        self.expect(sh, "ls -l /etc", "".join(f"- -- 1 {len(d):>{width}} - {n}\n" for n, d in sorted(etc.items())).encode(),
+                    "ls -l: kind, read-only flag, links, size, unknown mtime")
+        self.expect(sh, "ls -l /", mtime_reference.root_listing(mtime_reference.records(self.t.image), self.t.physical),
+                    "root listing retains exact names and columns with backing mtimes")
         self.expect(sh, "ls -x /", b"ls: unknown option -x (only -l)\nabsd-sh: ls: exit status 2\n")
         before = time.time()
         m = self.expect_match(sh, "date", r"(\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d UTC \d{4})\n")
@@ -504,6 +542,69 @@ class CmdsMatrix(sm.Matrix):
         rc, out, err = self.ssh("/bin/sysinfo")
         self.check("sysinfo in an exec session too", rc == 0 and out.startswith(b"release: ") and err == b"",
                    f"{rc} {out!r} {err!r}")
+        # health: this boot's recovery line from the file server's log, the
+        # same boot and release as sysinfo's, the configuration files sshd
+        # started from, and the log sizes (docs/admin-on-box-20261015).
+        h = self.expect_match(sh, "health",
+                              r"release: ([a-z0-9.-]+)\n"
+                              r"boot: ([0-9a-f]{32}), up \d+ days \d\d:\d\d:\d\d \(\d+ ticks\)\n"
+                              r"recovery: previous=(none|ended|failed|not_ready) streak=(\d+) seq=(\d+)\n"
+                              r"config: network (?:from /etc/network\.conf|built-in defaults \(no /etc/network\.conf\))\n"
+                              r"config: sshd (?:from /etc/sshd\.conf|built-in defaults \(no /etc/sshd\.conf\))\n"
+                              r"logs: fsd \d+ bytes, fsd\.0 (?:\d+ bytes|none), sshd \d+ bytes, sshd\.0 (?:\d+ bytes|none)\n")
+        self.check("health: the boot and release are sysinfo's", (h.group(1), h.group(2)) == (release, boot), h.group(0))
+        fsd_log = self.ssh("/bin/cat /var/log/fsd")[1].decode(errors="replace")
+        self.check("health: the recovery line is this boot's, as the file server logged it",
+                   re.search(rf"fsd: started: boot {boot}, .*\n(?:.*\n)*?.* fsd: FSD RECOVERY seq={h.group(5)} "
+                             rf"streak={h.group(4)} previous={h.group(3)}\n", fsd_log) is not None, h.group(0))
+        usage_v = self.expect(sh, "health -v", b"health: usage: health [--json]\nabsd-sh: health: exit status 2\n")
+        usage_json = self.expect(sh, "health --json x", b"health: usage: health [--json]\nabsd-sh: health: exit status 2\n")
+        self.expect_match(sh, "nofs health", r"release: unknown \(no file server serves this process\)\n(?:.*\n)*?"
+                          r"absd-sh: health: exit status 1\n", "nofs health: unknown in place, status 1")
+        rc, out, err = self.ssh("/bin/health")
+        self.check("health in an exec session too", rc == 0 and out.startswith(b"release: ") and err == b"",
+                   f"{rc} {out!r} {err!r}")
+        rc, out, err = self.ssh("/bin/net-status")
+        self.check("net-status is a boot/recovery-bound retained static sample", rc == 0 and err == b""
+                   and out.startswith(b"network: retained owner sample (record_for_current_boot)\n")
+                   and f"lifetime: boot:{boot}/recovery:".encode() in out
+                   and b"configured: 10.0.2.15/24 gateway=10.0.2.2 port=22 origin=built-in defaults\n" in out,
+                   f"{rc} {out!r} {err!r}")
+        self.expect(sh, "net-status -v", b"net-status: usage: net-status\nabsd-sh: net-status: exit status 2\n")
+        self.expect(sh, "nofs net-status", b"net-status: unavailable (fsd_absent)\nabsd-sh: net-status: exit status 1\n")
+        rc, out, err = self.ssh("/bin/health --json")
+        self.check("health JSON exec status", rc == 0 and err == b"", f"{rc} {out!r} {err!r}")
+        self.check("health JSON exec document validates", health_validator.validate(out) == "complete")
+        doc = json.loads(out)
+        facts = {f["id"]: f for f in doc["facts"]}
+        recovery = facts["fsd.recovery"]["value"]
+        self.check("health JSON agrees with this boot's human/public-log facts",
+                   doc["boot_id"] == boot and facts["fsd.release"]["value"] == release
+                   and (recovery["previous"], recovery["streak"], recovery["seq"])
+                   == (h.group(3), h.group(4), h.group(5)))
+        nofs = sh.run("nofs health --json")
+        suffix = b"absd-sh: health: exit status 1\n"
+        self.check("nofs health JSON status", nofs.endswith(suffix), repr(nofs))
+        raw = nofs[:-len(suffix)]
+        self.check("nofs health JSON validates", health_validator.validate(raw) == "partial")
+        partial = json.loads(raw)
+        fsd_facts = [f for f in partial["facts"] if f["id"].startswith("fsd.")]
+        self.check("nofs health JSON reports both missing FSD facts",
+                   partial["boot_id"] == boot and len(fsd_facts) == 2
+                   and all(f["availability"] == "unavailable" and f["reason"] == "fsd_absent"
+                           and f["value"] is None for f in fsd_facts))
+        observations = self.work / "health-json-observations"
+        observations.mkdir(exist_ok=False)
+        for name, data in [("exec.json", out), ("nofs.json", raw), ("nofs.session.txt", nofs),
+                           ("usage-v.txt", usage_v), ("usage-json-x.txt", usage_json)]:
+            (observations / name).write_bytes(data)
+        (observations / "statuses.json").write_text(json.dumps({
+            "exec": {"status": rc, "stderr_hex": err.hex()},
+            "nofs": {"status": 1, "source": "checked exact shell exit-status line"},
+            "bad_arguments": {"status": 2, "source": "checked exact usage and shell exit-status lines"},
+            "validator": health_validator.SCHEMA,
+        }, indent=2) + "\n")
+        self.mark("HEALTH JSON COMMANDS OK exec=complete nofs=partial bad_args=2")
         self.mark("COMMAND SPACE OK")
 
         # -- SHELL LISTS ------------------------------------------------------------------
@@ -559,7 +660,99 @@ class CmdsMatrix(sm.Matrix):
         print(f"COMMAND SET OK names={names}", flush=True)
 
 
+class HostCheckFailed(Exception):
+    pass
+
+
+def shell_builtins(root):
+    """The names absd-sh runs itself (sh/src/lib.rs is_*_builtin): a /bin
+    program of the same name would never run by its bare name."""
+    text = (root / "sh" / "src" / "lib.rs").read_text()
+    names = set()
+    for which in ("is_output_builtin", "is_control_builtin"):
+        found = re.search(rf"fn {which}\(name: &str\) -> bool \{{\s*matches!\(name, ([^)]*)\)", text)
+        if not found:
+            raise HostCheckFailed(f"sh/src/lib.rs: {which} not found")
+        names |= set(re.findall(r'"([^"]+)"', found.group(1)))
+    return names
+
+
+def licence_lines(text):
+    """sbase.LICENSE's lines as the ASCII manual renders them: the copyright
+    sign as (C), accented letters plain, whitespace collapsed."""
+    text = text.replace("\u00a9", "(C)").translate(str.maketrans({"\u0144": "n", "\u00e9": "e"}))
+    return [" ".join(line.split()) for line in text.splitlines() if line.strip()]
+
+
+def host_check(root=None, image_list=True):
+    """The sbase ports' expectations, on the host only (no boot)."""
+    root = pathlib.Path(root or here.parent)
+    import operator_image as oi
+
+    def need(ok, what):
+        if not ok:
+            raise HostCheckFailed(what)
+
+    rows = [line.split("\t") for line in (root / "userland" / "PORTS.tsv").read_text().splitlines()
+            if line.strip() and not line.startswith("#")]
+    need(all(len(r) == 7 for r in rows), "userland/PORTS.tsv: a row without seven fields")
+    table = {r[0]: r for r in rows}
+    need([r[0] for r in rows] == SBASE, f"userland/PORTS.tsv names {[r[0] for r in rows]}, not {SBASE}")
+    need(NATIVE == oi.NATIVE, f"NATIVE differs from scripts/operator_image.py's: {oi.NATIVE}")
+    builtins = shell_builtins(root)
+    for name in SBASE:
+        need(name not in NATIVE + ["absd-sh"], f"{name}: a native command has the name")
+        need(name not in PORTS, f"{name}: a Rust port has the name")
+        need(name not in builtins, f"{name}: an absd-sh builtin has the name ({sorted(builtins)})")
+        need(name not in ABSENT + ["ps"], f"{name}: deliberately not provided (ABSENT)")
+    if image_list:
+        missing = [n for n in SBASE if n not in oi.PORTS]
+        need(not missing, f"scripts/operator_image.py:73 PORTS does not list {','.join(missing)}: the "
+                          "operator image would not carry them (the hook: append them to PORTS; "
+                          "docs/base-userland-20261012/RECORD.md)")
+        need(sorted(oi.PORTS) == sorted(PORTS + SBASE), f"scripts/operator_image.py PORTS is {oi.PORTS}, "
+                                                         f"not the Rust ports and the sbase ports {PORTS + SBASE}")
+    need(not set(ABSENT) & set(oi.NATIVE + oi.PORTS), "an ABSENT command is in the image's list")
+    # scripts/build-ports.sh assembles the ports elsewhere and passes it as
+    # ABSD_PORTS_DIR; ports/ is published only after this check passes.
+    ports = pathlib.Path(os.environ.get("ABSD_PORTS_DIR") or root / "ports")
+    for name in SBASE:
+        path = ports / name
+        need(path.is_file(), f"ports/{name} missing: run scripts/build-ports.sh "
+                             "(or scripts/install-userland-ports.sh)")
+        data = path.read_bytes()
+        need(sha(data) == table[name][5] and str(len(data)) == table[name][6],
+             f"ports/{name} is {sha(data)} ({len(data)} bytes), not userland/PORTS.tsv's {table[name][5]} "
+             f"({table[name][6]} bytes)")
+        need((root / "man" / f"{name}.1").is_file(), f"man/{name}.1 missing")
+        origin = table[name][1].split("-", 1)[0]
+        need(re.search(rf"^\.Xr {origin} 7", (root / "man" / f"{name}.1").read_text(), re.M) is not None,
+             f"man/{name}.1 does not refer to {origin}(7)")
+    need((root / "man" / "sbase.7").is_file(), "man/sbase.7 missing")
+    whatis = root / "manpages" / "whatis"
+    if whatis.is_file():
+        index = whatis.read_text()
+        for page in [f"{n}(1)" for n in SBASE] + ["sbase(7)", "toybox(7)"]:
+            need(re.search(rf"^{re.escape(page)} - ", index, re.M) is not None, f"manpages/whatis lacks {page}")
+        rendered = " ".join((root / "manpages" / "cat7" / "sbase.0").read_text().split())
+        for line in licence_lines((root / "userland" / "sbase.LICENSE").read_text()):
+            need(line in rendered, f"the rendered sbase(7) lacks the licence line {line!r}")
+        rendered = " ".join((root / "manpages" / "cat7" / "toybox.0").read_text().split())
+        for line in licence_lines((root / "userland" / "diff" / "LICENSE").read_text()):
+            need(line in rendered, f"the rendered toybox(7) lacks the licence line {line!r}")
+    need((root / "man" / "toybox.7").is_file(), "man/toybox.7 missing")
+    print(f"COMMAND SBASE EXPECTED OK names={','.join(SBASE)}" + ("" if image_list else " image_list=not-checked"),
+          flush=True)
+
+
 def main():
+    if "--host-check" in sys.argv[1:]:
+        try:
+            host_check(image_list="--without-image-list" not in sys.argv[1:])
+        except HostCheckFailed as e:
+            print(f"COMMAND SBASE EXPECTED FAILED: {e}", file=sys.stderr)
+            sys.exit(1)
+        return
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", required=True)
     args, rest = ap.parse_known_args()

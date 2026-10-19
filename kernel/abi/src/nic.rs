@@ -13,8 +13,14 @@ pub const SYS_NIC_INFO: u64 = 32;
 /// [`NIC_FRAME_MIN`]..=[`NIC_FRAME_MAX`] bytes. A frame shorter than 60 bytes
 /// is zero-padded to 60 on the wire. Returns 0 once the device reports the
 /// descriptor done; `ERROR_INVALID` for a length out of range (nothing
-/// reaches the device); `ERROR_IO` once the NIC is disabled. Requires the
-/// write right.
+/// reaches the device); `ERROR_IO` once the NIC is disabled;
+/// `ERROR_NO_CARRIER` when the link has no carrier and the frame was not
+/// reported done: the NIC stays enabled and the descriptor stays the
+/// device's. Later sends are refused the same way, at once, until that held
+/// descriptor's done bit is seen or carrier returns. After carrier returns
+/// the held descriptor gets one fresh bound, and an expiry with carrier
+/// present is a device outcome: the NIC is disabled (`ERROR_IO`), as for any
+/// other device that does not complete in time. Requires the write right.
 pub const SYS_NIC_SEND: u64 = 33;
 /// `nic_receive(handle, buffer, timeout)`: copies the next complete,
 /// error-free received frame into [`NIC_FRAME_MAX`] writable bytes at
@@ -49,10 +55,15 @@ pub struct NicInfo {
     pub rx_refused: u64,
     /// Frames the device reported missing for lack of a free descriptor.
     pub rx_missed: u64,
+    /// Descriptors the device reported done, each counted once: a
+    /// descriptor held without carrier is counted when its done bit is seen,
+    /// even though its sender got `ERROR_NO_CARRIER`.
     pub tx_frames: u64,
     /// Sends refused before the device (length out of range).
     pub tx_refused: u64,
-    /// Sends the device did not complete in time.
+    /// Transmit bounds that expired: once per descriptor held without
+    /// carrier, once per expiry with carrier present (which disables the
+    /// NIC). Sends refused while a descriptor is held count nothing.
     pub tx_errors: u64,
 }
 

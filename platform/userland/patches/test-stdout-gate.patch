@@ -1,0 +1,33 @@
+ABSD per-port patch for sbase 0.1 test (userland/README.md, "Patches").
+Applies after test-access-mtime.patch.
+
+Failure: the kit's ELF gate refuses the ABSD image of test with "C ELF
+REFUSED: undefined symbol stdout (weak)". test writes only to stderr and
+never names stdout, so Picolibc's stdout definition is not linked, and
+Picolibc's buffered-I/O member (libc_stdio_bufio.c.o) references stdout
+weakly; scripts/check-c-elf.py admits a weak undefined stdin only. Every
+sbase utility that names stdout (all other ports here) links it.
+
+Change: main() calls fflush(stdout) once before evaluating the expression,
+so the program names stdout and links Picolibc's definition. Applied to
+both builds (ABSD and the reference), so both run the same source.
+
+Preserved: test writes nothing to stdout, so the flush has no data to write
+and its result is not used; status and stderr are upstream's on both builds.
+No adapter or kit change. (A gate that admits a weak stdout as it admits a
+weak stdin would make this patch unnecessary; that is the kit's decision.)
+
+--- a/test.c
++++ b/test.c
+@@ -266,5 +266,11 @@
+ 	if (argc > 4)
+ 		enprintf(2, "too many arguments\n");
+ 
++	/* ABSD (userland/patches/test-stdout-gate.patch): name stdout, so that
++	   Picolibc's stream definition is linked and its buffered-I/O code's
++	   weak reference to it resolves (the kit's ELF gate refuses a weak
++	   undefined stdout). test writes nothing to stdout: the flush is empty. */
++	fflush(stdout);
++
+ 	return !narg[argc](argv);
+ }

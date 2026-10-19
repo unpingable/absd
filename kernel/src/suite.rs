@@ -51,6 +51,37 @@ pub unsafe fn finish_process_suite() -> ! {
         let frames = vm::frames();
         let table = table();
         let allocated = frames.allocated_frames();
+        #[cfg(feature = "frame-admission-v0")]
+        {
+            let accounting = frames.admission_accounting();
+            serial::write("SERVED FRAME ACCOUNTING records=");
+            serial::decimal(accounting.records as u64);
+            serial::write(" total=");
+            serial::decimal(accounting.total);
+            serial::write(" used=");
+            serial::decimal(accounting.used);
+            serial::write(" idle=");
+            serial::decimal(accounting.idle);
+            serial::write(if accounting.clean() {
+                " status=ok\n"
+            } else {
+                " status=failed\n"
+            });
+            if !accounting.clean() {
+                core::ptr::write_volatile(core::ptr::addr_of_mut!(RESTART_ARMED), false);
+                crate::exit_qemu(1);
+            }
+        }
+        #[cfg(feature = "frame-reservation-experiment")]
+        {
+            assert_eq!(
+                frames.idle_reserved_frames(),
+                0,
+                "terminal reservation leak"
+            );
+            serial::write("FRAME RESERVATION TERMINAL idle=0\n");
+        }
+
         if matches!(
             boot_mode(),
             BootMode::External
@@ -102,7 +133,7 @@ pub unsafe fn finish_process_suite() -> ! {
                 serial::decimal(now());
             }
             serial::write("\n");
-            if let Some(nic) = crate::e1000::info() {
+            if let Some(nic) = crate::nic_device::info() {
                 serial::write("NIC STATS rx_frames=");
                 serial::decimal(nic.rx_frames);
                 serial::write(" rx_refused=");

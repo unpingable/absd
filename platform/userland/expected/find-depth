@@ -1,0 +1,6 @@
+status 0
+--- stdout
+tree/sub/leaf.txt
+tree/sub
+tree
+--- stderr

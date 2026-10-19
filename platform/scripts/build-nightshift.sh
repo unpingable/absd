@@ -8,6 +8,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/inputs.sh"
 toolchain=${ABSD_RUST_TOOLCHAIN:-$HOME/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu}
 sysroot=$root/.staged-sysroot
 stage=$(dirname "$root")/absd-std-staged-nightshift
@@ -17,13 +18,15 @@ clang_include=$(clang -print-resource-dir)/include
 
 build() {
 bin=$1 elf=$2 args=$3 strip=${4:-}
+absd_full_rustflags nightshift
 (cd "$stage" && env -u CARGO_ENCODED_RUSTFLAGS -u RUSTFLAGS -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER \
+    -u CARGO_TARGET_X86_64_UNKNOWN_ABSD_RUSTFLAGS -u CARGO_BUILD_RUSTFLAGS \
+CARGO_ENCODED_RUSTFLAGS="$ABSD_FULL_RUSTFLAGS" \
 ABSD_REAL_RUSTC=$toolchain/bin/rustc \
 ABSD_STAGED_SYSROOT=$sysroot \
 RUSTC=$root/scripts/rustc-staged.sh \
 RUSTC_BOOTSTRAP=1 \
 RUST_TARGET_PATH=$root/targets \
-CARGO_TARGET_X86_64_UNKNOWN_ABSD_RUSTFLAGS="-C link-arg=-T$root/user-linker.ld -C link-arg=--gc-sections --cfg getrandom_backend=\"rdrand\"" \
 CARGO_PROFILE_RELEASE_PANIC=abort \
 CC_x86_64_unknown_absd=clang \
 AR_x86_64_unknown_absd=llvm-ar-18 \

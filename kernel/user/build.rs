@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    embed("ABSD_RESERVATION_ACTOR_EMBED", "reservation-actor.elf");
     embed("ABSD_CAPABILITY_ACTOR_EMBED", "capability-actor.elf");
     embed(
         "ABSD_AUTHORITY_EFFECT_CHILD_EMBED",
@@ -29,6 +30,14 @@ fn main() {
         "ABSD_NET_WAIT_TICKS must be a positive number of ticks"
     );
     println!("cargo:rustc-env=ABSD_NET_WAIT_TICKS={ticks}");
+    // A dedicated enrollment image (init `ENROLL_STREAM`): empty or 1.
+    println!("cargo:rerun-if-env-changed=ABSD_ENROLL_STREAM");
+    let enroll = env::var("ABSD_ENROLL_STREAM").unwrap_or_default();
+    assert!(
+        enroll.is_empty() || enroll == "1",
+        "ABSD_ENROLL_STREAM must be empty or 1"
+    );
+    println!("cargo:rustc-env=ABSD_ENROLL_STREAM={enroll}");
 }
 
 /// Exposes one embedded input file to init as `include_bytes!(env!(name))`,

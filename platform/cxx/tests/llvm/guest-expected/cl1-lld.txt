@@ -1,0 +1,4 @@
+LLD 18.1.8 (compatible with GNU linkers)
+--
+--
+status=0

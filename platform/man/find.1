@@ -1,0 +1,92 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt FIND 1
+.Os ABSD
+.Sh NAME
+.Nm find
+.Nd walk a file hierarchy (sbase)
+.Sh SYNOPSIS
+.Nm
+.Op Fl H | Fl L
+.Ar path ...
+.Op Ar expression ...
+.Sh DESCRIPTION
+.Nm
+is sbase 0.1's
+.Nm find ,
+built for ABSD with the C kit and one declared patch
+.Pq Pa userland/patches/find-absd.patch ;
+see
+.Xr sbase 7 .
+It walks each
+.Ar path
+and evaluates the expression
+.Pq Ic -name , Ic -type , Ic -size , Ic -prune , Ic -depth , Ic -print , No and the operators Ic \&! , Ic -a , Ic -o
+for every object it finds, printing the paths for which it is true.
+.Pp
+It walks with
+.Fn lstat ,
+.Fn stat ,
+.Fn opendir
+and
+.Fn readdir .
+Each directory's listing is a snapshot that holds no handle, so depth
+costs memory, not one of the 64 open files.
+Output order is the file server's listing order, not sorted.
+.Pp
+What ABSD cannot do is refused while the expression is parsed, before any
+path is visited, so nothing is printed first.
+.Sh UNSUPPORTED ON ABSD
+.Bl -tag -width Ds
+.It Ic -exec , Ic -ok
+status 1,
+.Ql find: -exec: cannot run commands on this system: Function not implemented ,
+before any output
+.Pq Ic -ok No likewise ;
+commands cannot spawn.
+.It Ic -atime , Ic -ctime , Ic -mtime , Ic -newer
+status 1,
+.Ql find: -atime/-ctime/-mtime/-newer: file times are not available on this system ,
+before any output.
+.It Ic -type l , Ic -type p/s/b/c
+never true: only files and directories exist (A13).
+.It Ic -perm
+predicted: compares the reported modes, 0644 or 0444 (directories too, no
+search bits):
+.Ql -perm -200
+selects writable objects.
+.It Ic -nouser , Ic -nogroup , Ic -user Ar NAME , Ic -group Ar NAME
+predicted: no user database on ABSD (CPA-050):
+.Ic -nouser Ns / Ns Ic -nogroup
+are true for every object, a name is
+.Ql unknown user ,
+status 1;
+.Ql -user 1000
+matches everything (SPEC A8).
+.It Ic -xdev
+compares
+.Va st_dev ,
+the filesystem id; mount boundaries in a session are unverified.
+.It Fl H , Fl L
+accepted; no symbolic links exist, so they change nothing.
+.It an unreadable path
+.Ql find: failed to stat PATH: <strerror>
+and status 0, as upstream.
+.El
+.Pp
+Behaviour on ABSD is predicted until the guest qualification
+.Pq Xr sbase 7 .
+.Sh EXIT STATUS
+0 on success (also after an unreadable path, as upstream); 1 on an error,
+or one of the refusals above.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ find /home/operator -name '*.c'
+absd$ find /var/log -type f -size +10
+absd$ find . -name 'ed.*' -type f
+.Ed
+.Sh SEE ALSO
+.Xr grep 1 ,
+.Xr intro 1 ,
+.Xr filesystem 7 ,
+.Xr sbase 7

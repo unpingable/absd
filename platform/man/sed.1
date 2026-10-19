@@ -1,0 +1,71 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt SED 1
+.Os ABSD
+.Sh NAME
+.Nm sed
+.Nd stream editor (sbase)
+.Sh SYNOPSIS
+.Nm
+.Op Fl nrE
+.Ar script
+.Op Ar file ...
+.Nm
+.Op Fl nrE
+.Fl e Ar script
+.Op Fl e Ar script ...
+.Op Fl f Ar scriptfile ...
+.Op Ar file ...
+.Sh DESCRIPTION
+.Nm
+is sbase 0.1's
+.Nm sed ,
+built unpatched for ABSD with the C kit; see
+.Xr sbase 7 .
+It applies an editing script to each line of the named files, or of
+standard input, and writes the result to standard output.
+.Fl r
+and
+.Fl E
+select extended regular expressions;
+.Fl n
+prints only what the script prints.
+.Sh UNSUPPORTED ON ABSD
+.Bl -tag -width Ds
+.It Fl i
+not in sbase 0.1: usage error, status 1.
+Write the output to a new file and
+.Nm mv
+it over the old one.
+.It Ic w Ar FILE
+writes only where the session may write
+.Pq Pa /home/operator , Pa /tmp/session-N ;
+elsewhere the open fails with sbase's message.
+.It regular expressions
+Picolibc's
+.Fn regcomp
+and
+.Fn regexec ;
+C locale only (R14), so classes are ASCII.
+.It messages
+prefixed with
+.Ql argv[0]
+as invoked;
+.Ql strerror
+texts are Picolibc's.
+.El
+.Pp
+Behaviour on ABSD is predicted until the guest qualification
+.Pq Xr sbase 7 .
+.Sh EXIT STATUS
+0 on success, 1 on an error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ sed -n '2,4p' /etc/lines.txt
+absd$ sed 's/old/new/g' notes.txt > notes.new
+absd$ mv notes.new notes.txt
+.Ed
+.Sh SEE ALSO
+.Xr ed 1 ,
+.Xr grep 1 ,
+.Xr sbase 7

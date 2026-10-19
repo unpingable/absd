@@ -276,8 +276,8 @@ USB stack, removable-media/hotplug, additional NIC/storage families, broad ACPI,
 suspend/resume and physical additional architectures are evidence-gated, not
 implicitly required. Diagnostic framebuffer output must remain available
 independently of a future compositor. ARM VM B1–B4 is accepted source work;
-GICv3, physical ARM, B5 filesystem admission and served ARM release remain
-outside that claim. No new hardware implementation/support epic is created.
+physical ARM, B5 filesystem admission and served ARM release remain
+outside that claim (GICv3 on QEMU virt joined it on 2026-10-09, docs/ARM64.md). No new hardware implementation/support epic is created.
 
 ## Dependency leverage and near-term recommendation
 

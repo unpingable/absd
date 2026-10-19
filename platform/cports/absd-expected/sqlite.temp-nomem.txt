@@ -1,0 +1,6 @@
+still running|1
+ok
+--
+Error near line 10 of temp-nomem.sql: out of memory
+--
+status=1

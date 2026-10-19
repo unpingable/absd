@@ -458,6 +458,33 @@ fn file_server_channels_pair_in_order() {
 }
 
 #[test]
+fn liveness_cell_role() {
+    // A served sshd: [startup, stdin, step, nic, liveness, fs_request, fs_reply, console].
+    let roles = [
+        (role::STDIN, 1),
+        (role::STEP, 2),
+        (role::NIC, 3),
+        (role::LIVENESS, 4),
+        (role::FS_REQUEST, 5),
+        (role::FS_REPLY, 6),
+    ];
+    let bytes = record(&roles, &[]);
+    let startup = parse_startup(&bytes, 8).unwrap();
+    assert_eq!(startup.liveness, Some(4));
+    assert_eq!(startup.channel_count, 1);
+    // Absent: none.
+    let plain = record(&roles[..3], &[]);
+    assert_eq!(parse_startup(&plain, 5).unwrap().liveness, None);
+    // Twice is refused.
+    let twice = [(role::STDIN, 1), (role::LIVENESS, 2), (role::LIVENESS, 3)];
+    assert_eq!(parse_startup(&record(&twice, &[]), 5), Err(Malformed));
+    // A role this parser does not know is refused, so a child older than
+    // its parent fails closed instead of ignoring the handle.
+    let unknown = [(role::STDIN, 1), (19, 2)];
+    assert_eq!(parse_startup(&record(&unknown, &[]), 4), Err(Malformed));
+}
+
+#[test]
 fn session_control_roles_come_together() {
     // A shell sshd started: [startup, stdin, stdout, stderr, events, requests, console].
     let roles = [
@@ -480,4 +507,135 @@ fn session_control_roles_come_together() {
     assert!(parse_startup(&record(&lone, &[]), 4).is_err());
     let twice = [(role::SESSION_EVENTS, 1), (role::SESSION_EVENTS, 2), (role::SESSION_REQUESTS, 3)];
     assert!(parse_startup(&record(&twice, &[]), 5).is_err());
+}
+
+/// Writes the startup-record vectors the C kit's contract cites
+/// (c/vectors/startup): the encoder's bytes and what a child must observe.
+/// Does nothing unless `ABSD_EMIT_VECTORS` names the output directory.
+#[test]
+fn emit_startup_vectors() {
+    use std::{format, string::String, vec};
+    let Some(dir) = std::env::var_os("ABSD_EMIT_VECTORS") else { return };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    fn json_string(bytes: &[u8]) -> String {
+        let text = core::str::from_utf8(bytes).expect("vectors are UTF-8");
+        let mut out = String::from("\"");
+        for c in text.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+    fn json_list<'a>(items: impl Iterator<Item = &'a [u8]>) -> String {
+        format!("[{}]", items.map(json_string).collect::<Vec<_>>().join(","))
+    }
+    // [startup, stdin, stdout, stderr, fs request, fs reply, console]: the
+    // shell route's shape for a file-server client.
+    let roles: &[(u8, u8)] =
+        &[(role::STDIN, 1), (role::STDOUT, 2), (role::STDERR, 3), (role::FS_REQUEST, 4), (role::FS_REPLY, 5)];
+    let handle_count = 7;
+    let roles_json = format!(
+        "[{}]",
+        roles.iter().map(|(r, i)| format!("[{r},{i}]")).collect::<Vec<_>>().join(",")
+    );
+    type Case = (&'static str, Vec<Vec<u8>>, Vec<Vec<u8>>, &'static [u8], &'static [u8]);
+    let mut cases: Vec<Case> = vec![
+        ("empty", vec![], vec![], b"/", b"prog"),
+        ("args", vec![b"a".to_vec(), b"b c".to_vec(), b"".to_vec()], vec![], b"/home/operator", b"c-args"),
+        ("env", vec![], vec![b"K=V".to_vec(), b"EMPTY=".to_vec(), b"EQ=a=b".to_vec()], b"/tmp", b"c-args"),
+        ("utf8", vec!["naïve".as_bytes().to_vec()], vec!["X=日本".as_bytes().to_vec()], b"/data", b"c-args"),
+    ];
+    // The largest record of 1024-byte arguments plus 32 one-character
+    // environment entries the 8192-byte limit admits: add arguments until
+    // the encoder refuses, keep the last count it accepted.
+    let env32: Vec<Vec<u8>> = (0..32u8).map(|i| format!("{}=x", (b'A' + i) as char).into_bytes()).collect();
+    let mut fitting = 0;
+    loop {
+        let args: Vec<Vec<u8>> = (0..=fitting).map(|i| vec![b'a' + i as u8; 1024]).collect();
+        let mut out = vec![0u8; MAX_STARTUP];
+        let encoded = encode_startup(
+            roles,
+            args.iter().map(|a| a.as_slice()),
+            env32.iter().map(|e| e.as_slice()),
+            b"/",
+            b"c-args",
+            handle_count,
+            &mut out,
+        );
+        if encoded.is_err() {
+            break;
+        }
+        fitting += 1;
+    }
+    assert_eq!(fitting, 7, "the record limit admits seven 1024-byte arguments with this environment");
+    let args_fit: Vec<Vec<u8>> = (0..fitting).map(|i| vec![b'a' + i as u8; 1024]).collect();
+    cases.push(("maximal-fitting", args_fit, env32, b"/", b"c-args"));
+    for (name, args, env, cwd, prog) in &cases {
+        let mut out = vec![0u8; MAX_STARTUP];
+        let used = encode_startup(
+            roles,
+            args.iter().map(|a| a.as_slice()),
+            env.iter().map(|e| e.as_slice()),
+            cwd,
+            prog,
+            handle_count,
+            &mut out,
+        )
+        .unwrap();
+        // The bytes are a record a child accepts, and they parse back to the case.
+        let parsed = parse_startup(&out[..used], handle_count).unwrap();
+        assert!(parsed.args().eq(args.iter().map(|a| a.as_slice())), "{name}: argv bytes");
+        assert!(parsed.env().eq(env.iter().map(|e| e.as_slice())), "{name}: env bytes");
+        assert_eq!(parsed.cwd, *cwd, "{name}: cwd");
+        assert_eq!(parsed.name, *prog, "{name}: name");
+        assert_eq!((parsed.stdin, parsed.stdout, parsed.stderr), (Some(1), Some(2), Some(3)), "{name}: stdio roles");
+        assert_eq!(parsed.channel_count, 1, "{name}: one file-server channel");
+        std::fs::write(dir.join(format!("{name}.bin")), &out[..used]).unwrap();
+        let argv = std::iter::once(*prog).chain(args.iter().map(|a| a.as_slice()));
+        let json = format!(
+            "{{\"handle_count\":{handle_count},\"roles\":{roles_json},\"argv\":{},\"env\":{},\"cwd\":{},\"name\":{},\"bytes\":{used},\"argc\":{},\"envc\":{}}}\n",
+            json_list(argv),
+            json_list(env.iter().map(|e| e.as_slice())),
+            json_string(cwd),
+            json_string(prog),
+            args.len() + 1,
+            env.len(),
+        );
+        std::fs::write(dir.join(format!("{name}.json")), json).unwrap();
+    }
+    // The maxima together (32 arguments and 32 environment entries of 1024
+    // bytes) exceed MAX_STARTUP: the encoder refuses, and the vector records it.
+    let args32: Vec<Vec<u8>> = (0..32).map(|_| vec![b'z'; 1024]).collect();
+    let env32_full: Vec<Vec<u8>> = (0..32u8)
+        .map(|i| {
+            let mut entry = format!("K{i:02}=").into_bytes();
+            entry.resize(1024, b'v');
+            entry
+        })
+        .collect();
+    let mut out = vec![0u8; MAX_STARTUP];
+    let outcome = encode_startup(
+        roles,
+        args32.iter().map(|a| a.as_slice()),
+        env32_full.iter().map(|e| e.as_slice()),
+        b"/",
+        b"c-args",
+        handle_count,
+        &mut out,
+    );
+    assert_eq!(outcome, Err(RequestError::TooLarge), "the record limit, not the counts, refuses it");
+    let refused = outcome.is_err();
+    std::fs::write(
+        dir.join("maximal.json"),
+        format!(
+            "{{\"refused\":{refused},\"error\":\"TooLarge\",\"args\":32,\"arg_bytes\":1024,\"env\":32,\"env_bytes\":1024,\"reason\":\"32 arguments and 32 environment entries of 1024 bytes exceed MAX_STARTUP {MAX_STARTUP}\"}}\n"
+        ),
+    )
+    .unwrap();
 }

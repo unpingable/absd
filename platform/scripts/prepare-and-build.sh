@@ -29,6 +29,10 @@ fi
 # only the VFS that absd-sqlite registers.
 clang_include=$(clang -print-resource-dir)/include
 
+# Source paths remapped so the programs do not depend on the checkout path
+# (scripts/inputs.sh, absd_rust_remap); exported for build-ssh.sh too.
+absd_rust_remap
+
 env -u CARGO_ENCODED_RUSTFLAGS -u RUSTFLAGS \
     -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER \
 ABSD_REAL_RUSTC=$toolchain/bin/rustc \
@@ -41,7 +45,7 @@ AR_x86_64_unknown_absd=llvm-ar-18 \
 CRATE_CC_NO_DEFAULTS=1 \
 CFLAGS_x86_64_unknown_absd="--target=x86_64-unknown-none-elf -ffreestanding -nostdinc -isystem $clang_include -I$root/sqlite/include -mcmodel=large -fno-pic -O2 -ffunction-sections -fdata-sections" \
 LIBSQLITE3_FLAGS="-DSQLITE_OS_OTHER=1 -DSQLITE_OMIT_LOCALTIME -USQLITE_ENABLE_LOAD_EXTENSION -DSQLITE_OMIT_LOAD_EXTENSION" \
-cargo +1.95.0 build -Z build-std=core,alloc,std,panic_abort \
+cargo +1.95.0 --config "$ABSD_RUST_REMAP" build -Z build-std=core,alloc,std,panic_abort \
     --release --locked --offline
 
 cp "$root/target/x86_64-unknown-absd/release/absd-std-probe" "$root/probe.elf"
@@ -56,7 +60,7 @@ cp "$root/target/x86_64-unknown-absd/release/broker_echo" "$root/broker-echo.elf
 # into the guest filesystem through init's pipe.
 rm -rf "$root/commands"
 mkdir -p "$root/commands"
-for command in echo pwd ls cat printenv uname mkdir rm mv cp head tail wc sha256sum stat df sync man date uptime release sysinfo; do
+for command in echo pwd ls cat printenv uname mkdir rm mv cp head tail wc sha256sum stat df sync man date uptime release sysinfo health net-status; do
     llvm-strip-18 -o "$root/commands/$command" "$root/target/x86_64-unknown-absd/release/$command"
 done
 llvm-strip-18 -o "$root/exec-probe.elf" "$root/target/x86_64-unknown-absd/release/exec_probe"

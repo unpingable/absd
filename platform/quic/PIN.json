@@ -1,0 +1,410 @@
+{
+  "schema_version": 1,
+  "scope": "Exact actual-target selected registry union (ABSD/Linux), including host tools; source selection is not evidence of linking or execution. Inactive lock entries remain separately recorded.",
+  "quinn_release_commit": "8192ed399a26a6e8f0aba43d10ec8badaa5b905e",
+  "packages": [
+    {
+      "name": "bitflags",
+      "version": "1.3.2",
+      "license_declared": "MIT/Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a",
+      "metadata_url": "https://crates.io/api/v1/crates/bitflags/1.3.2"
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.10.4",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71",
+      "metadata_url": "https://crates.io/api/v1/crates/block-buffer/0.10.4"
+    },
+    {
+      "name": "byteorder",
+      "version": "1.5.0",
+      "license_declared": "Unlicense OR MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b",
+      "metadata_url": "https://crates.io/api/v1/crates/byteorder/1.5.0"
+    },
+    {
+      "name": "bytes",
+      "version": "1.12.1",
+      "license_declared": "MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04",
+      "metadata_url": "https://crates.io/api/v1/crates/bytes/1.12.1"
+    },
+    {
+      "name": "cc",
+      "version": "1.2.62",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "a1dce859f0832a7d088c4f1119888ab94ef4b5d6795d1ce05afb7fe159d79f98",
+      "metadata_url": "https://crates.io/api/v1/crates/cc/1.2.62"
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.4",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801",
+      "metadata_url": "https://crates.io/api/v1/crates/cfg-if/1.0.4"
+    },
+    {
+      "name": "chacha20",
+      "version": "0.10.2",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06",
+      "metadata_url": "https://crates.io/api/v1/crates/chacha20/0.10.2"
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.2.17",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280",
+      "metadata_url": "https://crates.io/api/v1/crates/cpufeatures/0.2.17"
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.3.1",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566",
+      "metadata_url": "https://crates.io/api/v1/crates/cpufeatures/0.3.1"
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.1.7",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a",
+      "metadata_url": "https://crates.io/api/v1/crates/crypto-common/0.1.7"
+    },
+    {
+      "name": "digest",
+      "version": "0.10.7",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292",
+      "metadata_url": "https://crates.io/api/v1/crates/digest/0.10.7"
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.9",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582",
+      "metadata_url": "https://crates.io/api/v1/crates/find-msvc-tools/0.1.9"
+    },
+    {
+      "name": "generic-array",
+      "version": "0.14.7",
+      "license_declared": "MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a",
+      "metadata_url": "https://crates.io/api/v1/crates/generic-array/0.14.7"
+    },
+    {
+      "name": "getrandom",
+      "version": "0.2.17",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0",
+      "metadata_url": "https://crates.io/api/v1/crates/getrandom/0.2.17"
+    },
+    {
+      "name": "getrandom",
+      "version": "0.4.3",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099",
+      "metadata_url": "https://crates.io/api/v1/crates/getrandom/0.4.3"
+    },
+    {
+      "name": "hash32",
+      "version": "0.3.1",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606",
+      "metadata_url": "https://crates.io/api/v1/crates/hash32/0.3.1"
+    },
+    {
+      "name": "heapless",
+      "version": "0.9.3",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4",
+      "metadata_url": "https://crates.io/api/v1/crates/heapless/0.9.3"
+    },
+    {
+      "name": "libc",
+      "version": "0.2.186",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66",
+      "metadata_url": "https://crates.io/api/v1/crates/libc/0.2.186"
+    },
+    {
+      "name": "lru-slab",
+      "version": "0.1.3",
+      "license_declared": "MIT OR Apache-2.0 OR Zlib",
+      "license_taken": "MIT",
+      "archive_sha256": "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f",
+      "metadata_url": "https://crates.io/api/v1/crates/lru-slab/0.1.3"
+    },
+    {
+      "name": "managed",
+      "version": "0.8.0",
+      "license_declared": "0BSD",
+      "license_taken": "0BSD",
+      "archive_sha256": "0ca88d725a0a943b096803bd34e73a4437208b6077654cc4ecb2947a5f91618d",
+      "metadata_url": "https://crates.io/api/v1/crates/managed/0.8.0"
+    },
+    {
+      "name": "once_cell",
+      "version": "1.21.4",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50",
+      "metadata_url": "https://crates.io/api/v1/crates/once_cell/1.21.4"
+    },
+    {
+      "name": "pin-project-lite",
+      "version": "0.2.17",
+      "license_declared": "Apache-2.0 OR MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd",
+      "metadata_url": "https://crates.io/api/v1/crates/pin-project-lite/0.2.17"
+    },
+    {
+      "name": "proc-macro2",
+      "version": "1.0.107",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9",
+      "metadata_url": "https://crates.io/api/v1/crates/proc-macro2/1.0.107"
+    },
+    {
+      "name": "quinn-proto",
+      "version": "0.11.19",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe",
+      "metadata_url": "https://crates.io/api/v1/crates/quinn-proto/0.11.19"
+    },
+    {
+      "name": "quote",
+      "version": "1.0.47",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001",
+      "metadata_url": "https://crates.io/api/v1/crates/quote/1.0.47"
+    },
+    {
+      "name": "rand",
+      "version": "0.10.3",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af",
+      "metadata_url": "https://crates.io/api/v1/crates/rand/0.10.3"
+    },
+    {
+      "name": "rand_core",
+      "version": "0.10.1",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69",
+      "metadata_url": "https://crates.io/api/v1/crates/rand_core/0.10.1"
+    },
+    {
+      "name": "rand_pcg",
+      "version": "0.10.2",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a",
+      "metadata_url": "https://crates.io/api/v1/crates/rand_pcg/0.10.2"
+    },
+    {
+      "name": "ring",
+      "version": "0.17.14",
+      "license_declared": "Apache-2.0 AND ISC",
+      "license_taken": "Apache-2.0 AND ISC",
+      "archive_sha256": "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7",
+      "existing_patches": {
+        "ring-absd.patch": "284a0b6aa50f2a43c52d01dad9778420f50adda90eeb0e174d67863342c39f29",
+        "ring-absd-tls-fixture-rng.patch": "2f8566764cf3cbb388e8ecb3face8418368a36079b1ddbb4727f6d0747f1ad0b"
+      }
+    },
+    {
+      "name": "rustc-hash",
+      "version": "2.1.3",
+      "license_declared": "Apache-2.0 OR MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d",
+      "metadata_url": "https://crates.io/api/v1/crates/rustc-hash/2.1.3"
+    },
+    {
+      "name": "rustls",
+      "version": "0.23.46",
+      "license_declared": "Apache-2.0 OR ISC OR MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf",
+      "metadata_url": "https://crates.io/api/v1/crates/rustls/0.23.46"
+    },
+    {
+      "name": "rustls-pki-types",
+      "version": "1.15.1",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96",
+      "metadata_url": "https://crates.io/api/v1/crates/rustls-pki-types/1.15.1"
+    },
+    {
+      "name": "rustls-webpki",
+      "version": "0.103.15",
+      "license_declared": "ISC",
+      "license_taken": "ISC",
+      "archive_sha256": "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2",
+      "metadata_url": "https://crates.io/api/v1/crates/rustls-webpki/0.103.15"
+    },
+    {
+      "name": "sha2",
+      "version": "0.10.9",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283",
+      "metadata_url": "https://crates.io/api/v1/crates/sha2/0.10.9"
+    },
+    {
+      "name": "shlex",
+      "version": "1.3.0",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64",
+      "metadata_url": "https://crates.io/api/v1/crates/shlex/1.3.0"
+    },
+    {
+      "name": "slab",
+      "version": "0.4.12",
+      "license_declared": "MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5",
+      "metadata_url": "https://crates.io/api/v1/crates/slab/0.4.12"
+    },
+    {
+      "name": "smoltcp",
+      "version": "0.14.0",
+      "license_declared": "0BSD",
+      "license_taken": "0BSD",
+      "archive_sha256": "b6f8b28ad56c6e35524a37dd492af5d1a47e31e1a4d175cd12f89c075f01980f",
+      "metadata_url": "https://crates.io/api/v1/crates/smoltcp/0.14.0"
+    },
+    {
+      "name": "stable_deref_trait",
+      "version": "1.2.1",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596",
+      "metadata_url": "https://crates.io/api/v1/crates/stable_deref_trait/1.2.1"
+    },
+    {
+      "name": "subtle",
+      "version": "2.6.1",
+      "license_declared": "BSD-3-Clause",
+      "license_taken": "BSD-3-Clause",
+      "archive_sha256": "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292",
+      "metadata_url": "https://crates.io/api/v1/crates/subtle/2.6.1"
+    },
+    {
+      "name": "syn",
+      "version": "3.0.5",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9",
+      "metadata_url": "https://crates.io/api/v1/crates/syn/3.0.5"
+    },
+    {
+      "name": "thiserror",
+      "version": "2.0.20",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f",
+      "metadata_url": "https://crates.io/api/v1/crates/thiserror/2.0.20"
+    },
+    {
+      "name": "thiserror-impl",
+      "version": "2.0.20",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af",
+      "metadata_url": "https://crates.io/api/v1/crates/thiserror-impl/2.0.20"
+    },
+    {
+      "name": "tinyvec",
+      "version": "1.13.3",
+      "license_declared": "Zlib OR Apache-2.0 OR MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee",
+      "metadata_url": "https://crates.io/api/v1/crates/tinyvec/1.13.3"
+    },
+    {
+      "name": "tracing",
+      "version": "0.1.44",
+      "license_declared": "MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100",
+      "metadata_url": "https://crates.io/api/v1/crates/tracing/0.1.44"
+    },
+    {
+      "name": "tracing-core",
+      "version": "0.1.36",
+      "license_declared": "MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a",
+      "metadata_url": "https://crates.io/api/v1/crates/tracing-core/0.1.36"
+    },
+    {
+      "name": "typenum",
+      "version": "1.20.1",
+      "license_declared": "MIT OR Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20",
+      "metadata_url": "https://crates.io/api/v1/crates/typenum/1.20.1"
+    },
+    {
+      "name": "unicode-ident",
+      "version": "1.0.24",
+      "license_declared": "(MIT OR Apache-2.0) AND Unicode-3.0",
+      "license_taken": "MIT AND Unicode-3.0",
+      "archive_sha256": "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75",
+      "metadata_url": "https://crates.io/api/v1/crates/unicode-ident/1.0.24"
+    },
+    {
+      "name": "untrusted",
+      "version": "0.9.0",
+      "license_declared": "ISC",
+      "license_taken": "ISC",
+      "archive_sha256": "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1",
+      "metadata_url": "https://crates.io/api/v1/crates/untrusted/0.9.0"
+    },
+    {
+      "name": "version_check",
+      "version": "0.9.5",
+      "license_declared": "MIT/Apache-2.0",
+      "license_taken": "MIT",
+      "archive_sha256": "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a",
+      "metadata_url": "https://crates.io/api/v1/crates/version_check/0.9.5"
+    },
+    {
+      "name": "zeroize",
+      "version": "1.8.2",
+      "license_declared": "Apache-2.0 OR MIT",
+      "license_taken": "MIT",
+      "archive_sha256": "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0",
+      "metadata_url": "https://crates.io/api/v1/crates/zeroize/1.8.2"
+    }
+  ]
+}

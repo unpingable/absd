@@ -81,6 +81,13 @@ pub mod role {
     /// at all, and no process passes them on.
     pub const SESSION_EVENTS: u8 = 16;
     pub const SESSION_REQUESTS: u8 = 17;
+    /// A kernel cell init gives a served service (fsd, sshd) with read and
+    /// write rights. The service transitions it once per main-loop pass,
+    /// and init treats a cell unchanged for a bound after readiness as a
+    /// fault of that service (kernel
+    /// `docs/service-lifecycle-20261008/LIVENESS.md`). At most once, and no
+    /// process passes it on.
+    pub const LIVENESS: u8 = 18;
 }
 
 pub mod reply {
@@ -134,6 +141,7 @@ pub struct Startup<'a> {
     pub machine: Option<usize>,
     pub session_events: Option<usize>,
     pub session_requests: Option<usize>,
+    pub liveness: Option<usize>,
     pub slots: [SlotIndexes; MAX_SLOTS],
     pub slot_count: usize,
     pub channels: [ChannelIndexes; MAX_CHANNELS],
@@ -256,6 +264,7 @@ pub fn parse_startup(record: &[u8], handle_count: usize) -> Result<Startup<'_>, 
         machine: None,
         session_events: None,
         session_requests: None,
+        liveness: None,
         slots: [SlotIndexes::default(); MAX_SLOTS],
         slot_count: 0,
         channels: [ChannelIndexes::default(); MAX_CHANNELS],
@@ -289,6 +298,7 @@ pub fn parse_startup(record: &[u8], handle_count: usize) -> Result<Startup<'_>, 
             role::REPLY => &mut startup.reply,
             role::NIC => &mut startup.nic,
             role::MACHINE => &mut startup.machine,
+            role::LIVENESS => &mut startup.liveness,
             role::SESSION_EVENTS => &mut startup.session_events,
             role::SESSION_REQUESTS => &mut startup.session_requests,
             role::SLOT_STDIN | role::SLOT_STDOUT | role::SLOT_STDERR => {

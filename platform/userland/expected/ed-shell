@@ -1,0 +1,5 @@
+status 1
+--- stdout
+?
+shell commands are not supported on this system
+--- stderr

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drive the `net-probe` boot's layer-2 reflector (docs/NETWORK.md).
 
-Usage: nic-reflect.py [--link-down] WORKDIR SERIAL_LOG QEMU_COMMAND...
+Usage: nic-reflect.py [--link-down|--tx-hold|--tx-hold-stuck] WORKDIR SERIAL_LOG QEMU_COMMAND...
 
 Binds the host end of a QEMU `-netdev dgram` pair of unix datagram
 sockets (WORKDIR/host.sock; QEMU binds WORKDIR/guest.sock), starts QEMU
@@ -25,6 +25,18 @@ the wire (the probe sends one hello with the link down), and once the
 harness raises the link the guest must print `NIC PROBE LINK UP` and run
 the whole reflection as above.
 
+With `--tx-hold` (kernel `net-probe nic-tx-hold`) or `--tx-hold-stuck`,
+QEMU starts stopped and the link is set down before `cont`; the kernel's
+fixture holds the descriptor the guest posts without carrier. Nothing may
+reach the wire while held. Released: once the link is up the held hello
+and then the next frame must arrive, in that order, and nothing else
+(`kind=software`: only the next frame, QEMU having dropped the held one).
+Stuck: the NIC must disable itself (`NIC DISABLED reason=tx-timeout`) and
+nothing may reach the wire. After the release (or the disable) the harness
+watches for stray frames for 1.5 s, ending early only when QEMU exits 3;
+after that exit it also checks for a queued frame. No frame establishes
+absence only over that observation window. QEMU must exit 3.
+
 Prints `NIC REFLECT OK ...` and exits 0 only if every check held and QEMU
 exited with the kernel's success status (3).
 """
@@ -47,6 +59,16 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
+def probe_failure(log_path: str) -> str:
+    """The guest's last `NIC PROBE FAILED at <step>` line, if any."""
+    try:
+        with open(log_path, "rb") as log:
+            found = re.findall(rb"NIC PROBE FAILED at [^\n]*", log.read())
+    except FileNotFoundError:
+        return ""
+    return f" ({found[-1].decode(errors='replace')})" if found else ""
+
+
 def wait_for(log_path: str, pattern: bytes, deadline: float, qemu) -> re.Match:
     while time.monotonic() < deadline:
         try:
@@ -57,7 +79,7 @@ def wait_for(log_path: str, pattern: bytes, deadline: float, qemu) -> re.Match:
         except FileNotFoundError:
             pass
         if qemu.poll() is not None:
-            fail(f"QEMU exited ({qemu.returncode}) before {pattern!r}")
+            fail(f"QEMU exited ({qemu.returncode}) before {pattern!r}{probe_failure(log_path)}")
         time.sleep(0.05)
     fail(f"timed out waiting for {pattern!r}")
 
@@ -103,10 +125,11 @@ class Qmp:
 
 def main() -> int:
     arguments = sys.argv[1:]
-    link_down = False
+    link_down, hold = False, None
     if arguments and arguments[0] == "--link-down":
-        link_down = True
-        arguments = arguments[1:]
+        link_down, arguments = True, arguments[1:]
+    elif arguments and arguments[0] in ("--tx-hold", "--tx-hold-stuck"):
+        hold, arguments = ("stuck" if arguments[0] == "--tx-hold-stuck" else "release"), arguments[1:]
     workdir, log_path, *qemu_command = arguments
     os.makedirs(workdir, exist_ok=True)
     host_path = os.path.join(workdir, "host.sock")
@@ -124,7 +147,7 @@ def main() -> int:
         "-netdev", f"dgram,id=n0,local.type=unix,local.path={guest_path},"
         f"remote.type=unix,remote.path={host_path}",
     ]
-    if link_down:
+    if link_down or hold:
         command += ["-S", "-qmp", f"unix:{qmp_path},server,nowait"]
     qemu = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     deadline = time.monotonic() + TIMEOUT
@@ -137,9 +160,75 @@ def main() -> int:
                     return sock.recv(4096)
                 except socket.timeout:
                     if qemu.poll() is not None:
-                        fail(f"QEMU exited ({qemu.returncode}) during the exchange")
+                        fail(f"QEMU exited ({qemu.returncode}) during the exchange{probe_failure(log_path)}")
             return None
 
+        def drain(wait: float):
+            """The first frame within `wait`, or None once it elapses or the
+            guest has exited with the kernel's success status (3); after a
+            hold ends the guest may finish while the window is still open."""
+            end = time.monotonic() + wait
+            while time.monotonic() < end:
+                try:
+                    return sock.recv(4096)
+                except socket.timeout:
+                    if qemu.poll() is None:
+                        continue
+                    if qemu.returncode != 3:
+                        fail(f"QEMU exited ({qemu.returncode}) during the post-hold stray-frame window{probe_failure(log_path)}")
+                    # A frame queued just before the exit is still readable.
+                    sock.setblocking(False)
+                    try:
+                        return sock.recv(4096)
+                    except BlockingIOError:
+                        return None
+                    finally:
+                        sock.settimeout(0.2)
+            return None
+
+        if hold:
+            qmp = Qmp(qmp_path, qemu, deadline)
+            qmp.set_link(False)
+            qmp.execute("cont")
+            armed = wait_for(log_path, rb"NIC TX HOLD FIXTURE ARMED mode=" + hold.encode() + rb" kind=(tctl|software)\n",
+                             deadline, qemu)
+            kind = armed.group(1).decode()
+            wait_for(log_path, rb"NIC LINK DOWN AT PROBE ", deadline, qemu)
+            held = wait_for(log_path, rb"NIC PROBE TX HELD held_ticks=(\d+) refused_ticks=(\d+)\n", deadline, qemu)
+            early = receive(1.5)
+            if early is not None:
+                fail(f"a frame reached the wire while held ({early[14:24]!r})")
+            qmp.set_link(True)
+            if hold == "stuck":
+                wait_for(log_path, rb"NIC DISABLED reason=tx-timeout\n", deadline, qemu)
+                wait_for(log_path, rb"NIC PROBE TX STUCK DISABLED tx_errors=2\n", deadline, qemu)
+                stray = drain(1.5)
+                if stray is not None:
+                    fail(f"a frame reached the wire from a stuck device ({stray[14:24]!r})")
+                result = "NIC TX HOLD STUCK DISABLED OK tx_errors=2"
+            else:
+                expected = [b"ABSD-HELD1", b"ABSD-AFTER"] if kind == "tctl" else [b"ABSD-AFTER"]
+                bodies = []
+                for _ in expected:
+                    frame = receive(10.0)
+                    bodies.append(frame[14:24] if frame is not None else None)
+                if bodies != expected:
+                    fail(f"after release the wire carried {bodies}, expected {expected}")
+                stray = drain(1.5)
+                if stray is not None:
+                    fail(f"a refused frame reached the wire ({stray[14:24]!r})")
+                wait_for(log_path, rb"NIC PROBE TX RELEASED tx_frames=2 tx_errors=1\n", deadline, qemu)
+                fast = "yes" if int(held.group(2)) < 50 else "no"
+                result = (f"NIC TX HOLD OK held_ticks={held.group(1).decode()} refused_fast={fast} "
+                          f"late_frames={len(expected) - 1} tx_errors=1")
+            try:
+                status = qemu.wait(timeout=max(1.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                fail("QEMU did not exit after the hold")
+            if status != 3:
+                fail(f"unexpected QEMU exit {status}")
+            print(f"{result} kind={kind}")
+            return 0
         if link_down:
             qmp = Qmp(qmp_path, qemu, deadline)
             qmp.set_link(False)

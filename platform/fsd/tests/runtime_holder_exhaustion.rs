@@ -4,6 +4,12 @@
 
 extern crate alloc;
 
+// fsd.rs reads wire kinds through the runtime's decoder (R12); this test crate
+// is its own root, so the decoder module is included beside it.
+#[allow(dead_code)]
+#[path = "../../runtime/src/wire_kind.rs"]
+mod wire_kind;
+
 #[allow(dead_code)]
 #[path = "../../runtime/src/fsd.rs"]
 mod runtime_fsd;

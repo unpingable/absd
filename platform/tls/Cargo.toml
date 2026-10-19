@@ -1,0 +1,50 @@
+[package]
+name = "absd-native-tls-fixture"
+version = "0.1.0"
+edition = "2024"
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "https_get"
+path = "src/bin/https_get.rs"
+
+[[bin]]
+name = "tls_service_probe"
+path = "src/bin/tls_service_probe.rs"
+
+[[bin]]
+name = "https_get_ipv6"
+path = "src/bin/https_get_ipv6.rs"
+
+[[bin]]
+name = "tls_ipv6_service_probe"
+path = "src/bin/tls_ipv6_service_probe.rs"
+
+[dependencies]
+absd-net = { path = "../net" }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
+ring = { version = "=0.17.14", features = ["less-safe-getrandom-custom-or-rdrand"] }
+getrandom = { version = "=0.2.17", features = ["rdrand"] }
+
+[target.'cfg(target_os = "absd")'.dependencies]
+absd-runtime = { path = "../runtime" }
+absd-broker = { path = "../broker" }
+
+[patch.crates-io]
+ring = { path = "tree/ring" }
+
+[workspace]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("absd"))'] }

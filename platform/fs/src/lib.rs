@@ -191,6 +191,9 @@ impl Bits {
     fn new(count: u32) -> Self {
         Self(vec![0; (count as usize).div_ceil(64)])
     }
+    fn clear(&mut self) {
+        self.0.fill(0);
+    }
     fn get(&self, bit: u32) -> bool {
         self.0[bit as usize / 64] & (1 << (bit % 64)) != 0
     }
@@ -606,35 +609,29 @@ impl<D: Device> Fs<D> {
         }
     }
 
+    fn linked_records(&self) -> impl Iterator<Item = image::RecordRef<'_>> + Clone + '_ {
+        self.objects.iter().filter(|(_, object)| object.linked).map(|(serial, object)| image::RecordRef {
+            serial: *serial,
+            parent: object.parent,
+            name: &object.name,
+            kind: object.kind,
+            readonly: object.readonly,
+            size: object.size,
+            blocks: &object.blocks,
+            mtime: object.mtime,
+        })
+    }
+
     /// Writes the whole namespace as the next image and switches the
     /// superblock to it. Blocks the previous image referenced and this one
     /// does not become allocatable only after this returns.
     fn commit(&mut self) -> Result<(), Error> {
         self.mutable()?;
         let seq = self.seq + 1;
-        let records = self
-            .objects
-            .iter()
-            .filter(|(_, object)| object.linked)
-            .map(|(serial, object)| Record {
-                serial: *serial,
-                parent: object.parent,
-                name: object.name.clone(),
-                kind: object.kind,
-                readonly: object.readonly,
-                size: object.size,
-                blocks: object.blocks.clone(),
-                mtime: object.mtime,
-            })
-            .collect::<Vec<_>>();
-        let image = Image {
-            fs_id: self.fs_id,
-            seq,
-            next_serial: self.next_serial,
-            geometry: self.geometry,
-            records,
-        };
-        let bytes = image.encode();
+        // Encoding borrows this linked namespace. No names or block lists
+        // are cloned, and the complete owned buffer precedes device effects.
+        let bytes = image::encode_records(self.fs_id, seq, self.next_serial,
+                                          self.geometry, self.linked_records());
         if bytes.len() > self.geometry.half_sectors as usize * SECTOR {
             // Impossible by the object budget; refuse rather than overrun.
             self.poisoned = true;
@@ -647,9 +644,11 @@ impl<D: Device> Fs<D> {
         self.stats.image_bytes += bytes.len().next_multiple_of(SECTOR) as u64;
         self.stats.superblock_sectors += 1;
         self.seq = seq;
-        self.durable = Bits::new(self.geometry.data_blocks);
-        for record in &image.records {
-            for block in &record.blocks {
+        // Geometry is fixed for this mount. Rebuild only after the disk
+        // commit succeeds, reusing the bitmap's existing backing storage.
+        self.durable.clear();
+        for object in self.objects.values().filter(|object| object.linked) {
+            for block in &object.blocks {
                 self.durable.set(*block, true);
             }
         }

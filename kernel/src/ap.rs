@@ -15,9 +15,9 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering, fence};
 global_asm!(include_str!("ap_boot.S"), options(att_syntax));
 
 const AP_ID: u8 = 1;
-const AP_IPI_VECTOR: u8 = 0xf1;
-pub const BSP_ACK_VECTOR: u8 = 0xf2;
-const AP_SPURIOUS_VECTOR: u8 = 0xff;
+const AP_IPI_VECTOR: u8 = absd_kernel::interrupt_vector::AP_IPI;
+pub const BSP_ACK_VECTOR: u8 = absd_kernel::interrupt_vector::BSP_ACK;
+const AP_SPURIOUS_VECTOR: u8 = absd_kernel::interrupt_vector::APIC_SPURIOUS;
 const TRAMPOLINE_PAGE: u32 = 0x7000;
 const PAGE_BYTES: usize = 4096;
 const TRAMPOLINE_STACK_RESERVE: usize = 256;
@@ -399,6 +399,19 @@ pub fn configure(page: ValidatedLowPage, lapic_virt: u64) {
             }),
         );
     }
+    configure_bsp_lapic_mapping(lapic_virt);
+}
+
+/// Map ownership for BSP device IRQ delivery, independently of AP startup.
+/// Caller supplies a validated uncached mapping; an existing mapping cannot
+/// be replaced. This neither installs an AP trampoline nor starts an AP.
+pub fn configure_bsp_lapic_mapping(lapic_virt: u64) {
+    bsp_only();
+    assert!(!ONLINE[AP_ID as usize].load(Ordering::Acquire));
+    assert_ne!(lapic_virt, 0);
+    assert_eq!(lapic_virt & 0xfff, 0);
+    let before = LAPIC_VIRT.load(Ordering::Acquire);
+    assert!(before == 0 || before == lapic_virt);
     LAPIC_VIRT.store(lapic_virt, Ordering::Release);
 }
 
@@ -1218,7 +1231,7 @@ pub fn send_task_ipi(cpu: u8) {
             | if cpu != 0 {
                 u32::from(AP_IPI_VECTOR)
             } else {
-                0xf3
+                u32::from(absd_kernel::interrupt_vector::BSP_STOP)
             },
     );
 }

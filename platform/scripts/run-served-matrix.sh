@@ -26,6 +26,6 @@ done
 rm -rf "${work:?}"
 mkdir -p "$work"
 python3 "$root/scripts/served-matrix.py" --work "$work" --kernel "$kernel" --shell "$root/commands/absd-sh" \
-    --qemu "$qemu -cpu max,vendor=GenuineIntel,+rdrand"
+    --qemu "$qemu -cpu max,vendor=GenuineIntel,+rdrand" "$@"
 rm -rf "${work:?}"
 printf '%s\n' 'ABSD RUST SERVED OK'

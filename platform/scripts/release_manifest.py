@@ -48,9 +48,14 @@ import tarfile
 import tempfile
 import tomllib
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import absd_inputs
+from served_kernel import FEATURES as SERVED_KERNEL_FEATURES
 
-SCHEMA = "absd-release-manifest/1"
+# /2: build.kernel_image records EXTERNAL_KERNEL_FEATURES (reconstruction
+# replays it). /1 manifests are reconstructed by reconstruct-release.sh at
+# their own platform commit.
+SCHEMA = "absd-release-manifest/2"
 MANIFEST = "release-manifest.toml"
 RECEIPT = "reconstruction-receipt.toml"
 ISO = "absd-operator.iso"
@@ -69,7 +74,10 @@ RUST_SRC_VERSION = "1.95.0 (59807616e 2026-04-14)"
 RUST_SRC_COMMIT = "59807616e1fa2540724bfbac14d7976d7e4a3860"
 RUST_SRC_TAR_LIBRARY = "rust-src-1.95.0/rust-src/lib/rustlib/src/rust/library"
 LIBRARY_FINGERPRINT = "fcb80715180e5a9cc3179b032d2df540bfadb7a3ea35b04f02d4d97e5aafda3b"
-STAGED_LIBRARY_FINGERPRINT = "4562fdb1c43c61d91ddeed115b86d1c517a654c9072d02b0cddaa8ec3295f180"
+# Patched library: 2251 files, 45,920,288 bytes. This is recorded metadata;
+# toolchain_check compares stock rust-src fields, not this staged fingerprint.
+# The native TLS builder/checker independently compare staged bytes and counts.
+STAGED_LIBRARY_FINGERPRINT = "c35493ccdf6cb87a81767902413ad4487caa1bff401d5ccecb1cce9e7a18760c"
 
 STRIP = "llvm-strip-18"
 # How the boot image is made (scripts/operator_image.py kernel_iso, step 0
@@ -77,7 +85,7 @@ STRIP = "llvm-strip-18"
 # variables name platform artifacts; EXTERNAL_INPUT is empty.
 KERNEL_MAKE = {"DURABLE_STEP": "0", "DURABLE_OPTIONS": "net fsd served", "EXTERNAL_USER_ELF": "sshd.elf",
                "FILE_SERVER_ELF": "absd-fsd.elf", "EXTERNAL_READER_ELF": "", "EXTERNAL_READER_INPUT": "",
-               "NET_WAIT_TICKS": ""}
+               "NET_WAIT_TICKS": "", "EXTERNAL_KERNEL_FEATURES": SERVED_KERNEL_FEATURES}
 KERNEL_NORMALIZATION = f"{STRIP} --strip-all, then the .note.gnu.build-id descriptor zeroed"
 HOST_TOOLS = {
     "clang": ["clang", "--version"],
@@ -779,8 +787,8 @@ def main(argv=None):
         b.add_argument("--" + key.replace("_", "-"), type=int, dest=key)
     b.add_argument("--rust-src-tarball", help="also check the published tarball against the installed tree")
     b.add_argument("--components", default=os.environ.get("ABSD_COMPONENTS_TOML"),
-                   help="the qualified-lineage file (default: ABSD_COMPONENTS_TOML, else absd-coord/"
-                        "absd-components.toml beside the platform, when it exists)")
+                   help="the qualified-lineage file (default: ABSD_COMPONENTS_TOML; "
+                        "no implicit file when unset)")
     b.add_argument("--kernel-make-var", action="append", default=[], metavar="NAME=VALUE",
                    help="a make variable the ISO was built with that differs from operator_image.py's")
     b.add_argument("--receipt", action="append", default=[], help="a qualification receipt name")
@@ -806,8 +814,7 @@ def main(argv=None):
         if args.command == "build":
             make_vars = dict(item.split("=", 1) for item in args.kernel_make_var)
             given = {k: getattr(args, k) for k in IDENTITY_KEYS}
-            components = args.components or (
-                pathlib.Path(args.platform).resolve().parent / "absd-coord" / "absd-components.toml")
+            components = args.components
             build(args.release_dir, args.platform, args.kernel, args.release_id, given, args.rust_src_tarball,
                   components, make_vars, args.receipt, args.partial)
             print(f"RELEASE MANIFEST WRITTEN {pathlib.Path(args.release_dir) / MANIFEST}")

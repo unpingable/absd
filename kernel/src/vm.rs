@@ -1,8 +1,9 @@
 //! User address-space construction, mapping, and teardown.
 //!
-//! All page-table memory is reached through the boot identity map of the
-//! first GiB, so every frame used here must come from the tracked allocator
-//! (which only hands out frames below `TRACKED_PHYSICAL_LIMIT` = 256 MiB).
+//! All page-table memory is reached through the kernel identity map: the
+//! boot map of the first GiB plus the direct map of tracked RAM above it
+//! (`whole_ram`), so every frame used here must come from the tracked
+//! allocator, whose frames are all identity-mapped.
 //!
 //! Ownership: PML4 entry 0 of every user root points at the shared kernel
 //! PDPT and is never owned by a process. PML4 entry 1, the PDPT, the page
@@ -125,7 +126,7 @@ pub enum MapError {
 /// `space` must have been produced by `create` and have one exclusive CPU
 /// owner. A bounded AP fixture may map its own active root under the kernel
 /// lock; no remote CPU may use that root. Tracked frames are identity-mapped
-/// below 256 MiB, and reclamation waits for actual RSP/CR3/TSS departure ACK.
+/// (boot map and whole-RAM direct map), and reclamation waits for actual RSP/CR3/TSS departure ACK.
 pub unsafe fn map_user_page(
     frames: &mut FrameAllocator,
     space: &mut AddressSpace,

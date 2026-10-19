@@ -1,0 +1,7 @@
+ctor
+main
+abort
+--
+absd-sh: /bin/exit: exit status 134
+--
+status=134

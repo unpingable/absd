@@ -1,0 +1,2 @@
+# The frozen upstream help output includes literal trailing spaces.
+compat/native-markdown/expected.txt whitespace=-blank-at-eol

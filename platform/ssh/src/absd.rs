@@ -57,7 +57,7 @@ use std::time::{Duration, Instant};
 use absd_fsd::proto::{Frame, Mount, op, status};
 use absd_runtime::fsd::{self as fsd_client, ChildFs};
 
-use absd_net::{Connection as TcpConn, Listener, NetError, NicLink, Stack};
+use absd_net::{Carrier, Connection as TcpConn, Listener, NetError, NetWatch, NicLink, Stack};
 
 use crate::Config;
 use crate::conn::{
@@ -75,7 +75,7 @@ static CONSOLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 /// The recovery streak the file server charged for this generation
 /// (absd_fsd::recovery): read through the control channel (read-only
 /// there), checked, and required to name this boot.
-fn recovery_streak(boot: &absd_fsd::recovery::Boot) -> Result<u64, String> {
+fn recovery_ledger(boot: &absd_fsd::recovery::Boot) -> Result<absd_fsd::recovery::Ledger, String> {
     let path = std::str::from_utf8(absd_fsd::recovery::LEDGER).expect("ascii path");
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let ledger = absd_fsd::recovery::parse_ledger(&bytes)
@@ -83,7 +83,7 @@ fn recovery_streak(boot: &absd_fsd::recovery::Boot) -> Result<u64, String> {
     if ledger.boot != *boot {
         return Err(format!("{path}: charged for another boot"));
     }
-    Ok(ledger.streak)
+    Ok(ledger)
 }
 
 /// Overwrites one recovery fact (a fixed-size file the file server made)
@@ -755,6 +755,35 @@ impl Spawner for AbsdSpawner<'_> {
                         "qualification: file server exited before NOTICE reply",
                     ));
                 }
+                "qualification-sshd-hang" => {
+                    // A user-mode spin: sshd stays live and runnable but
+                    // never beats its liveness cell again, so init's
+                    // liveness judgment, not an exit, has to end it (kernel
+                    // docs/service-lifecycle-20261008/LIVENESS.md).
+                    eprintln!("SERVED SERVICE HANG component=sshd kind=spin reason=qualification");
+                    loop {
+                        std::hint::spin_loop();
+                    }
+                }
+                "qualification-sshd-block" => {
+                    // Blocked in the kernel's sleep: never runnable for
+                    // long, never spinning, never beating.
+                    eprintln!("SERVED SERVICE HANG component=sshd kind=block reason=qualification");
+                    loop {
+                        absd_runtime::sleep_ticks(u64::MAX);
+                    }
+                }
+                "qualification-fsd-hang" => {
+                    // With the paired FSD qualification flag, the file
+                    // server spins while this NOTICE waits for its reply,
+                    // and sshd blocks in that untimed exchange too. That is
+                    // intended: init has to name the file server, the
+                    // dependency that stopped beating first, not sshd.
+                    crate::oplog::notice("FSD QUALIFICATION HANG");
+                    return Err(io::Error::other(
+                        "qualification: file server hangs before NOTICE reply",
+                    ));
+                }
                 "qualification-sshd-fault-at-end" => {
                     self.fault_at_end = true;
                     return Err(io::Error::other(
@@ -849,20 +878,38 @@ struct Slot {
 // The global max-connections bound still includes authenticated sessions.
 const PREAUTH_PER_SOURCE: usize = 2;
 
+/// A4: the NIC disabled itself after readiness. Nothing re-initializes it
+/// short of the boot-time probe, so sshd ends with a named fault and init's
+/// unchanged budget decides (a reset, at most three in a row, then the named
+/// stop). A refused `nic_info` read is `unknown` and never comes here.
+/// The link outcome (kernel `-100`, a transmit bound expiring without
+/// carrier) never comes here: it is reported as `SSH NET TX` and charges
+/// nothing. A4 stays qualified on QEMU's e1000 only (the carrier rule is
+/// shown there through the kernel's `nic-tx-hold` fixture); no physical NIC
+/// is qualified until the record's §10 (c) observation.
+fn nic_disabled_fault() -> ! {
+    crate::oplog::flush();
+    eprintln!("SERVED SERVICE FAULT component=sshd reason=nic_disabled");
+    std::process::exit(7);
+}
+
 fn report_quiescent_capacity(
     boot: &str,
     accepted_reclaimed: u64,
     slots: usize,
     pool: usize,
     stack: &Stack<NicLink>,
+    link: Carrier,
 ) {
     let census = absd_runtime::resource_census().unwrap_or_else(|code| {
         eprintln!("SERVED CAPACITY REFUSED reason=census code={code}");
         std::process::exit(1);
     });
+    let heap_free_pages = absd_runtime::heap_free_pooled_pages();
+    // The allocator guard has been released before formatting/logging.
     // Direct stderr keeps this sample from queuing another FSD log write.
     eprintln!(
-        "SERVED CAPACITY boot={boot} accepted_reclaimed={accepted_reclaimed} slots={slots} pool={pool} net_sockets={} net_closing={} processes={} handles={} pipes={} cells={} frames={} heap_pages_peak={}",
+        "SERVED CAPACITY boot={boot} accepted_reclaimed={accepted_reclaimed} slots={slots} pool={pool} net_sockets={} net_closing={} processes={} handles={} pipes={} cells={} frames={} heap_pages_peak={} link={} heap_free_pages={heap_free_pages}",
         stack.socket_count(),
         stack.closing_count(),
         census.processes,
@@ -871,6 +918,7 @@ fn report_quiescent_capacity(
         census.cells,
         census.frames,
         absd_runtime::heap_mapped_pages(),
+        link.word(),
     );
 }
 
@@ -986,6 +1034,16 @@ pub fn run(config: Config) -> ! {
     let listener: Listener = stack
         .listen(port, config.max_connections.clamp(1, 8))
         .unwrap_or_else(|e| fatal(&format!("listen: {e:?}")));
+    // A3: the first reading, before the readiness fact. A device that
+    // disabled itself since `NicLink::open` gets the refusal `open` gives
+    // (pre-ready, no reset); a link without carrier is not refused.
+    let mut watch = NetWatch::new();
+    let first_read_start = absd_runtime::ticks();
+    watch.observe(&stack);
+    let first_read_end = absd_runtime::ticks();
+    if watch.disabled() {
+        fatal(&format!("nic: {:?}", NetError::Nic(-5)));
+    }
     let boot = absd_runtime::boot_id()
         .unwrap_or_else(|code| fatal(&format!("boot identity: {code}")))
         .iter()
@@ -1000,10 +1058,14 @@ pub fn run(config: Config) -> ! {
         .as_bytes()
         .try_into()
         .unwrap_or_else(|_| fatal("boot identity is not 32 hex digits"));
-    let streak = recovery_streak(&boot_id).unwrap_or_else(|e| fatal(&format!("recovery ledger: {e}")));
+    let ledger = recovery_ledger(&boot_id).unwrap_or_else(|e| fatal(&format!("recovery ledger: {e}")));
+    let streak = ledger.streak;
     write_fact(absd_fsd::recovery::SERVED_READY, &boot_id, None)
         .unwrap_or_else(|e| fatal(&format!("recovery ready fact: {e}")));
+    let mut diagnostics = crate::net_diagnostics::Diagnostics::new(boot_id, ledger.seq, network, network_file.is_some(), port);
+    diagnostics.fresh(&watch, first_read_start, first_read_end, true, false);
     say!("SSH RECOVERY streak={streak}");
+    say!("SSH NET {}", watch.fields(&stack));
     say!(
         "SSH LISTENING port={port} authorized_keys={} preauth_per_source={PREAUTH_PER_SOURCE}",
         authorized.len()
@@ -1037,8 +1099,29 @@ pub fn run(config: Config) -> ! {
     let mut shutdown: Option<(MachineRequest, Instant, bool)> = None;
     let mut ended_by_shutdown = 0usize;
     loop {
+        // One liveness beat per pass of the server loop (kernel
+        // docs/service-lifecycle-20261008/LIVENESS.md).
+        absd_runtime::liveness_beat();
         crate::oplog::flush();
         stack.poll();
+        let sample_start = absd_runtime::ticks();
+        let sample = watch.sample_fresh(&stack);
+        let sample_end = absd_runtime::ticks();
+        if let Some(changed) = sample {
+            if changed { say!("SSH NET {}", watch.fields(&stack)); }
+            diagnostics.fresh(&watch, sample_start, sample_end, changed, shutdown.is_some());
+        }
+        // Sends made later in this pass are reported on the next pass's line.
+        if watch.tx_changed(&stack) {
+            say!("SSH NET TX {}", watch.tx_fields(&stack));
+        }
+        // An operator shutdown or reboot already under way ends the
+        // generation as requested. A session's request is latched into
+        // `shutdown` in the same pass, so the `spawner.requested` term is a
+        // redundant guard, kept for safety.
+        if watch.disabled() && shutdown.is_none() && spawner.requested.is_none() {
+            nic_disabled_fault();
+        }
         let now = Instant::now();
         while shutdown.is_none() && slots.len() < config.max_connections {
             let Some((tcp, (source, remote_port))) = stack.accept_filtered(listener, |peer| {
@@ -1173,6 +1256,7 @@ pub fn run(config: Config) -> ! {
                 slots.len(),
                 pool_sessions,
                 &stack,
+                watch.carrier(),
             );
             reported_reclaimed = Some(accepted_reclaimed);
         }

@@ -34,7 +34,7 @@ def save(name, value):
     (a.output / name).write_text(json.dumps(value, indent=2) + '\n')
 qemu = '/opt/homebrew/bin/qemu-system-aarch64'
 serial = a.output / 'serial.log'
-assert (a.gic == 3) == (a.control == 'gic3'), 'GICv3 only admitted as explicit refusal control'
+assert a.control != 'gic3', 'GICv3 boots since 2026-10-09 (scripts/arm64-gic-qualify.py); it is no longer a refusal control'
 command = [qemu, '-machine', f'virt-8.2,gic-version={a.gic}', '-accel', 'hvf', '-cpu', 'host', '-smp', str(a.cpus), '-m', f'{a.ram_mib}M', '-kernel', str(a.image.resolve()), '-display', 'none', '-serial', 'file:' + str(serial.resolve()), '-nic', 'none', '-no-reboot']
 fixture = None
 if a.block_slot is not None:
@@ -161,12 +161,7 @@ try:
         save('qmp.json', reboot_state)
     text = serial.read_text() if serial.exists() else ''
     record.update(qemu_status=status, serial_sha256=sha(serial) if serial.exists() else None)
-    if a.control == 'gic3':
-        runtime = (a.output / 'runtime.log').read_text()
-        assert ('FDT unsupported GIC version' in text) or (status != 0 and 'HVF' in runtime and 'GIC' in runtime), 'GICv3 did not explicitly refuse at kernel or HVF boundary'
-        assert 'ARM A2 OK' not in text and 'ARM B1 OK' not in text
-        record['negative_oracle'] = 'GICv3 explicit kernel/HVF refusal'
-    elif a.control != 'none':
+    if a.control != 'none':
         reasons = {'early-publication': 'deterministic early publication exposed stale value', 'feature-guard': 'ARM SMP feature absent', 'fp-restore': 'USER EXIT pid=1 status=101'}
         assert reasons[a.control] in text, 'negative control did not expose expected failure'
         assert 'ARM B1 OK' not in text and 'ARM A2 OK' not in text, 'negative reached acceptance'

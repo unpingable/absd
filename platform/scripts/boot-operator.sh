@@ -24,7 +24,7 @@ guest=$1 guest_port=$2
 net=$(printf '%s\n' "$guest" | awk -F. '{print $1 "." $2 "." $3 ".0/24"}')
 printf '%s\n' "boot-operator: ssh -p $port operator@127.0.0.1 reaches $guest:$guest_port; console in $out/console.log"
 status=0
-$qemu -cpu max,vendor=GenuineIntel,+rdrand -rtc base=utc \
+python3 "$root/scripts/served_ram.py" -- $qemu -cpu max,vendor=GenuineIntel,+rdrand -rtc base=utc \
     -cdrom "$out/absd-operator.iso" -drive file="$out/absd-operator.img",format=raw,if=ide,index=0 \
     -netdev user,id=n0,net=$net,hostfwd=tcp:127.0.0.1:$port-$guest:$guest_port -device e1000,netdev=n0 \
     -display none -serial file:"$out/console.log" \

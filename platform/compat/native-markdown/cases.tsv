@@ -1,0 +1,13 @@
+# Separate S3 development fixture; does not alter the canonical compat gate.
+basic.md	/bin/pulldown-cmark
+-	/bin/pulldown-cmark	basic.md
+-	/bin/pulldown-cmark	-T	-S	-L	extensions.md
+-	/bin/pulldown-cmark	-P	punctuation.md
+-	/bin/pulldown-cmark	-d	basic.md
+-	/bin/pulldown-cmark	-e	tiny.md
+-	/bin/pulldown-cmark	-R	broken.md
+-	/bin/pulldown-cmark	--no-such-option
+-	/bin/pulldown-cmark	--help
+-	/bin/pulldown-cmark	-e
+-	/bin/pulldown-cmark	basic.md	tiny.md
+-	/bin/pulldown-cmark	long.md

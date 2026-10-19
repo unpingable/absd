@@ -44,3 +44,39 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 path = "provenance/upstream-notices/*.NOTICE"
 SPDX-FileCopyrightText = "2026 James Beck"
 SPDX-License-Identifier = "Apache-2.0"
+
+# sbase's LICENSE, carried verbatim beside userland/PIN.
+[[annotations]]
+path = "userland/sbase.LICENSE"
+SPDX-FileCopyrightText = "2011 Connor Lane Smith, 2011-2016 Dimitris Papastamos, 2014-2016 Laslo Hunhold, and the sbase contributors named in it"
+SPDX-License-Identifier = "MIT"
+
+# The LLVM project's LICENSE.TXT (llvmorg-18.1.8), carried verbatim beside
+# cxx/PIN. It also reproduces the legacy University of Illinois/NCSA licence
+# that LLVM keeps for code contributed before the relicensing.
+[[annotations]]
+path = "cxx/llvm-project.LICENSE"
+SPDX-FileCopyrightText = "The LLVM project contributors (LLVM Project, llvmorg-18.1.8)"
+SPDX-License-Identifier = "Apache-2.0 WITH LLVM-exception"
+
+# The declared patches against llvm-project 18.1.8 (cxx/patches/llvm): LLVM's
+# files with ABSD's changes, kept under LLVM's terms as a whole.
+[[annotations]]
+path = "cxx/patches/llvm/*.patch"
+SPDX-FileCopyrightText = "The LLVM project contributors (LLVM Project, llvmorg-18.1.8)"
+SPDX-License-Identifier = "Apache-2.0 WITH LLVM-exception"
+
+# Toybox hexdump source adaptation, kept under its upstream 0BSD terms.
+[[annotations]]
+path = ["userland/hexdump/hexdump.c", "userland/hexdump/hexdump.patch"]
+SPDX-FileCopyrightText = "2021 Moritz Röhrich"
+SPDX-License-Identifier = "0BSD"
+
+[[annotations]]
+path = ["userland/hexdump/LICENSE", "LICENSES/0BSD.txt"]
+SPDX-FileCopyrightText = "2006, 2019 Rob Landley"
+SPDX-License-Identifier = "0BSD"
+[[annotations]]
+path = "userland/patches/tar-absd.patch"
+SPDX-FileCopyrightText = "sbase contributors named in userland/sbase.LICENSE"
+SPDX-License-Identifier = "MIT"

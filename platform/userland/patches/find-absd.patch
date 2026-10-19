@@ -1,0 +1,187 @@
+ABSD per-port patch for sbase 0.1 find (userland/README.md, "Patches").
+
+Failure: find links fork, execvp and waitpid for -exec and -ok,
+clock_gettime for -atime/-ctime/-mtime, and (through libutil/mode.o's
+getumask) umask; the kit refuses fork and exec at link time
+(C-INTERFACE.md 10) and no archive defines clock_gettime or umask
+(userland/DEMAND.tsv: find, unresolved clock_gettime execve fork umask
+waitpid). And every file time is 0 on ABSD (C-INTERFACE.md 11, CPA-012),
+so -atime/-ctime/-mtime/-newer would answer without meaning.
+
+Change, under the controller's D4 ruling (port-local ENOSYS stubs,
+in the port's own patch, disclosed here, in userland/README.md and in
+the CPA catalog; never in the kit or adapter): spawn() becomes a stub
+that fails with ENOSYS, and -exec and -ok are refused while the
+expression is parsed, before any path is visited: status 1,
+"find: -exec: cannot run commands on this system: Function not
+implemented" (or -ok). Both builds, so the host reference pins the
+refusal. With ABSD_NO_MTIME (the ABSD build; temporary until R3 brings
+file times to C) -atime, -ctime, -mtime and -newer are refused the same
+way ("find: -atime/-ctime/-mtime/-newer: file times are not available on
+this system", status 1) and clock_gettime is not called (only those
+primaries read the start time). With ABSD_NO_UMASK (the ABSD build) find
+defines a link-only umask that returns 0 and changes nothing: find calls
+parsemode(str, 0, 0) and never asks for the mask.
+
+Preserved: the traversal is upstream's: lstat/stat, opendir, readdir and
+path concatenation (no *at call; the adapter's opendir holds a snapshot
+and no handle, so depth costs memory, not descriptors), loop detection by
+st_dev/st_ino, and every other primary and operator. Without the ABSD
+defines the time primaries behave as upstream. No adapter or kit change.
+
+--- a/find.c
++++ b/find.c
+@@ -142,6 +142,7 @@
+ static char **get_perm_arg (char *argv[], union extra *extra);
+ static char **get_type_arg (char *argv[], union extra *extra);
+ static char **get_n_arg    (char *argv[], union extra *extra);
++static char **get_time_arg (char *argv[], union extra *extra);
+ static char **get_user_arg (char *argv[], union extra *extra);
+ static char **get_group_arg(char *argv[], union extra *extra);
+ static char **get_size_arg (char *argv[], union extra *extra);
+@@ -184,9 +185,9 @@
+ 	{ "-user"   , pri_user   , get_user_arg , NULL         , 1 },
+ 	{ "-group"  , pri_group  , get_group_arg, NULL         , 1 },
+ 	{ "-size"   , pri_size   , get_size_arg , free_extra   , 1 },
+-	{ "-atime"  , pri_atime  , get_n_arg    , free_extra   , 1 },
+-	{ "-ctime"  , pri_ctime  , get_n_arg    , free_extra   , 1 },
+-	{ "-mtime"  , pri_mtime  , get_n_arg    , free_extra   , 1 },
++	{ "-atime"  , pri_atime  , get_time_arg , free_extra   , 1 },
++	{ "-ctime"  , pri_ctime  , get_time_arg , free_extra   , 1 },
++	{ "-mtime"  , pri_mtime  , get_time_arg , free_extra   , 1 },
+ 	{ "-exec"   , pri_exec   , get_exec_arg , free_exec_arg, 1 },
+ 	{ "-ok"     , pri_ok     , get_ok_arg   , free_ok_arg  , 1 },
+ 	{ "-print"  , pri_print  , get_print_arg, NULL         , 0 },
+@@ -229,29 +230,42 @@
+ /*
+  * Utility
+  */
++
++#ifdef ABSD_NO_UMASK
++/* ABSD (userland/patches/find-absd.patch): a link-only stub. find calls
++ * parsemode(str, 0, 0) and never asks for the mask, but libutil/mode.o,
++ * which parsemode pulls in, also defines getumask(), which names umask;
++ * neither the kit nor the adapter defines umask (no creation mask exists:
++ * the file server chooses modes). Unreachable from find; reports a mask of
++ * 0 and changes nothing. */
++mode_t
++umask(mode_t mask)
++{
++	(void)mask;
++	return 0;
++}
++#endif
++
++/* ABSD (userland/patches/find-absd.patch; controller ruling D4): the
++ * port-local stub that replaces fork/execvp/waitpid. A program holds no
++ * spawn right and the kit refuses fork and exec at link time
++ * (C-INTERFACE.md 10), so spawning fails with ENOSYS. Both builds, so the
++ * reference pins the refusal. */
+ static int
+ spawn(char *argv[])
+ {
+-	pid_t pid;
+-	int status;
++	(void)argv;
++	errno = ENOSYS;
++	return -1;
++}
+ 
+-	/* flush stdout so that -print output always appears before
+-	 * any output from the command and does not get cut-off in
+-	 * the middle of a line. */
+-	fflush(stdout);
+-
+-	switch((pid = fork())) {
+-	case -1:
+-		eprintf("fork:");
+-	case 0:
+-		execvp(*argv, argv);
+-		weprintf("exec %s failed:", *argv);
+-		_exit(1);
+-	}
+-
+-	/* FIXME: proper course of action for waitpid() on EINTR? */
+-	waitpid(pid, &status, 0);
+-	return status;
++/* -exec and -ok are refused while the expression is parsed, before any
++ * path is visited: nothing is printed or evaluated first. */
++static void
++refuse_spawn(const char *primary)
++{
++	if (spawn(NULL) < 0)
++		eprintf("%s: cannot run commands on this system:", primary);
+ }
+ 
+ /*
+@@ -581,8 +595,10 @@
+ {
+ 	char **arg, **new, ***braces;
+ 	int nbraces = 0;
+-	struct execarg *e = extra->p = emalloc(sizeof(*e));
++	struct execarg *e;
+ 
++	refuse_spawn("-exec");
++	e = extra->p = emalloc(sizeof(*e));
+ 	for (arg = argv; *arg; arg++)
+ 		if (!strcmp(*arg, ";"))
+ 			break;
+@@ -627,8 +643,10 @@
+ {
+ 	char **arg, ***braces;
+ 	int nbraces = 0;
+-	struct okarg *o = extra->p = emalloc(sizeof(*o));
++	struct okarg *o;
+ 
++	refuse_spawn("-ok");
++	o = extra->p = emalloc(sizeof(*o));
+ 	for (arg = argv; *arg; arg++)
+ 		if (!strcmp(*arg, ";"))
+ 			break;
+@@ -658,12 +676,34 @@
+ 	return argv;
+ }
+ 
++/* ABSD (userland/patches/find-absd.patch): with ABSD_NO_MTIME (the ABSD
++ * build, while C-INTERFACE.md 11 says no file time reaches a program and
++ * no clock_gettime exists) -atime, -ctime, -mtime and -newer are refused
++ * while the expression is parsed, instead of comparing times that are all
++ * 0. Without it (the reference) they parse as upstream. */
++static void
++refuse_times(void)
++{
++#ifdef ABSD_NO_MTIME
++	eprintf("-atime/-ctime/-mtime/-newer: file times are not available on this system\n");
++#endif
++}
++
++static char **
++get_time_arg(char *argv[], union extra *extra)
++{
++	refuse_times();
++	return get_n_arg(argv, extra);
++}
++
+ /* FIXME: ignoring nanoseconds */
+ static char **
+ get_newer_arg(char *argv[], union extra *extra)
+ {
+ 	struct stat st;
+ 
++	refuse_times();
++
+ 	if (stat(*argv, &st))
+ 		eprintf("failed to stat '%s':", *argv);
+ 
+@@ -1053,8 +1093,11 @@
+ 	if ((argmax = sysconf(_SC_ARG_MAX)) == (size_t)-1)
+ 		argmax = _POSIX_ARG_MAX;
+ 
++#ifndef ABSD_NO_MTIME
++	/* ABSD: only -atime/-ctime/-mtime read start, and they are refused */
+ 	if (clock_gettime(CLOCK_REALTIME, &start) < 0)
+ 		weprintf("clock_gettime() failed:");
++#endif
+ 
+ 	while (npaths--)
+ 		find(*paths++, NULL);

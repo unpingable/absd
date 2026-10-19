@@ -1,0 +1,16 @@
+-Dthread-local-storage=false
+-Dnewlib-global-errno=true
+-Dsingle-thread=true
+-Dstdio-locking=false
+-Dpicocrt=false
+-Dpicocrt-lib=false
+-Denable-malloc=false
+-Dposix-console=true
+-Dformat-default=double
+-Dio-long-long=true
+-Dio-c99-formats=true
+-Dspecsdir=none
+-Dmultilib=false
+-Dtests=false
+-Dsemihost=false
+-Dnewlib-obsolete-math=true

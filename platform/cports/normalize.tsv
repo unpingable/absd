@@ -1,0 +1,35 @@
+# Normalizers (CPORTS-HARNESS.md 4.3): NAME REGEX. The text each match covers,
+# within one line, becomes "<n>" in both streams before comparison. Each is
+# meant to cover only text that varies between runs, and each names the upstream
+# line that prints it. What the harness checks (cports-matrix.py, Linux double
+# run): the two raw Linux runs differ as a whole, their normalized forms are equal,
+# and every pattern matches in both runs. It does not check that each pattern's
+# own span differs between the runs (a span of random 0/1 is often equal by
+# chance, so such a check would be flaky); that each span is variable text is
+# established by the upstream line cited, and reviewed, not tested.
+# lua-5.4.9-tests all.lua:59 random seeds
+lua.all	^random seeds: .*$
+# all.lua:111 memory figures (printed with leading spaces)
+lua.all	---- total memory: .*----$
+# all.lua:146 per-file clock
+lua.all	^time: .*$
+# math.lua:887 and :921: the numbers of the ranges drawn from the run's random seed (found by the
+# harness's Linux double run); applied in order, so each later span sees the earlier <n>
+lua.all	(?<=^float random range in )\d+(?= calls: )
+lua.all	(?<=^float random range in <n> calls: \[)\d+\.\d+(?=, )
+lua.all	(?<=^float random range in <n> calls: \[<n>, )\d+\.\d+(?=\]$)
+lua.all	(?<=^integer random range in )\d+(?= calls: )
+lua.all	(?<=^integer random range in <n> calls: \[minint \+ )\d+(?=ppm, )
+lua.all	(?<=^integer random range in <n> calls: \[minint \+ <n>ppm, maxint - )\d+(?=ppm\]$)
+# constructs.lua:348: GLOB1 = math.random(0, 1) (constructs.lua:317)
+lua.all	(?<=^testing short-circuit optimizations \()[01](?=\)$)
+# sort.lua:256 and :280: per-sort clock, and the comparison count of a randomly filled array
+lua.all	(?<= elements in )[0-9.]+(?= msec\.)
+lua.all	(?<=, with )[0-9]+(?= comparisons$)
+# Not listed while sessions have no PATH (A20; all.lua stops at files.lua:8, so neither line is
+# printed, and an unmatched pattern fails the run): all.lua:270 `^total time: .*$` and
+# files.lua:947 `^test done on .*$`. They return with the final OK expectation (CPA-037).
+# speedtest1.c timing column with its right-aligned padding (speedtest1.c:462 and :474, "%4d.%03ds", whose leading spaces shrink as
+# the time grows; the test names and dots before it are compared)
+sqlite.speedtest1-5	 +[0-9]+\.[0-9]+s$
+sqlite.speedtest1-20	 +[0-9]+\.[0-9]+s$

@@ -268,8 +268,12 @@ A read-only view is not enough once a session must write, and two
 processes that each link the filesystem library over one writable device
 destroy it (the platform's lane-D measurements: lost updates, block
 aliasing, unmountable superblock pairs). So in an `fsd` durable boot
-exactly one process, the file server, holds the read-write block handle,
-and everything else reaches storage through it over pipes. The kernel
+the file server is the active filesystem writer, and clients reach storage
+through it over pipes. Init retains its read-write block handle and NIC
+handle. In a served boot it regrants the block handle to the file server's
+finalize run after the original server ends and the orderly drain succeeds.
+Exclusive writing depends on this trusted init sequence; it is not a
+kernel-enforced single-holder rule (audit B4; REPAIR.md section 7). The kernel
 knows nothing of files here either: it provides pipes, the handle rights
 on them, and `pipe_info`.
 
@@ -309,7 +313,16 @@ channel's holder (sshd) binds a slot to a session's mounts (`BIND slot
 slot's ends, and releases it (`RELEASE slot`) once that process has ended;
 the server refuses any binding that includes `/ssh`. A session process
 may bind one of its spares for a child, with its own mounts or fewer
-(`DERIVE`); authority only narrows.
+(`DERIVE`). An explicit list must grant no more effective read/write access
+at any path than the parent's longest matching mount: dropping a nested
+read-only carve-out under a wider writable mount is refused. A broader
+read-only overlay or a narrower subtree is allowed.
+
+For namespace changes, a channel cannot rename either endpoint or remove a
+directory that is a strict ancestor of one of its mounts (`-16`, busy).
+This prevents the channel moving a nested read-only carve-out into a wider
+writable mount. These are pathname permissions: another channel with wider
+authority retains its own rights, and no object-identity binding is implied.
 
 **Recycling a slot, and why `pipe_info` exists.** A slot must never carry
 one session's authority to a process an earlier session started (an
@@ -340,9 +353,9 @@ while no process but the keeper holds an end with a right, none can come
 to hold one. Handles reach a process only at spawn, copied from its
 parent's table with no more rights than the parent's handle (`duplicate`
 cannot widen either), so a new holder needs a live holder with the right,
-which the count already includes; a child still being built and a child
-that ended but is not yet reaped count too (handles are released at
-reap). Both pipes are counted, each for the right that uses it (write
+which the count already includes; a child still being built counts too; a
+child that ended has already released its handles (they are released at
+termination, not at the parent's `wait`). Both pipes are counted, each for the right that uses it (write
 on the request pipe, read on the reply pipe), so a process that kept only
 one of the two ends is still seen. Two limits follow from counting
 handles, not naming holders. A rights-less duplicate is not counted and
@@ -373,6 +386,22 @@ through the worker's own exit, which is a request to init:
 | exit 0 | halt requested: the orderly end below |
 | exit `SERVED_WORKER_RESTART_STATUS` (98) | restart requested: the orderly end below |
 | any other exit, a fault, a kill after the generation is ready | fault during service: init attempts bounded service stop and child reap, reports pre-reset residue, then requests a whole-machine recovery reset while the generation's recovery streak is under the budget (below), and stops the machine with code 20 at the budget |
+| the worker's or the file server's liveness cell unchanged for `SERVED_LIVENESS_TICKS` (60 000) after the generation is ready | the same fault path, named `served worker unresponsive` or `file server unresponsive` after one `SERVED LIVENESS STALE component=<sshd|fsd> idle_ticks= bound= sshd_idle_ticks= fsd_idle_ticks=` line; the file server is named when both are stale (docs/service-lifecycle-20261008/LIVENESS.md) |
+
+In a served boot init also creates one kernel cell per essential service
+before starting either, and hands each service a copy with read and write
+rights through startup-record role 18 (`ROLE_LIVENESS`, docs/BROKER.md).
+The services transition their cell once per loop pass. Once the generation
+is ready, init reads both cells in its orphan-reap pass (every
+`ORPHAN_REAP_TICKS`) and judges them with `program::ServedLiveness`: a
+cell unchanged for the bound is the service's fault above; an interval
+longer than `SERVED_LIVENESS_GAP_TICKS` between two of init's own passes
+(init itself did not run: a stopped guest, a device wait inside the kernel)
+prints `SERVED LIVENESS GAP ticks=` and is not judged. Before readiness
+nothing is judged. Init releases both cells at the orderly end, so the
+end-of-boot accounting is unchanged. The judgment is init's and uses
+nothing new in the kernel; the contract and its qualification are in
+docs/service-lifecycle-20261008/LIVENESS.md.
 
 An orderly end begins once init has reaped the worker's exit 0 or 98:
 init records the request at that moment, so a failure after it (in init's

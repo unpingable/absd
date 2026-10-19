@@ -984,3 +984,837 @@ fn listener_rebind_keeps_table_bounded_and_handles_spent() {
         assert_eq!(server.listener_count(), slots, "round {round}");
     }
 }
+
+struct SwitchState {
+    now_ms: u64,
+    reading: Option<LinkReading>,
+    reads: u64,
+}
+
+/// A link whose `nic_info` reading the test sets; `None` is a refused read.
+struct SwitchLink(Rc<RefCell<SwitchState>>);
+
+impl Link for SwitchLink {
+    fn mac(&self) -> [u8; 6] {
+        [2, 0, 0, 0, 0, 10]
+    }
+
+    fn send(&mut self, _frame: &[u8]) -> Result<(), i64> {
+        Ok(())
+    }
+
+    fn receive(
+        &mut self,
+        _buffer: &mut [u8; FRAME_MAX],
+        _timeout_ms: u64,
+    ) -> Result<Option<usize>, i64> {
+        Ok(None)
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.0.borrow().now_ms
+    }
+
+    fn pause(&self, ms: u64) {
+        self.0.borrow_mut().now_ms += ms;
+    }
+
+    fn read(&self) -> Option<LinkReading> {
+        let mut state = self.0.borrow_mut();
+        state.reads += 1;
+        state.reading
+    }
+}
+
+fn reading(link_up: bool, disabled: bool, rx_missed: u64) -> Option<LinkReading> {
+    Some(LinkReading {
+        link_up,
+        disabled,
+        rx_missed,
+    })
+}
+
+fn switch(first: Option<LinkReading>) -> (Rc<RefCell<SwitchState>>, Stack<SwitchLink>, NetWatch) {
+    let state = Rc::new(RefCell::new(SwitchState {
+        now_ms: 1,
+        reading: first,
+        reads: 0,
+    }));
+    (
+        state.clone(),
+        Stack::open(SwitchLink(state), dead_config()).unwrap(),
+        NetWatch::new(),
+    )
+}
+
+#[test]
+fn first_reading_reports_and_transitions_report_once() {
+    let (state, stack, mut watch) = switch(reading(false, false, 0));
+    assert!(watch.observe(&stack));
+    assert_eq!(
+        watch.fields(&stack),
+        "link=down disabled=0 rx_missed=0 link_errors=0"
+    );
+    assert!(!watch.observe(&stack));
+    state.borrow_mut().reading = reading(true, false, 0);
+    assert!(watch.observe(&stack));
+    assert_eq!(
+        (watch.carrier(), watch.fields(&stack).as_str()),
+        (Carrier::Up, "link=up disabled=0 rx_missed=0 link_errors=0")
+    );
+}
+
+#[test]
+fn counter_change_alone_is_silent() {
+    let (state, stack, mut watch) = switch(reading(true, false, 0));
+    watch.observe(&stack);
+    state.borrow_mut().reading = reading(true, false, 7);
+    assert!(!watch.observe(&stack));
+    assert_eq!(
+        watch.fields(&stack),
+        "link=up disabled=0 rx_missed=7 link_errors=0"
+    );
+}
+
+#[test]
+fn failed_read_is_unknown_not_disabled() {
+    let (state, stack, mut watch) = switch(reading(true, false, 3));
+    watch.observe(&stack);
+    state.borrow_mut().reading = None;
+    assert!(watch.observe(&stack));
+    assert_eq!(watch.carrier(), Carrier::Unknown);
+    assert!(
+        !watch.disabled(),
+        "a refused read is never the disabled latch"
+    );
+    assert_eq!(
+        watch.fields(&stack),
+        "link=unknown disabled=unknown rx_missed=3 link_errors=0"
+    );
+    assert!(
+        !watch.observe(&stack),
+        "unknown is printed once, not per sample"
+    );
+    state.borrow_mut().reading = reading(true, false, 3);
+    assert!(watch.observe(&stack));
+}
+
+#[test]
+fn disabled_reading_is_reported_and_latched() {
+    let (state, stack, mut watch) = switch(reading(true, false, 0));
+    watch.observe(&stack);
+    state.borrow_mut().reading = reading(false, true, 0);
+    assert!(watch.observe(&stack) && watch.disabled());
+    assert_eq!(
+        watch.fields(&stack),
+        "link=down disabled=1 rx_missed=0 link_errors=0"
+    );
+}
+
+#[test]
+fn sample_is_time_gated() {
+    let (state, stack, mut watch) = switch(reading(true, false, 0));
+    assert!(watch.sample(&stack));
+    state.borrow_mut().now_ms += NET_SAMPLE_MS - 1;
+    assert!(!watch.sample(&stack));
+    assert_eq!(
+        state.borrow().reads,
+        1,
+        "no read before the sample period ends"
+    );
+    state.borrow_mut().now_ms += 1;
+    watch.sample(&stack);
+    assert_eq!(state.borrow().reads, 2);
+}
+
+#[test]
+fn flap_inside_one_sample_prints_nothing() {
+    let (state, stack, mut watch) = switch(reading(true, false, 0));
+    watch.sample(&stack);
+    state.borrow_mut().reading = reading(false, false, 0);
+    state.borrow_mut().now_ms += 50;
+    assert!(!watch.sample(&stack));
+    assert_eq!(
+        state.borrow().reads,
+        1,
+        "+50 ms is inside the sample period: the down reading is never read"
+    );
+    state.borrow_mut().reading = reading(true, false, 0);
+    state.borrow_mut().now_ms += NET_SAMPLE_MS;
+    assert!(
+        !watch.sample(&stack),
+        "carrier is up again at the next sample: no transition"
+    );
+}
+
+#[test]
+fn fresh_marker_distinguishes_unchanged_read_from_cached_flags() {
+    let (state, stack, mut watch) = switch(reading(true, false, 0));
+    assert_eq!(watch.sample_fresh(&stack), Some(true));
+    assert_eq!(watch.sample_fresh(&stack), None);
+    state.borrow_mut().now_ms += NET_SAMPLE_MS;
+    assert_eq!(watch.sample_fresh(&stack), Some(false));
+    assert_eq!(state.borrow().reads, 2);
+    assert_eq!(watch.disabled_reading(), Some(false));
+    state.borrow_mut().reading = None;
+    state.borrow_mut().now_ms += NET_SAMPLE_MS;
+    assert_eq!(watch.sample_fresh(&stack), Some(true));
+    assert_eq!(watch.carrier(), Carrier::Unknown);
+    assert_eq!(watch.disabled_reading(), None);
+    assert_eq!(watch.sample_fresh(&stack), None);
+}
+
+#[test]
+fn info_record_parses_flags_and_rx_missed() {
+    let mut info = [0u8; INFO_BYTES];
+    info[6..8].copy_from_slice(&3u16.to_le_bytes());
+    info[24..32].copy_from_slice(&41u64.to_le_bytes());
+    assert_eq!(
+        reading_from_info(&info),
+        LinkReading {
+            link_up: true,
+            disabled: true,
+            rx_missed: 41
+        }
+    );
+    info[6..8].copy_from_slice(&0u16.to_le_bytes());
+    assert_eq!(
+        reading_from_info(&info),
+        LinkReading {
+            link_up: false,
+            disabled: false,
+            rx_missed: 41
+        }
+    );
+}
+
+struct CarrierState {
+    now_ms: u64,
+    /// Sends still to refuse with `NIC_NO_CARRIER`; then sends succeed.
+    refuse: u64,
+    sends: u64,
+}
+
+/// A link whose sends the kernel refuses for lack of carrier `refuse`
+/// times (the NIC stays enabled), then accepts.
+struct CarrierLink(Rc<RefCell<CarrierState>>);
+
+impl Link for CarrierLink {
+    fn mac(&self) -> [u8; 6] {
+        [2, 0, 0, 0, 0, 11]
+    }
+
+    fn send(&mut self, _frame: &[u8]) -> Result<(), i64> {
+        let mut state = self.0.borrow_mut();
+        state.sends += 1;
+        if state.refuse > 0 {
+            state.refuse -= 1;
+            Err(NIC_NO_CARRIER)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn receive(
+        &mut self,
+        _buffer: &mut [u8; FRAME_MAX],
+        _timeout_ms: u64,
+    ) -> Result<Option<usize>, i64> {
+        Ok(None)
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.0.borrow().now_ms
+    }
+
+    fn pause(&self, ms: u64) {
+        self.0.borrow_mut().now_ms += ms;
+    }
+}
+
+fn carrier(refuse: u64) -> (Rc<RefCell<CarrierState>>, Stack<CarrierLink>, NetWatch) {
+    let state = Rc::new(RefCell::new(CarrierState {
+        now_ms: 1,
+        refuse,
+        sends: 0,
+    }));
+    (
+        state.clone(),
+        Stack::open(CarrierLink(state), dead_config()).unwrap(),
+        NetWatch::new(),
+    )
+}
+
+fn raw_frame() -> [u8; 60] {
+    let mut frame = [0u8; 60];
+    frame[..6].fill(0xff);
+    frame[12..14].copy_from_slice(&[0x88, 0xb5]);
+    frame
+}
+
+#[test]
+fn no_carrier_refusals_are_counted_and_the_hold_clears_on_the_next_send() {
+    let (_state, mut stack, mut watch) = carrier(3);
+    assert!(!watch.tx_changed(&stack), "no line before any send: the hold starts clear");
+    for _ in 0..3 {
+        assert_eq!(stack.raw_send(&raw_frame()), Err(NetError::Nic(NIC_NO_CARRIER)));
+    }
+    let stats = stack.stats();
+    assert_eq!(
+        (stats.no_carrier, stats.link_errors, stats.last_error, stats.tx_held),
+        (3, 3, -100, true)
+    );
+    assert!(watch.tx_changed(&stack));
+    assert_eq!(watch.tx_fields(&stack), "held=1 no_carrier=3");
+    assert!(!watch.tx_changed(&stack), "one line per transition");
+    stack.raw_send(&raw_frame()).unwrap();
+    assert!(!stack.stats().tx_held);
+    assert!(watch.tx_changed(&stack));
+    assert_eq!(watch.tx_fields(&stack), "held=0 no_carrier=3");
+    assert!(!watch.tx_changed(&stack));
+}
+
+#[test]
+fn a_device_refusal_is_not_a_carrier_hold() {
+    let state = Rc::new(RefCell::new(DeadState {
+        now_ms: 1,
+        pauses: Vec::new(),
+    }));
+    let mut stack = Stack::open(DeadLink(state), dead_config()).unwrap();
+    let mut watch = NetWatch::new();
+    assert_eq!(stack.raw_send(&raw_frame()), Err(NetError::Nic(-5)));
+    let stats = stack.stats();
+    assert_eq!((stats.no_carrier, stats.tx_held, stats.last_error), (0, false, -5));
+    assert!(!watch.tx_changed(&stack), "-5 is the disabled latch's business, not a hold");
+}
+
+#[test]
+fn smoltcp_sends_refused_for_carrier_set_the_hold() {
+    let (state, mut stack, mut watch) = carrier(1_000);
+    let _connection = stack
+        .connect(Ipv4Address::new(10, 0, 2, 15), 7000, 40040)
+        .unwrap();
+    stack.poll();
+    let stats = stack.stats();
+    assert!(stats.no_carrier >= 1 && stats.tx_held, "{stats:?}");
+    assert_eq!(stats.no_carrier, stats.link_errors);
+    assert!(state.borrow().sends <= 2, "a refused send is a dropped frame, never a retry loop");
+    assert!(watch.tx_changed(&stack));
+}
+
+/// A link whose sends return the scripted results in order, then succeed.
+struct ScriptLink(Rc<RefCell<(u64, VecDeque<Result<(), i64>>)>>);
+
+impl Link for ScriptLink {
+    fn mac(&self) -> [u8; 6] {
+        [2, 0, 0, 0, 0, 12]
+    }
+
+    fn send(&mut self, _frame: &[u8]) -> Result<(), i64> {
+        self.0.borrow_mut().1.pop_front().unwrap_or(Ok(()))
+    }
+
+    fn receive(
+        &mut self,
+        _buffer: &mut [u8; FRAME_MAX],
+        _timeout_ms: u64,
+    ) -> Result<Option<usize>, i64> {
+        Ok(None)
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.0.borrow().0
+    }
+
+    fn pause(&self, ms: u64) {
+        self.0.borrow_mut().0 += ms;
+    }
+}
+
+#[test]
+fn a_refusal_other_than_no_carrier_clears_the_hold_so_a_later_hold_prints_again() {
+    let script = VecDeque::from([
+        Err(NIC_NO_CARRIER),
+        Err(-5),
+        Err(NIC_NO_CARRIER),
+        Ok(()),
+    ]);
+    let mut stack = Stack::open(ScriptLink(Rc::new(RefCell::new((1, script)))), dead_config())
+        .unwrap();
+    let mut watch = NetWatch::new();
+    assert_eq!(stack.raw_send(&raw_frame()), Err(NetError::Nic(NIC_NO_CARRIER)));
+    assert!(watch.tx_changed(&stack));
+    assert_eq!(watch.tx_fields(&stack), "held=1 no_carrier=1");
+    // The NIC disabled itself: the kernel holds no descriptor for it now.
+    assert_eq!(stack.raw_send(&raw_frame()), Err(NetError::Nic(-5)));
+    assert!(!stack.stats().tx_held);
+    assert!(watch.tx_changed(&stack));
+    assert_eq!(watch.tx_fields(&stack), "held=0 no_carrier=1");
+    // Re-enabled, and the carrier is still absent: the hold prints again.
+    assert_eq!(stack.raw_send(&raw_frame()), Err(NetError::Nic(NIC_NO_CARRIER)));
+    assert!(watch.tx_changed(&stack));
+    assert_eq!(watch.tx_fields(&stack), "held=1 no_carrier=2");
+    // The held descriptor completed; the next send is accepted.
+    stack.raw_send(&raw_frame()).unwrap();
+    assert!(watch.tx_changed(&stack));
+    assert_eq!(watch.tx_fields(&stack), "held=0 no_carrier=2");
+    assert!(!watch.tx_changed(&stack));
+}
+
+fn udp_grant(port: u16, last: u8, peer_port: u16) -> datagram::Grant {
+    datagram::Grant {
+        local_port: port,
+        peer: datagram::Address {
+            ip: [10, 0, 2, last],
+            port: peer_port,
+        },
+    }
+}
+
+#[test]
+fn udp_empty_maximum_oversize_and_short_receive_preserve_boundaries() {
+    use datagram::*;
+    let (wire, mut a, mut b) = pair(0);
+    let ga = udp_grant(7002, 2, 40000);
+    let gb = udp_grant(40000, 15, 7002);
+    let ea = a.datagram_bind(ga).unwrap();
+    let eb = b.datagram_bind(gb).unwrap();
+    let mut out = [0; MAX_DATAGRAM];
+    for size in [0, 1, MAX_DATAGRAM] {
+        let data: Vec<u8> = (0..size).map(pattern).collect();
+        b.datagram_send(eb, gb.peer, &data).unwrap();
+        for _ in 0..20 {
+            step(&wire, &mut a, &mut b);
+        }
+        if size > 0 {
+            assert_eq!(
+                a.datagram_receive(ea, &mut []),
+                Err(Error::TooSmall { needed: size })
+            );
+        }
+        assert_eq!(a.datagram_receive(ea, &mut out), Ok((size, ga.peer)));
+        assert_eq!(&out[..size], data);
+        assert_eq!(a.datagram_receive(ea, &mut out), Err(Error::Again));
+    }
+    assert_eq!(
+        a.datagram_send(ea, ga.peer, &[0; MAX_DATAGRAM + 1]),
+        Err(Error::Oversize)
+    );
+    let other = Address {
+        port: 40001,
+        ..ga.peer
+    };
+    assert_eq!(a.datagram_send(ea, other, b"denied"), Err(Error::Denied));
+}
+
+#[test]
+fn udp_grants_capacity_collision_rebind_and_service_instances() {
+    use datagram::*;
+    let (_, mut a, mut b) = pair(0);
+    let grant = udp_grant(7002, 2, 40000);
+    let old = a.datagram_bind(grant).unwrap();
+    assert_eq!(a.datagram_bind(grant), Err(Error::InUse));
+    assert_eq!(b.datagram_close(old), Err(Error::Stale));
+    for port in 7003..7003 + MAX_ENDPOINTS as u16 - 1 {
+        a.datagram_bind(udp_grant(port, 2, 40000)).unwrap();
+    }
+    assert_eq!(
+        a.datagram_bind(udp_grant(8000, 2, 40000)),
+        Err(Error::Exhausted)
+    );
+    a.datagram_close(old).unwrap();
+    let new = a.datagram_bind(grant).unwrap();
+    assert_eq!(a.datagram_close(old), Err(Error::Stale));
+    assert_eq!(a.datagram_send(old, grant.peer, b"old"), Err(Error::Stale));
+    a.datagram_fence();
+    assert_eq!(a.socket_count(), 0);
+    assert_eq!(a.datagram_receive(new, &mut [0; 10]), Err(Error::Stale));
+    for _ in 0..40 {
+        let fresh = a.datagram_bind(grant).unwrap();
+        a.datagram_close(fresh).unwrap();
+    }
+    for grant in [
+        udp_grant(53, 2, 53),
+        udp_grant(7002, 2, 0),
+        udp_grant(7002, 255, 53),
+        udp_grant(7002, 0, 53),
+        udp_grant(7002, 15, 53),
+        Grant {
+            peer: Address {
+                ip: [224, 0, 0, 1],
+                port: 53,
+            },
+            ..grant
+        },
+    ] {
+        assert_eq!(a.datagram_bind(grant), Err(Error::Denied));
+    }
+}
+
+#[test]
+fn udp_tx_and_rx_exhaustion_are_bounded_and_close_discards_queued_tx() {
+    use datagram::*;
+    let (wire, mut a, mut b) = pair(0);
+    let ga = udp_grant(7002, 2, 40000);
+    let gb = udp_grant(40000, 15, 7002);
+    let ea = a.datagram_bind(ga).unwrap();
+    let eb = b.datagram_bind(gb).unwrap();
+    for n in 0..QUEUE_PACKETS {
+        b.datagram_send(eb, gb.peer, &[n as u8]).unwrap();
+    }
+    assert_eq!(
+        b.datagram_send(eb, gb.peer, b"extra"),
+        Err(Error::Exhausted)
+    );
+    for _ in 0..20 {
+        step(&wire, &mut a, &mut b);
+    }
+    // More data reaches a full receive queue; it is dropped whole.
+    b.datagram_send(eb, gb.peer, b"drop").unwrap();
+    for _ in 0..20 {
+        step(&wire, &mut a, &mut b);
+    }
+    for n in 0..QUEUE_PACKETS {
+        let mut data = [0; 10];
+        assert_eq!(a.datagram_receive(ea, &mut data), Ok((1, ga.peer)));
+        assert_eq!(data[0], n as u8);
+    }
+    assert_eq!(a.datagram_receive(ea, &mut [0; 10]), Err(Error::Again));
+    b.datagram_send(eb, gb.peer, b"discard").unwrap();
+    b.datagram_close(eb).unwrap();
+    for _ in 0..20 {
+        step(&wire, &mut a, &mut b);
+    }
+    assert_eq!(a.datagram_receive(ea, &mut [0; 10]), Err(Error::Again));
+}
+
+fn independent_checksum(bytes: &[u8]) -> u16 {
+    let mut sum = 0u32;
+    for pair in bytes.chunks(2) {
+        sum += ((pair[0] as u32) << 8) | pair.get(1).copied().unwrap_or(0) as u32;
+    }
+    while sum > 65535 {
+        sum = (sum & 65535) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+// Independent RFC 791/768 fixture; no smoltcp packet encoder/parser.
+fn udp_frame(source_port: u16, body: &[u8]) -> Vec<u8> {
+    let mut udp = Vec::new();
+    udp.extend_from_slice(&source_port.to_be_bytes());
+    udp.extend_from_slice(&7002u16.to_be_bytes());
+    udp.extend_from_slice(&((8 + body.len()) as u16).to_be_bytes());
+    udp.extend_from_slice(&[0, 0]); // IPv4 permits an absent UDP checksum.
+    udp.extend_from_slice(body);
+    let mut frame = vec![2, 0, 0, 0, 0, 15, 2, 0, 0, 0, 0, 2, 8, 0];
+    let mut ip = vec![0x45, 0];
+    ip.extend_from_slice(&((20 + udp.len()) as u16).to_be_bytes());
+    ip.extend_from_slice(&[0, 1, 0x40, 0, 64, 17, 0, 0, 10, 0, 2, 2, 10, 0, 2, 15]);
+    let checksum = independent_checksum(&ip);
+    ip[10..12].copy_from_slice(&checksum.to_be_bytes());
+    frame.extend_from_slice(&ip);
+    frame.extend_from_slice(&udp);
+    frame
+}
+
+#[test]
+fn udp_independent_malformed_lengths_checksums_fragment_and_unauthorized_source() {
+    use datagram::*;
+    let (wire, mut a, _) = pair(0);
+    let grant = udp_grant(7002, 2, 40000);
+    let endpoint = a.datagram_bind(grant).unwrap();
+    let good = udp_frame(40000, b"reference");
+    let mut fixtures = Vec::new();
+    fixtures.push(good[..24].to_vec());
+    let mut f = good.clone();
+    f[14] = 0x44;
+    fixtures.push(f);
+    let mut f = good.clone();
+    f[24] ^= 1;
+    fixtures.push(f);
+    let mut f = good.clone();
+    f[38..40].copy_from_slice(&7u16.to_be_bytes());
+    fixtures.push(f);
+    let mut f = good.clone();
+    f[38..40].copy_from_slice(&200u16.to_be_bytes());
+    fixtures.push(f);
+    let mut f = good.clone();
+    f[40..42].copy_from_slice(&1u16.to_be_bytes());
+    fixtures.push(f);
+    let mut f = good.clone();
+    f[20] = 0x20;
+    f[24..26].fill(0);
+    let c = independent_checksum(&f[14..34]);
+    f[24..26].copy_from_slice(&c.to_be_bytes());
+    fixtures.push(f);
+    fixtures.push(udp_frame(40001, b"wrong peer port"));
+    let mut f = good.clone();
+    f[29] = 3;
+    f[24..26].fill(0);
+    let c = independent_checksum(&f[14..34]);
+    f[24..26].copy_from_slice(&c.to_be_bytes());
+    fixtures.push(f);
+    for f in fixtures {
+        wire.borrow_mut().queues[0].push_back(f);
+        a.poll();
+        assert_eq!(
+            a.datagram_receive(endpoint, &mut [0; MAX_DATAGRAM]),
+            Err(Error::Again)
+        );
+    }
+    wire.borrow_mut().queues[0].push_back(good);
+    a.poll();
+    let mut out = [0; MAX_DATAGRAM];
+    assert_eq!(a.datagram_receive(endpoint, &mut out), Ok((9, grant.peer)));
+    assert_eq!(&out[..9], b"reference");
+}
+
+fn udp_request(op: u8, peer: datagram::Address, bytes: &[u8], capacity: usize) -> Vec<u8> {
+    let mut r = vec![1, op, 0, 0];
+    r.extend_from_slice(&peer.ip);
+    r.extend_from_slice(&peer.port.to_be_bytes());
+    r.extend_from_slice(
+        &(if op == datagram::SEND {
+            bytes.len()
+        } else {
+            capacity
+        } as u16)
+            .to_be_bytes(),
+    );
+    r.extend_from_slice(bytes);
+    r
+}
+
+#[test]
+fn udp_channel_request_cannot_select_or_expand_another_clients_grant() {
+    use datagram::*;
+    let (_, mut a, _) = pair(0);
+    let mut one = Session::grant(&mut a, udp_grant(7002, 2, 40000)).unwrap();
+    let mut two = Session::grant(&mut a, udp_grant(7003, 2, 40001)).unwrap();
+    let mut reply = [0; MAX_MESSAGE];
+    let foreign = udp_request(SEND, udp_grant(7003, 2, 40001).peer, b"foreign", 0);
+    assert_eq!(one.request(&mut a, &foreign, &mut reply), 12);
+    assert_eq!(reply[2], Error::Denied.code());
+    assert_eq!(two.request(&mut a, &foreign, &mut reply), 12);
+    assert_eq!(reply[2], 0);
+    for n in 0..12 {
+        one.request(&mut a, &foreign[..n], &mut reply);
+        assert_eq!(reply[2], Error::Invalid.code());
+    }
+    let mut invalid = foreign.clone();
+    invalid[2] = 1;
+    two.request(&mut a, &invalid, &mut reply);
+    assert_eq!(reply[2], Error::Invalid.code());
+    one.revoke(&mut a);
+    one.request(
+        &mut a,
+        &udp_request(SEND, udp_grant(7002, 2, 40000).peer, b"old", 0),
+        &mut reply,
+    );
+    assert_eq!(reply[2], Error::Stale.code());
+    two.request(&mut a, &foreign, &mut reply);
+    assert_eq!(reply[2], 0);
+}
+
+struct TestPipe {
+    input: VecDeque<u8>,
+    output: Vec<u8>,
+    now: u64,
+    eof: bool,
+    block: bool,
+}
+impl datagram::channel::Pipe for TestPipe {
+    fn read(&mut self, b: &mut [u8]) -> Result<Option<usize>, i64> {
+        if self.input.is_empty() {
+            return if self.eof { Ok(Some(0)) } else { Ok(None) };
+        }
+        b[0] = self.input.pop_front().unwrap();
+        Ok(Some(1))
+    }
+    fn write(&mut self, b: &[u8]) -> Result<Option<usize>, i64> {
+        if self.block {
+            return Ok(None);
+        }
+        self.output.push(b[0]);
+        Ok(Some(1))
+    }
+    fn now_ms(&self) -> u64 {
+        self.now
+    }
+}
+
+#[test]
+fn udp_channel_partial_messages_eof_slow_reader_and_revocation() {
+    use datagram::*;
+    let (_, mut a, _) = pair(0);
+    let grant = udp_grant(7002, 2, 40000);
+    for mode in 0..4 {
+        let mut channel = channel::Channel::grant(&mut a, grant).unwrap();
+        let request = udp_request(SEND, grant.peer, b"one", 0);
+        let mut input = VecDeque::from((request.len() as u16).to_be_bytes().to_vec());
+        input.extend(request);
+        let mut pipe = TestPipe {
+            input,
+            output: Vec::new(),
+            now: 0,
+            eof: false,
+            block: false,
+        };
+        if mode == 0 {
+            for _ in 0..40 {
+                channel.poll(&mut a, &mut pipe);
+            }
+            assert_eq!(
+                &pipe.output[..],
+                &[0, 12, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            );
+            pipe.eof = true;
+            assert!(!channel.poll(&mut a, &mut pipe));
+        } else if mode == 1 {
+            channel.poll(&mut a, &mut pipe); // partial prefix
+            pipe.now = 250;
+            assert!(!channel.poll(&mut a, &mut pipe));
+        } else if mode == 2 {
+            pipe.input = VecDeque::from(vec![0xff, 0xff]);
+            channel.poll(&mut a, &mut pipe);
+            assert!(!channel.poll(&mut a, &mut pipe));
+        } else {
+            pipe.block = true;
+            for _ in 0..30 {
+                channel.poll(&mut a, &mut pipe);
+            }
+            pipe.now = 250;
+            assert!(!channel.poll(&mut a, &mut pipe));
+        }
+        assert_eq!(a.socket_count(), 0);
+    }
+}
+
+#[test]
+fn udp_carrier_unknown_device_failure_fence_and_tcp_without_udp_does_not_sample() {
+    use datagram::*;
+    let state = Rc::new(RefCell::new(SwitchState {
+        now_ms: 0,
+        reading: reading(true, false, 0),
+        reads: 0,
+    }));
+    let mut stack = Stack::open(SwitchLink(state.clone()), dead_config()).unwrap();
+    stack.poll();
+    assert_eq!(
+        state.borrow().reads,
+        0,
+        "TCP-only poll gained NIC observation calls"
+    );
+    let grant = udp_grant(7002, 2, 40000);
+    for (reading, error) in [
+        (reading(false, false, 0), Error::LinkDown),
+        (None, Error::LinkUnknown),
+        (reading(true, true, 0), Error::DeviceFailed),
+    ] {
+        state.borrow_mut().reading = super::tests::reading(true, false, 0);
+        let endpoint = stack.datagram_bind(grant).unwrap();
+        state.borrow_mut().reading = reading;
+        assert_eq!(stack.datagram_send(endpoint, grant.peer, b"x"), Err(error));
+        stack.poll();
+        state.borrow_mut().reading = super::tests::reading(true, false, 0);
+        assert_eq!(
+            stack.datagram_send(endpoint, grant.peer, b"old"),
+            Err(Error::Stale)
+        );
+        assert_eq!(stack.socket_count(), 0);
+    }
+}
+
+#[test]
+fn udp_emitted_ipv4_udp_checksums_ports_lengths_and_bytes_match_independent_control() {
+    use datagram::*;
+    let (wire,mut a,mut b)=pair(0);
+    let ga=udp_grant(7002,2,40000);let gb=udp_grant(40000,15,7002);
+    let ea=a.datagram_bind(ga).unwrap();let eb=b.datagram_bind(gb).unwrap();
+    b.datagram_send(eb,gb.peer,b"learn").unwrap();
+    for _ in 0..20 {step(&wire,&mut a,&mut b);}
+    a.datagram_receive(ea,&mut [0;10]).unwrap();
+    for length in [0,1,MAX_DATAGRAM] {
+        let data:Vec<u8>=(0..length).map(pattern).collect();
+        b.datagram_send(eb,gb.peer,&data).unwrap();b.poll();
+        let frame=wire.borrow_mut().queues[0].pop_front().unwrap();
+        assert_eq!(&frame[12..14],&[8,0]);assert_eq!(frame[14],0x45);
+        assert_eq!(independent_checksum(&frame[14..34]),0);
+        assert_eq!(&frame[26..34],&[10,0,2,2,10,0,2,15]);
+        assert_eq!(&frame[34..38],&[0x9c,0x40,0x1b,0x5a]);
+        assert_eq!(u16::from_be_bytes([frame[16],frame[17]]) as usize,28+length);
+        assert_eq!(u16::from_be_bytes([frame[38],frame[39]]) as usize,8+length);
+        let mut pseudo=frame[26..34].to_vec();pseudo.extend_from_slice(&[0,17]);
+        pseudo.extend_from_slice(&frame[38..40]);pseudo.extend_from_slice(&frame[34..42+length]);
+        assert_eq!(independent_checksum(&pseudo),0);
+        assert_eq!(&frame[42..42+length],&data);
+    }
+}
+
+mod stream_cases { include!("stream/tests.rs"); }
+
+mod icmp_cases { include!("icmp/tests.rs"); }
+
+mod server_cases {
+    include!("stream/server_tests.rs");
+}
+
+#[test]
+fn reused_tx_buffer_cannot_supply_icmpv4_unused_fields_after_udp_retirement() {
+    for fence in [false, true] {
+        let (wire, mut local, mut peer) = pair(0);
+        let local_grant = udp_grant(7002, 2, 40000);
+        let peer_grant = udp_grant(40000, 15, 7002);
+        let local_endpoint = local.datagram_bind(local_grant).unwrap();
+        let peer_endpoint = peer.datagram_bind(peer_grant).unwrap();
+        peer.datagram_send(peer_endpoint, peer_grant.peer, b"learn")
+            .unwrap();
+        for _ in 0..20 {
+            step(&wire, &mut local, &mut peer);
+        }
+        local
+            .datagram_receive(local_endpoint, &mut [0; 16])
+            .unwrap();
+
+        // Exercise the real engine and actual reusable owner TX buffer. The
+        // first packet puts a nonzero UDP length/checksum at the later ICMP
+        // unused-word offset; no test writes into the private TX buffer.
+        local
+            .datagram_send(local_endpoint, local_grant.peer, &[0x5a; 129])
+            .unwrap();
+        local.poll();
+        let previous = wire.borrow_mut().queues[1].pop_front().unwrap();
+        assert_eq!(previous[23], 17);
+        assert_eq!(u16::from_be_bytes([previous[38], previous[39]]), 137);
+        assert_ne!(&previous[38..42], &[0; 4]);
+
+        peer.datagram_send(peer_endpoint, peer_grant.peer, b"queued-before-retire")
+            .unwrap();
+        peer.poll();
+        let submitted = wire.borrow().queues[0].front().unwrap().clone();
+        if fence {
+            local.datagram_fence();
+        } else {
+            local.datagram_close(local_endpoint).unwrap();
+        }
+        local.poll();
+        let error = wire.borrow_mut().queues[1].pop_front().unwrap();
+        assert_eq!(error[23], 1);
+        assert_eq!(&error[34..36], &[3, 3]);
+        assert_eq!(&error[38..42], &[0; 4], "fence={fence}");
+        let total = usize::from(u16::from_be_bytes([error[16], error[17]]));
+        assert_eq!(error.len(), 14 + total);
+        assert_eq!(independent_checksum(&error[14..34]), 0);
+        assert_eq!(independent_checksum(&error[34..14 + total]), 0);
+        assert_eq!(independent_checksum(&error[42..62]), 0);
+        assert_eq!(&error[54..62], &submitted[26..34]);
+        assert_eq!(&error[62..], &submitted[34..]);
+        // The engine reconstructs the quoted IP header; only its source,
+        // destination and original UDP bytes are asserted above. This test
+        // does not claim byte-identical IP ID/checksum preservation.
+        assert_eq!(local.socket_count(), 0);
+        assert!(wire.borrow().queues[1].is_empty());
+        peer.datagram_close(peer_endpoint).unwrap();
+    }
+}

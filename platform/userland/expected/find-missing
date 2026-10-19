@@ -1,0 +1,4 @@
+status 0
+--- stdout
+--- stderr
+/bin/find: failed to stat missing.txt: No such file or directory

@@ -26,6 +26,8 @@ import tempfile
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
+from served_ram import served_qemu
+from served_kernel import kernel_make
 import absd_fs  # noqa: E402
 import absd_inputs  # noqa: E402
 
@@ -91,7 +93,7 @@ class Matrix:
             variables += [f"EXTERNAL_READER_ELF={self.resolver}", f"EXTERNAL_READER_INPUT={request_path}"]
         else:
             variables += ["EXTERNAL_READER_ELF=", "EXTERNAL_READER_INPUT="]
-        subprocess.run(["make", "--no-print-directory", "-C", str(self.kernel), "durable-iso", *variables],
+        subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(self.kernel), "durable-iso", *variables],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         return self.kernel / "build" / "durable" / f"absd-durable-{step}.iso"
 
@@ -101,7 +103,7 @@ class Matrix:
         log = self.work / f"{name}.{self.boots:03d}.serial.log"
         result = subprocess.run(
             [str(self.kernel / "scripts" / "durable-boot.sh"), str(iso), str(image), str(log), "300",
-             *self.qemu.split()], check=True, capture_output=True, text=True)
+             *served_qemu(self.qemu)], check=True, capture_output=True, text=True)
         serial = log.read_bytes()
         require(b"PANIC" not in serial and b"KERNEL FAULT" not in serial, f"{name}: kernel fault")
         return int(result.stdout.strip()), serial, dm.Harness.captured(serial)

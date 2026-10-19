@@ -1,0 +1,40 @@
+.Dd October 13, 2026
+.Dt TAR 1
+.Os ABSD
+.Sh NAME
+.Nm tar
+.Nd create, list and extract native uncompressed ustar archives
+.Sh SYNOPSIS
+.Nm
+.Fl c | Fl t | Fl x
+.Op Fl v
+.Op Fl m
+.Op Fl f Ar archive
+.Op Fl C Ar directory
+.Op Ar member ...
+.Sh DESCRIPTION
+This substantial adaptation of sbase 0.1 creates, lists and extracts standard
+uncompressed ustar archives containing regular files and directories.
+A dash archive name uses standard input or output. Named members select
+those paths and their descendants. Creation traverses directories recursively.
+Verbose output goes to standard error, not archive bytes.
+.Xr sbase 7
+records origin and license.
+.Sh NATIVE METADATA
+Extraction restores contents and hierarchy, not Unix owners, timestamps or
+execute/set-ID bits. Regular files become readonly when the archive lacks
+owner-write; writable files use native creation semantics. Directories use
+native creation without chmod. The -m flag explicitly requests the already
+native no-time-restoration behavior; preservation flags are refused.
+.Sh LIMITS
+Compression, symbolic and hard links, devices, FIFOs, GNU/PAX/sparse extensions,
+absolute member names, parent components and unsupported flags are refused.
+Source and destination pathname bindings must stay stable during operations;
+no concurrent replacement or rollback guarantee is made. Earlier members and
+a partial current file may remain after failure. Unsupported or malformed
+input and reported I/O errors return nonzero; external termination is separate.
+Native ustar bounds and the process resource envelope apply.
+.Sh SEE ALSO
+.Xr diff 1 ,
+.Xr hexdump 1 ,
+.Xr sbase 7

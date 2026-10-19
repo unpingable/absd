@@ -1,0 +1,137 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt SBASE 7
+.Os ABSD
+.Sh NAME
+.Nm sbase
+.Nd the base userland's sbase ports, and their licence
+.Sh DESCRIPTION
+Nine commands under
+.Pa /bin
+are C programs from sbase 0.1, the suckless project's Unix tools (MIT
+licence), built for ABSD with the platform's C kit
+.Pq Nm absd-cc , No Picolibc and the POSIX adapter :
+.Xr cmp 1 ,
+.Xr ed 1 ,
+.Xr find 1 ,
+.Xr grep 1 ,
+.Xr od 1 ,
+.Xr printf 1 ,
+.Xr sed 1 ,
+.Xr sort 1 ,
+and
+.Xr test 1 .
+They are bounded ports, not a promise of a Unix environment: where a tool
+needs something ABSD does not provide, it was patched to refuse that
+feature with a message and a status, and each page lists those features
+under
+.Sx UNSUPPORTED ON ABSD .
+No kernel or kit semantics were added for them.
+.Pp
+None of them shares a name with a native command, a ported Rust program,
+or a shell builtin.
+Commands deliberately not provided
+.Po Nm kill , Nm chmod , Nm chown , Nm touch , Nm ln ;
+see
+.Xr intro 1
+.Pc
+were not ported, although sbase has them.
+.Pp
+Each program is read whole through the file server before it starts
+(about 170 to 250 KB each).
+Messages begin with the name the program was run as, and the error
+texts are Picolibc's.
+Regular expressions
+.Pq Xr grep 1 , Xr sed 1 , Xr ed 1
+are Picolibc's, in the C locale only.
+.Sh QUALIFICATION
+The programs pass the C kit's ELF gate, build twice to the same bytes, and
+resolve every name; their expected outputs are pinned on the build host.
+They have not yet been qualified as ABSD processes: what the pages say
+about behaviour on ABSD is predicted from the C interface and the patches
+until the guest run confirms it.
+The platform's
+.Pa userland/README.md
+records the build, the patches, and the cases.
+.Sh LICENSE
+sbase is distributed under the following terms, which accompany every copy
+of these programs (the platform's
+.Pa userland/sbase.LICENSE ,
+here in ASCII: the copyright sign is written (C), and the accented letters
+of two names, n with acute and e with acute, are written plain):
+.Bd -literal -offset indent
+MIT License
+
+\(co 2011 Connor Lane Smith <cls@lubutu.com>
+\(co 2011-2016 Dimitris Papastamos <sin@2f30.org>
+\(co 2014-2016 Laslo Hunhold <dev@frign.de>
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+Authors/contributors include:
+
+\(co 2011 Kamil Cholewinski <harry666t@gmail.com>
+\(co 2011 Rob Pilling <robpilling@gmail.com>
+\(co 2011 Hiltjo Posthuma <hiltjo@codemadness.org>
+\(co 2011 pancake <pancake@youterm.com>
+\(co 2011 Random832 <random832@fastmail.us>
+\(co 2012 William Haddon <william@haddonthethird.net>
+\(co 2012 Kurt H. Maier <khm@sciops.net>
+\(co 2012 Christoph Lohmann <20h@r-36.net>
+\(co 2012 David Galos <galosd83@students.rowan.edu>
+\(co 2012 Robert Ransom <rransom.8774@gmail.com>
+\(co 2013 Jakob Kramer <jakob.kramer@gmx.de>
+\(co 2013 Anselm R Garbe <anselm@garbe.us>
+\(co 2013 Truls Becken <truls.becken@gmail.com>
+\(co 2013 dsp <dsp@2f30.org>
+\(co 2013 Markus Teich <markus.teich@stusta.mhn.de>
+\(co 2013 Jesse Ogle <jesse.p.ogle@gmail.com>
+\(co 2013 Lorenzo Cogotti <miciamail@hotmail.it>
+\(co 2013 Federico G. Benavento <benavento@gmail.com>
+\(co 2013 Roberto E. Vargas Caballero <k0ga@shike2.com>
+\(co 2013 Christian Hesse <mail@eworm.de>
+\(co 2013 Markus Wichmann <nullplan@gmx.net>
+\(co 2014 Silvan Jegen <s.jegen@gmail.com>
+\(co 2014 Daniel Bainton <dpb@driftaway.org>
+\(co 2014 Tuukka Kataja <stuge@xor.fi>
+\(co 2014 Jeffrey Picard <jeff@jeffreypicard.com>
+\(co 2014 Evan Gates <evan.gates@gmail.com>
+\(co 2014 Michael Forney <mforney@mforney.org>
+\(co 2014 Ari Malinen <ari.malinen@gmail.com>
+\(co 2014 Brandon Mulcahy <brandon@jangler.info>
+\(co 2014 Adria Garriga <rhaps0dy@installgentoo.com>
+\(co 2014-2015 Greg Reagle <greg.reagle@umbc.edu>
+\(co 2015 Tai Chi Minh Ralph Eastwood <tcmreastwood@gmail.com>
+\(co 2015 Quentin Rameau <quinq@quinq.eu.org>
+\(co 2015 Dionysis Grigoropoulos <info@erethon.com>
+\(co 2015 Wolfgang Corcoran-Mathe <wcm@sigwinch.xyz>
+\(co 2016 Mattias Andree <maandree@kth.se>
+\(co 2016 Eivind Uggedal <eivind@uggedal.com>
+.Ed
+.Sh SEE ALSO
+.Xr cmp 1 ,
+.Xr ed 1 ,
+.Xr find 1 ,
+.Xr grep 1 ,
+.Xr intro 1 ,
+.Xr od 1 ,
+.Xr printf 1 ,
+.Xr sed 1 ,
+.Xr sort 1 ,
+.Xr test 1

@@ -1,0 +1,161 @@
+// -*- C++ -*-
+// libc++'s external thread API for the ABSD C kit's single-task profile
+// (cxx/README.md, "LLVM on the kit"). Used only by the LLVM build of the
+// C++ runtime (scripts/build-cxx-runtime.sh with ABSD_CXX_PROFILE=llvm):
+// LLVM holds std::mutex, std::recursive_mutex and std::call_once whatever
+// LLVM_ENABLE_THREADS says, and libc++ declares none of them with threads
+// off. An ABSD process has exactly one task (C-INTERFACE.md section 2), so
+// every primitive here is that task's bookkeeping, nothing more.
+// Rule: a call that would have to wait for another task ABORTS here, with a
+// message on stderr (libc++'s verbose abort, status 134). It never returns
+// an error, because several libc++ callers ignore the result or retry it
+// (call_once.cpp waits in a loop; memory.cpp's __sp_mut and
+// random_shuffle.cpp's __rs_default proceed as if locked), so a returned
+// error would spin or race instead of stopping:
+//   - a mutex is a flag; locking a held mutex can only be the owner
+//     locking it again, a self-deadlock: abort;
+//   - a recursive mutex is a count (overflow: EAGAIN);
+//   - signal/broadcast wake nobody; a condition-variable wait, timed or
+//     not, could only be ended by another task: abort (this is also what
+//     a std::call_once re-entered from its own function reaches);
+//   - std::call_once's helper re-entered from its own routine: abort;
+//   - try-lock of a held mutex answers false, as upstream;
+//   - creating a thread is refused (EAGAIN: std::thread aborts); join and
+//     detach of the null thread are EINVAL;
+//   - thread-local storage keys are a fixed table of 64 plain slots: one
+//     task, so one value per key (no %fs/TLS, CPA-062); destructors are
+//     not run at exit, as for the main thread under POSIX;
+//   - sleep_for is the kit's nanosleep.
+// No task, no lock instruction, no kernel call is added. Not covered by the
+// rule: std::atomic<T>::wait on a value nothing changes is libc++'s
+// timed-backoff polling loop (atomic.cpp), not a call into this file.
+// SPDX-License-Identifier: Apache-2.0
+#ifndef _LIBCPP_ABSD_EXTERNAL_THREADING
+#define _LIBCPP_ABSD_EXTERNAL_THREADING
+
+#include <__config>
+#include <__chrono/duration.h>
+#include <__verbose_abort>
+#include <errno.h>
+#include <time.h>
+
+#ifndef _LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER
+#  pragma GCC system_header
+#endif
+
+typedef ::timespec __libcpp_timespec_t;
+
+_LIBCPP_BEGIN_NAMESPACE_STD
+
+typedef unsigned __libcpp_mutex_t;
+#define _LIBCPP_MUTEX_INITIALIZER 0U
+typedef unsigned long __libcpp_recursive_mutex_t;
+typedef unsigned __libcpp_condvar_t;
+#define _LIBCPP_CONDVAR_INITIALIZER 0U
+typedef unsigned __libcpp_exec_once_flag;
+#define _LIBCPP_EXEC_ONCE_INITIALIZER 0U
+typedef unsigned long __libcpp_thread_id;
+typedef unsigned long __libcpp_thread_t;
+#define _LIBCPP_NULL_THREAD 0UL
+typedef unsigned __libcpp_tls_key;
+#define _LIBCPP_TLS_DESTRUCTOR_CC
+
+#define _LIBCPP_ABSD_THREAD inline _LIBCPP_HIDE_FROM_ABI
+#define _LIBCPP_ABSD_WOULD_WAIT(what)                                                      \
+  _LIBCPP_VERBOSE_ABORT("libc++ (ABSD, one task per process): %s would wait for another task, " \
+                        "and none exists; aborting\n", what)
+
+// The one task's id; 0 is the null thread.
+#define _LIBCPP_ABSD_TASK_ID 1UL
+#define _LIBCPP_ABSD_TLS_KEYS 64U
+
+_LIBCPP_ABSD_THREAD int __libcpp_recursive_mutex_init(__libcpp_recursive_mutex_t* __m) { *__m = 0; return 0; }
+_LIBCPP_ABSD_THREAD _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_recursive_mutex_lock(__libcpp_recursive_mutex_t* __m) {
+  if (*__m == ~0UL) return EAGAIN;
+  ++*__m; return 0;
+}
+_LIBCPP_ABSD_THREAD _LIBCPP_NO_THREAD_SAFETY_ANALYSIS bool __libcpp_recursive_mutex_trylock(__libcpp_recursive_mutex_t* __m) {
+  return __libcpp_recursive_mutex_lock(__m) == 0;
+}
+_LIBCPP_ABSD_THREAD _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_recursive_mutex_unlock(__libcpp_recursive_mutex_t* __m) {
+  if (*__m == 0) return EPERM;
+  --*__m; return 0;
+}
+_LIBCPP_ABSD_THREAD int __libcpp_recursive_mutex_destroy(__libcpp_recursive_mutex_t* __m) { return *__m ? EBUSY : 0; }
+
+_LIBCPP_ABSD_THREAD _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_mutex_lock(__libcpp_mutex_t* __m) {
+  if (*__m) _LIBCPP_ABSD_WOULD_WAIT("locking a mutex this task already holds");
+  *__m = 1; return 0;
+}
+_LIBCPP_ABSD_THREAD _LIBCPP_NO_THREAD_SAFETY_ANALYSIS bool __libcpp_mutex_trylock(__libcpp_mutex_t* __m) {
+  if (*__m) return false;
+  *__m = 1; return true;
+}
+_LIBCPP_ABSD_THREAD _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_mutex_unlock(__libcpp_mutex_t* __m) {
+  if (!*__m) return EPERM;
+  *__m = 0; return 0;
+}
+_LIBCPP_ABSD_THREAD int __libcpp_mutex_destroy(__libcpp_mutex_t* __m) { return *__m ? EBUSY : 0; }
+
+_LIBCPP_ABSD_THREAD int __libcpp_condvar_signal(__libcpp_condvar_t*) { return 0; }
+_LIBCPP_ABSD_THREAD int __libcpp_condvar_broadcast(__libcpp_condvar_t*) { return 0; }
+_LIBCPP_ABSD_THREAD _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int __libcpp_condvar_wait(__libcpp_condvar_t*, __libcpp_mutex_t*) {
+  _LIBCPP_ABSD_WOULD_WAIT("a condition-variable wait (or std::call_once re-entered from its own function)");
+}
+_LIBCPP_ABSD_THREAD _LIBCPP_NO_THREAD_SAFETY_ANALYSIS int
+__libcpp_condvar_timedwait(__libcpp_condvar_t*, __libcpp_mutex_t*, __libcpp_timespec_t*) {
+  _LIBCPP_ABSD_WOULD_WAIT("a timed condition-variable wait");
+}
+_LIBCPP_ABSD_THREAD int __libcpp_condvar_destroy(__libcpp_condvar_t*) { return 0; }
+
+_LIBCPP_ABSD_THREAD int __libcpp_execute_once(__libcpp_exec_once_flag* __flag, void (*__init_routine)()) {
+  if (*__flag == 2) return 0;
+  if (*__flag == 1) _LIBCPP_ABSD_WOULD_WAIT("a once-routine re-entered from itself");
+  *__flag = 1;
+  __init_routine();
+  *__flag = 2;
+  return 0;
+}
+
+_LIBCPP_ABSD_THREAD bool __libcpp_thread_id_equal(__libcpp_thread_id __t1, __libcpp_thread_id __t2) { return __t1 == __t2; }
+_LIBCPP_ABSD_THREAD bool __libcpp_thread_id_less(__libcpp_thread_id __t1, __libcpp_thread_id __t2) { return __t1 < __t2; }
+
+_LIBCPP_ABSD_THREAD bool __libcpp_thread_isnull(const __libcpp_thread_t* __t) { return *__t == _LIBCPP_NULL_THREAD; }
+_LIBCPP_ABSD_THREAD int __libcpp_thread_create(__libcpp_thread_t*, void* (*)(void*), void*) {
+  return EAGAIN;   // one task per process: no thread is ever created
+}
+_LIBCPP_ABSD_THREAD __libcpp_thread_id __libcpp_thread_get_current_id() { return _LIBCPP_ABSD_TASK_ID; }
+_LIBCPP_ABSD_THREAD __libcpp_thread_id __libcpp_thread_get_id(const __libcpp_thread_t* __t) { return *__t; }
+_LIBCPP_ABSD_THREAD int __libcpp_thread_join(__libcpp_thread_t*) { return EINVAL; }
+_LIBCPP_ABSD_THREAD int __libcpp_thread_detach(__libcpp_thread_t*) { return EINVAL; }
+_LIBCPP_ABSD_THREAD void __libcpp_thread_yield() {}
+_LIBCPP_ABSD_THREAD void __libcpp_thread_sleep_for(const chrono::nanoseconds& __ns) {
+  if (__ns <= chrono::nanoseconds::zero()) return;
+  ::timespec __ts;
+  __ts.tv_sec  = static_cast<time_t>(__ns.count() / 1000000000);
+  __ts.tv_nsec = static_cast<long>(__ns.count() % 1000000000);
+  ::nanosleep(&__ts, nullptr);   // the kit's nanosleep never reports an interruption
+}
+
+struct __libcpp_absd_tls {
+  static unsigned& __count() { static unsigned __n = 0; return __n; }
+  static void*& __slot(__libcpp_tls_key __k) { static void* __v[_LIBCPP_ABSD_TLS_KEYS]; return __v[__k]; }
+};
+_LIBCPP_ABSD_THREAD int __libcpp_tls_create(__libcpp_tls_key* __key, void(_LIBCPP_TLS_DESTRUCTOR_CC*)(void*)) {
+  unsigned& __n = __libcpp_absd_tls::__count();
+  if (__n == _LIBCPP_ABSD_TLS_KEYS) return EAGAIN;
+  *__key = __n++;
+  return 0;
+}
+_LIBCPP_ABSD_THREAD void* __libcpp_tls_get(__libcpp_tls_key __key) {
+  return __key < _LIBCPP_ABSD_TLS_KEYS ? __libcpp_absd_tls::__slot(__key) : nullptr;
+}
+_LIBCPP_ABSD_THREAD int __libcpp_tls_set(__libcpp_tls_key __key, void* __p) {
+  if (__key >= __libcpp_absd_tls::__count()) return EINVAL;
+  __libcpp_absd_tls::__slot(__key) = __p;
+  return 0;
+}
+
+_LIBCPP_END_NAMESPACE_STD
+
+#endif // _LIBCPP_ABSD_EXTERNAL_THREADING

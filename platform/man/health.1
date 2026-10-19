@@ -1,0 +1,114 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 15, 2026
+.Dt HEALTH 1
+.Os ABSD
+.Sh NAME
+.Nm health
+.Nd how this generation came to be running
+.Sh SYNOPSIS
+.Nm
+.Op Fl Fl json
+.Sh DESCRIPTION
+.Nm
+prints the release, this boot, how the previous generation ended, the
+configuration files the SSH server started from, and the size of each log:
+.Bd -literal -offset indent
+release: dev
+boot: 7c0e2b6a9d4f41e3a2b5c8d9e0f1a2b3, up 0 days 00:12:34 (754434 ticks)
+recovery: previous=ended streak=0 seq=12
+config: network from /etc/network.conf
+config: sshd built-in defaults (no /etc/sshd.conf)
+logs: fsd 2140 bytes, fsd.0 none, sshd 9812 bytes, sshd.0 none
+.Ed
+.Bl -tag -width "recovery"
+.It release
+the release the file server serves
+.Pq Xr release 1 .
+.It boot
+the kernel's boot identity and the boot tick counter, as
+.Xr uptime 1
+prints them.
+.It recovery
+how the previous generation of services ended, as the file server recorded
+it for this boot before serving anything: its
+.Li FSD RECOVERY
+line in
+.Pa /var/log/fsd
+(or
+.Pa /var/log/fsd.0
+after a rotation) following this boot's
+.Li started: boot
+line.
+.Ar previous
+is
+.Li none
+(the first boot of this disk),
+.Li ended
+(an orderly
+.Xr shutdown 8
+or
+.Xr reboot 8 ) ,
+.Li failed
+(the services were serving and the generation ended any other way), or
+.Li not_ready
+(the generation ended before the SSH server listened).
+.Ar streak
+counts failed generations in a row; the machine stops resetting itself when
+it reaches its budget
+.Pq Xr afterboot 8 .
+.Ar seq
+numbers the generations of this disk.
+Only this boot's line is read: when it is not in either log (rotated out
+or dropped), the line says
+.Li unknown
+and why.
+Why a failed generation failed is printed on the console only;
+.Nm
+does not say.
+.It config
+whether the SSH server read each configuration file or used its built-in
+defaults.
+Sessions cannot change
+.Pa /etc
+and a malformed file stops the server from starting, so these are the
+files the running server uses
+.Pq Xr network.conf 5 , Xr sshd.conf 5 .
+.It logs
+the size of each log under
+.Pa /var/log ,
+or
+.Li none .
+.El
+.Pp
+.Fl Fl json
+prints one bounded
+.Li absd.observation_health.v1
+JSON document with exactly four facts: boot identity, boot ticks, served
+release, and this boot's retained recovery summary. Counters are decimal
+strings; unavailable facts carry a reason and a null value. The document
+does not include configuration, log sizes, a process census or fault causes.
+Implementation identity stays unknown. A retained recovery record is not a
+promise of the current server's process identity or latest restart.
+.Pp
+.Li recovery_not_retained
+also covers a session without a mounted
+.Pa /var/log ;
+it does not distinguish a missing mount from an expired record.
+.Pp
+The payload is bounded to 8192 bytes. File-server requests can still stall;
+the payload bound is not a command deadline. Remote acquisition needs its
+own timeout and must treat no response as unavailable.
+.Sh EXIT STATUS
+0 when every line was answered; 1 when a source refused or the recovery
+line is unknown, in which case that line says why; 2 for a usage error.
+.Pp
+With
+.Fl Fl json ,
+0 means all four facts are known; 1 means a partial result; 2 means usage,
+invalid acquisition interval or output failure. Configuration or log-size
+errors can make human mode return 1 while the four JSON facts are complete.
+.Sh SEE ALSO
+.Xr net-status 1 ,
+.Xr sysinfo 1 ,
+.Xr uptime 1 ,
+.Xr afterboot 8

@@ -26,6 +26,10 @@ Verified against source, not intent documents:
 - **Ring 3 → kernel entry is only through the IDT.** The `int 0x80` gate is
   the sole user-callable gate (`IdtEntry::user_handler`, `src/main.rs:818`);
   exception vectors 0-31 and the timer IRQ all have their own gates.
+  The BSP-only `xhci-controller` boot additionally installs the kernel-only
+  MSI-X gate `0xd0`; its retained ISR records delivery and acknowledges the
+  LAPIC without taking the kernel lock or consuming event TRBs. Reservations
+  are centralized in `src/interrupt_vector.rs`.
   `syscall_stub` (`src/boot.S:321`) saves 15 GPRs plus FXSAVE state, calls
   `user_syscall_dispatch`, and reloads CR3 from its return value: the syscall
   handler runs under the *user* CR3, and kernel memory stays reachable only

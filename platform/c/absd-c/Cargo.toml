@@ -1,0 +1,28 @@
+[package]
+name = "absd-c"
+version = "0.1.0"
+edition = "2024"
+description = "libabs: the ABSD runtime as a C-linkable static library"
+
+[lib]
+crate-type = ["staticlib"]
+test = false
+doctest = false
+
+# The runtime and its path dependencies are reached through tree/, symlinks
+# to the repository's own crates (tree/runtime -> ../../../runtime, and so on
+# for broker, fs, fsd, release) that scripts/build-c-kit.sh makes before each
+# build (untracked). Cargo does not resolve them, so the crates sit
+# inside this workspace's root and Cargo hashes their paths relative to it
+# (into -C metadata, so into every symbol and archive member name) instead
+# of absolutely: libabs.a does not depend on where the tree is checked out.
+[dependencies]
+absd-runtime = { path = "tree/runtime", features = ["c-entry"] }
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+debug = false
+codegen-units = 1
+
+[workspace]

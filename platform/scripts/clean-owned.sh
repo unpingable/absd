@@ -23,7 +23,7 @@ rm -f "$root/probe.elf" "$root/pulse-std.elf" "$root/exit-std.elf" \
     "$root/pulse-support-resolver.elf" "$root/pulse-support-resolver-test.elf" \
     "$root/nq.elf" "$root/nq-unknown.elf" "$root/nq-profile-digest.txt" \
     "$root/nightshift-ag-resolver.elf" "$root/nightshift-ag-resolver-short-ttl.elf" "$root/ag-loopctl-init.elf" "$root/ag-loopctl-record-proposal.elf" \
-    "$root/exec-probe.elf" "$root/sh-launch.elf" "$root/sshd.elf" "$root/absd-fsd.elf" "$root/absd-fsd-regenerate.elf" \
+    "$root/exec-probe.elf" "$root/sh-launch.elf" "$root/sshd.elf" "$root/absd-fsd.elf" "$root/absd-fsd-regenerate.elf" "$root/absd-enroll.elf" \
     "$root/sshtest.elf" "$root/.pulse-host-report.json" \
     "$root/pulse-frame-pressure-cycle.elf" "$root/pulse-frame-pressure-resolver.elf" \
     "$root/pulse-frame-pressure-resolver-test.elf"

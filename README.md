@@ -10,16 +10,16 @@ It is a research system. It is not production-ready, it supports no physical
 hardware, and it is not a Unix: there is no `fork`, there are no user IDs,
 and existing Unix or Linux software does not run without porting.
 
-> **Technical preview, 2026-10-10.** From a fresh clone in a stock Ubuntu
-> 24.04 container this release fetched its dependencies, built the kernel,
-> the platform and the operator image offline, booted twice under QEMU's
-> software emulation and served an SSH session. **The qualification suites
-> have not been run on these revisions**: not the kernel suite, not the
-> platform gate. They are scheduled after 2026-10-17, when a week-long
-> unattended observation occupying the test host ends. `SOURCE-MANIFEST.toml`
-> lists what was not run under `not_run`. Earlier revisions were qualified;
-> that is recorded at <https://absd.dev/status/> and is not a claim about
-> this tree.
+> **Proposed RC1 source snapshot, 2026-10-18.** The component revisions are
+> the published RC1 pair: kernel `d208b61b` and platform `0fada7ed`.
+> This is a curated source snapshot, with development records omitted and
+> explicit sanitation edits recorded in `SOURCE-MANIFEST.toml` and
+> `tools/assembly.toml`. Assembly repeatability is separate from rebuilding
+> the published binaries. **A clean-room rebuild and the qualification
+> suites have not been run from this public tree.** See
+> [`docs/RC1-SOURCE.md`](docs/RC1-SOURCE.md) for the reconstruction recipe,
+> exact inputs, expected artifact digests and known correspondence gaps.
+> `SOURCE-MANIFEST.toml` records these checks under `not_run`.
 
 This repository is a **source release**: the kernel, the userspace, the
 build and image tooling and the tests, at the revisions named in
@@ -83,7 +83,7 @@ No outside person has audited the design, the code or the tests. Read
 "qualified" and "validated" anywhere in this repository as "the recorded
 checks passed and were re-examined by a separate AI session", and nothing
 stronger. Publishing the source is what makes independent checking possible;
-it has not happened yet.
+no independent outside audit or reproduction is claimed here.
 
 ## Build, boot, test
 
@@ -96,18 +96,33 @@ it installs are the requirements:
   (`ABSD_RUST_TOOLCHAIN` names the 1.95.0 toolchain directory if it is
   elsewhere); the platform gate also uses 1.94.0 for one workload's Linux
   reference build;
+- the 1.98.0 targets `aarch64-unknown-none` and
+  `aarch64-unknown-none-softfloat` for the kernel gate's ARM64 build;
 - clang and LLVM 18, GRUB 2.12 with xorriso and mtools, QEMU 8.2, Python
   3.12 with `python3-cryptography`, OpenSSH client tools, bubblewrap, git,
   make, curl, and `groff-base` 1.23.0 (not the full `groff`
   package: the manual is rendered from a macro tree pinned by digest).
+- `xfonts-base` for the kernel framebuffer check's X11 misc-fixed 8x13
+  PCF font. The host oracle reads the font independently of the kernel's
+  committed glyph table; this package does not add a font to the RC1 media.
 
 The platform build checks the Rust compiler, cargo, the standard-library
-source and the groff macro tree by digest and refuses others. clang, GRUB,
-QEMU and Python are not checked; the versions above are the ones used.
+source and the groff macro tree by digest and refuses others. The RC1 media
+profile additionally checks exact package versions and the kernel Rust
+binaries; see `platform/media/vm-operator.toml`. clang and Python are not
+fully pinned by that profile.
+
+For an attempt to reconstruct RC1, use `tools/rebuild-rc1.sh` as described
+in `docs/RC1-SOURCE.md`. It includes the C userland prerequisites absent
+from the older generic wrapper below, preserves the original release ID
+and public build-key input, and adapts the private-checkout media tool to
+the manifest-verified public snapshots. Its complete guest execution is
+not yet qualified. For a separately keyed development image, the older
+entry points remain available after those prerequisites are built:
 
 ```sh
 ssh-keygen -t ed25519 -N "" -f ~/absd-key   # the key that may log in to the image
-tools/fetch.sh                  # downloads and verifies crates; the only network step
+tools/fetch.sh                  # downloads and verifies Rust crate inputs
 tools/build.sh ~/absd-key.pub   # kernel, platform, operator image -> out/
 tools/smoke.sh ~/absd-key       # two boots and an SSH session; no KVM needed
 ```
@@ -156,12 +171,15 @@ The build and the checks refuse a `kernel/` or `platform/` that is not the
 tree `SOURCE-MANIFEST.toml` names. `ABSD_ALLOW_MODIFIED=1` runs them on your
 changes, and what they produce says `modified`.
 
-**Reproducibility.** The platform gate builds its own programs and the manual
+**Reproducibility.** Two source assemblies must have identical Git trees.
+That check does not compile or execute ABSD. The platform gate builds its own programs and the manual
 twice and fails if the two builds differ (the ported programs are built
 once, and images are not compared), so those builds are repeatable on one
 machine. Whether two
-different machines produce identical images has not been measured, and the
-boot ISO includes GRUB files from the host's package, so it is not expected.
+different machines reconstruct the published RC1 images from this public
+tree has not been established. The RC1 media path compares two deterministic
+operator ISOs using pinned GRUB packages and a fixed epoch. The enrollment
+ISO uses the older wall-clock-stamped path; byte equality is not promised.
 
 ## Licence
 

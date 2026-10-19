@@ -1,0 +1,17 @@
+status 0
+--- stdout
+54
+1	LINE 1.1
+2	line 4.4
+3	line 5.5
+4	line 6.6
+5	added
+42
+--- stderr
+--- files
+file lines.txt 42
+LINE 1.1
+line 4.4
+line 5.5
+line 6.6
+added

@@ -63,10 +63,14 @@ pub fn bring_up() {
     }
     ONLINE[0].store(true, Ordering::Release);
     for cpu in 1..crate::cpu::count() {
-        let result: u64;
-        unsafe {
-            asm!("hvc #0",inlateout("x0")0xc4000003u64=>result,in("x1")cpu as u64,in("x2")arm_secondary_entry as *const ()as u64,in("x3")cpu as u64,options(nostack));
-        }
+        let result = unsafe {
+            crate::psci(
+                0xc4000003,
+                cpu as u64,
+                arm_secondary_entry as *const () as u64,
+                cpu as u64,
+            )
+        };
         assert_eq!(result, 0, "PSCI CPU_ON refused");
     }
     let end = super::virtio::counter() + super::virtio::frequency() * 3;
@@ -133,6 +137,10 @@ pub fn start_execution() {
 }
 pub fn send_ipi(target: u8, number: u32) {
     assert!((target as usize) < crate::cpu::count());
+    if crate::gic_is_v3() {
+        crate::gic3_sgi(target, number);
+        return;
+    }
     crate::write32(
         unsafe { crate::GICD } + 0xf00,
         ((1u32 << target) << 16) | number,

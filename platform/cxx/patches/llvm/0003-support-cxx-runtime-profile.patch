@@ -1,0 +1,138 @@
+LLVMSupport: build against the C kit's libc++ (no iostreams, no
+random_device) and Picolibc headers
+
+Failure: with the LLVM profile of the C++ runtime (scripts/build-cxx-runtime.sh,
+localization, random_device and filesystem off) LLVMSupport does not compile:
+`use of undeclared identifier 'tolower'` (APFloat.cpp:3172, CachePruning.cpp:112)
+and 'isupper' (RISCVISAInfo.cpp:646,710) which libstdc++ supplies transitively;
+ARMBuildAttrs.cpp includes <iomanip>/<sstream> it does not use, and libc++ refuses
+iostreams without localization; raw_os_ostream.cpp is a raw_ostream over
+std::ostream; raw_socket_stream.cpp includes <sys/socket.h>, which the kit lacks,
+yet also holds raw_string_ostream::write_impl, which everything needs;
+`Exit code EX_IOERR not available` (ExitCodes.h:30: no <sysexits.h>);
+`no type named 'random_device'` (LockFileManager.cpp:306).
+Change: include <cctype> where it is used; drop ARMBuildAttrs' two unused
+includes; on CMAKE_SYSTEM_NAME ABSD leave raw_os_ostream.cpp out (as an
+optional source) and build only raw_string_ostream from raw_socket_stream.cpp;
+EX_IOERR = 74 under LLVM_ABSD_KIT as for z/OS and Windows; LockFileManager's
+backoff jitter seeded from sys::Process::GetRandomNumber() under LLVM_ABSD_KIT.
+Behaviour preserved: every other configuration compiles the same code (the
+includes are no-ops where they were transitive); raw_os_ostream and
+raw_socket_stream are not used by clang or lld (no reference in clang/lib,
+clang/tools/driver or lld outside clang Format/Tooling, which clang does not
+link); the jitter's randomness source changes, not its distribution.
+Upstreamability: the <cctype> and ARMBuildAttrs hunks are plain
+include-what-you-use fixes, upstreamable as is; moving raw_string_ostream
+out of raw_socket_stream.cpp is an upstream cleanup (upstream later did
+so); the rest needs an ABSD target OS in LLVM first.
+
+--- a/llvm/lib/Support/APFloat.cpp
++++ b/llvm/lib/Support/APFloat.cpp
+@@ -25,6 +25,7 @@
+ #include "llvm/Support/Error.h"
+ #include "llvm/Support/MathExtras.h"
+ #include "llvm/Support/raw_ostream.h"
++#include <cctype>
+ #include <cstring>
+ #include <limits.h>
+ 
+--- a/llvm/lib/Support/CachePruning.cpp
++++ b/llvm/lib/Support/CachePruning.cpp
+@@ -22,6 +22,7 @@
+ 
+ #define DEBUG_TYPE "cache-pruning"
+ 
++#include <cctype>
+ #include <set>
+ #include <system_error>
+ 
+--- a/llvm/lib/Support/RISCVISAInfo.cpp
++++ b/llvm/lib/Support/RISCVISAInfo.cpp
+@@ -16,6 +16,7 @@
+ #include "llvm/Support/raw_ostream.h"
+ 
+ #include <array>
++#include <cctype>
+ #include <atomic>
+ #include <optional>
+ #include <string>
+--- a/llvm/lib/Support/ARMBuildAttrs.cpp
++++ b/llvm/lib/Support/ARMBuildAttrs.cpp
+@@ -9,8 +9,6 @@
+ #include "llvm/Support/ARMBuildAttributes.h"
+ #include "llvm/ADT/Twine.h"
+ #include "llvm/Support/LEB128.h"
+-#include <iomanip>
+-#include <sstream>
+ 
+ using namespace llvm;
+ 
+--- a/llvm/include/llvm/Support/ExitCodes.h
++++ b/llvm/include/llvm/Support/ExitCodes.h
+@@ -20,8 +20,8 @@
+ 
+ #if HAVE_SYSEXITS_H
+ #include <sysexits.h>
+-#elif __MVS__ || defined(_WIN32)
+-// <sysexits.h> does not exist on z/OS and Windows. The only value used in LLVM
++#elif __MVS__ || defined(_WIN32) || defined(LLVM_ABSD_KIT)
++// <sysexits.h> does not exist on z/OS, Windows and the ABSD C kit. The only value used in LLVM
+ // is EX_IOERR, which is used to signal a special error condition (broken pipe).
+ // Define the macro with its usual value from BSD systems, which is chosen to
+ // not clash with more standard exit codes like 1.
+--- a/llvm/lib/Support/CMakeLists.txt
++++ b/llvm/lib/Support/CMakeLists.txt
+@@ -127,6 +127,15 @@
+   remove_definitions("-D_XOPEN_SOURCE=700")
+ endif()
+ 
++# The ABSD C kit's libc++ has no iostreams (localization off):
++# raw_os_ostream (a raw_ostream over std::ostream) is left out there.
++if(CMAKE_SYSTEM_NAME STREQUAL "ABSD")
++  set(LLVM_SUPPORT_OS_OSTREAM_FILES "")
++  list(APPEND LLVM_OPTIONAL_SOURCES raw_os_ostream.cpp)
++else()
++  set(LLVM_SUPPORT_OS_OSTREAM_FILES raw_os_ostream.cpp)
++endif()
++
+ add_subdirectory(BLAKE3)
+ 
+ add_llvm_component_library(LLVMSupport
+@@ -250,7 +259,7 @@
+   WithColor.cpp
+   YAMLParser.cpp
+   YAMLTraits.cpp
+-  raw_os_ostream.cpp
++  ${LLVM_SUPPORT_OS_OSTREAM_FILES}
+   raw_ostream.cpp
+   raw_socket_stream.cpp
+   regcomp.c
+--- a/llvm/lib/Support/raw_socket_stream.cpp
++++ b/llvm/lib/Support/raw_socket_stream.cpp
+@@ -15,7 +15,9 @@
+ #include "llvm/Config/config.h"
+ #include "llvm/Support/Error.h"
+ 
+-#ifndef _WIN32
++#if defined(LLVM_ABSD_KIT)
++// The ABSD C kit has no sockets: only raw_string_ostream (below) is built.
++#elif !defined(_WIN32)
+ #include <sys/socket.h>
+ #include <sys/un.h>
+ #else
+@@ -35,6 +37,7 @@
+ 
+ using namespace llvm;
+ 
++#if !defined(LLVM_ABSD_KIT)
+ #ifdef _WIN32
+ WSABalancer::WSABalancer() {
+   WSADATA WsaData;
+@@ -169,6 +172,7 @@
+ }
+ 
+ raw_socket_stream::~raw_socket_stream() {}
++#endif // !LLVM_ABSD_KIT
+ 
+ //===----------------------------------------------------------------------===//
+ //  raw_string_ostream

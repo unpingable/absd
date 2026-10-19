@@ -1,0 +1,93 @@
+clang Frontend: read the layout-override and layout-seed files through
+llvm::MemoryBuffer instead of std::ifstream
+
+Failure: with the C kit's libc++ (filesystem library off, as for C++0),
+`implicit instantiation of undefined template 'std::basic_ifstream<char>'`
+at clang/lib/Frontend/CompilerInvocation.cpp:4210
+(-frandomize-layout-seed-file=) and LayoutOverrideSource.cpp:43
+(-foverride-record-layout=).
+Change: both files are read with llvm::MemoryBuffer::getFile (text mode):
+the seed is the file's first line; the layout parser iterates over the
+same lines the std::getline loop produced, including the empty one after a
+final newline. No #if: the change applies to every platform.
+Behaviour preserved: the same diagnostic when the seed file cannot be
+opened; the same lines in the same order to the layout parser; file reads
+use the same path every other clang input uses (on ABSD: into the heap).
+Upstreamability: high; clang elsewhere reads files through the
+FileManager/MemoryBuffer and avoids iostreams (LLVM coding standards:
+"#include <iostream> is forbidden").
+
+--- a/clang/lib/Frontend/CompilerInvocation.cpp
++++ b/clang/lib/Frontend/CompilerInvocation.cpp
+@@ -92,7 +92,6 @@
+ #include <cstddef>
+ #include <cstring>
+ #include <ctime>
+-#include <fstream>
+ #include <limits>
+ #include <memory>
+ #include <optional>
+@@ -4207,13 +4206,18 @@
+   }
+ 
+   if (const Arg *A = Args.getLastArg(OPT_frandomize_layout_seed_file_EQ)) {
+-    std::ifstream SeedFile(A->getValue(0));
++    // Read through llvm::MemoryBuffer rather than std::ifstream (which a
++    // libc++ without its filesystem library, as on the ABSD C kit, does not
++    // have): the seed is the file's first line, empty when it cannot be
++    // opened, as std::getline gave.
++    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> SeedFile =
++        llvm::MemoryBuffer::getFile(A->getValue(0), /*IsText=*/true);
+ 
+-    if (!SeedFile.is_open())
++    if (!SeedFile)
+       Diags.Report(diag::err_drv_cannot_open_randomize_layout_seed_file)
+           << A->getValue(0);
+-
+-    std::getline(SeedFile, Opts.RandstructSeed);
++    else
++      Opts.RandstructSeed = (*SeedFile)->getBuffer().split('\n').first.str();
+   }
+ 
+   if (const Arg *A = Args.getLastArg(OPT_frandomize_layout_seed_EQ))
+--- a/clang/lib/Frontend/LayoutOverrideSource.cpp
++++ b/clang/lib/Frontend/LayoutOverrideSource.cpp
+@@ -10,7 +10,7 @@
+ #include "clang/AST/DeclCXX.h"
+ #include "clang/Basic/CharInfo.h"
+ #include "llvm/Support/raw_ostream.h"
+-#include <fstream>
++#include "llvm/Support/MemoryBuffer.h"
+ #include <string>
+ 
+ using namespace clang;
+@@ -40,18 +40,24 @@
+ }
+ 
+ LayoutOverrideSource::LayoutOverrideSource(StringRef Filename) {
+-  std::ifstream Input(Filename.str().c_str());
+-  if (!Input.is_open())
++  // Read through llvm::MemoryBuffer rather than std::ifstream (which a
++  // libc++ without its filesystem library, as on the ABSD C kit, does not
++  // have). The lines are the ones the getline loop saw, including the empty
++  // one after a final newline.
++  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> Input =
++      llvm::MemoryBuffer::getFile(Filename, /*IsText=*/true);
++  if (!Input)
+     return;
++  SmallVector<StringRef, 0> Lines;
++  (*Input)->getBuffer().split(Lines, '\n', /*MaxSplit=*/-1, /*KeepEmpty=*/true);
+ 
+   // Parse the output of -fdump-record-layouts.
+   std::string CurrentType;
+   Layout CurrentLayout;
+   bool ExpectingType = false;
+ 
+-  while (Input.good()) {
+-    std::string Line;
+-    getline(Input, Line);
++  for (StringRef InputLine : Lines) {
++    std::string Line = InputLine.str();
+ 
+     StringRef LineStr(Line);
+ 

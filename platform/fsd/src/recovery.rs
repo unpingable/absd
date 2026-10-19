@@ -14,17 +14,22 @@
 //! next generation reads them, all tied to the previous boot id; the
 //! streak clears only when all four are there.
 //!
-//! Every file is created once, at the first boot with this contract, in a
+//! The canonical ledger and facts are created once, at the first boot with this contract, in a
 //! staging directory renamed into place (one commit), and has a fixed
 //! size from then on: the ledger and the facts are overwritten in place,
 //! so a charge allocates nothing and a full disk still serves. A fact
 //! that is all zero bytes is absent.
+//!
+//! A separate diagnostic projection under `/var/log` copies the checked
+//! ledger bytes after charge and before readiness. It uses the same encoding
+//! and only existing owner-write/session-read rights. It never rotates or
+//! writes periodically; the canonical ledger remains private and authoritative.
 
 use alloc::vec::Vec;
 
 use absd_fs::{Device, Error, Fs, OpenFlags};
 
-/// Where every file of this module lives; created by the file server.
+/// Where the canonical ledger and facts live; created by the file server.
 pub const DIR: &[u8] = b"/var/state";
 /// The staging directory of the first creation, renamed to [`DIR`] once
 /// complete; one left behind is removed and the creation redone.
@@ -32,6 +37,8 @@ pub const STAGING: &[u8] = b"/var/state.new";
 /// The ledger: one line, `absd-recovery v1 seq=<n> boot=<hex32> streak=<k> fnv=<hex16>`,
 /// zero-padded to [`LEDGER_BYTES`].
 pub const LEDGER: &[u8] = b"/var/state/recovery";
+/// Fixed, session-readable copy of the charged ledger; the same v1 encoding.
+pub const PROJECTION: &str = "/var/log/network-recovery";
 /// Present once the ledger was created on this disk: from then on a
 /// missing or unreadable ledger is lost state, not a first boot.
 pub const INIT: &[u8] = b"/var/state/recovery.init";
@@ -412,6 +419,57 @@ pub fn charge<D: Device>(fs: &mut Fs<D>, boot: &Boot) -> Result<(Ledger, Previou
     Ok((ledger, how))
 }
 
+/// Publish the exact committed ledger bytes before serving this generation.
+/// A missing projection is created once; later starts overwrite its fixed
+/// allocation. Wrong-shaped objects at this diagnostic-owned path are
+/// repaired. On a publication error its copy is best-effort removed; the
+/// caller logs the error and still serves, so an operator can free space.
+pub fn publish_projection<D: Device>(fs: &mut Fs<D>, ledger: &Ledger) -> Result<(), Error> {
+    let bytes = small_file(fs, LEDGER, LEDGER_BYTES)
+        .map_err(|_| Error::Invalid)?
+        .ok_or(Error::NotFound)?;
+    if bytes.len() != LEDGER_BYTES || ledger.seq == 0 || parse_ledger(&bytes) != Some(*ledger) {
+        return Err(Error::Invalid);
+    }
+    let path = PROJECTION.as_bytes();
+    let result = (|| {
+        match fs.stat(path) {
+            Ok(attr) if attr.kind == absd_fs::Kind::Dir => {
+                fs.remove_tree(path, true)?;
+                create(fs, path, &bytes)?;
+            }
+            Ok(attr) => {
+                if attr.readonly {
+                    fs.set_readonly_path(path, false)?;
+                }
+                if attr.size > LEDGER_BYTES as u64 {
+                    let handle = fs.open(path, OpenFlags { write: true, ..OpenFlags::default() })?;
+                    let resized = fs.set_len(handle, LEDGER_BYTES as u64);
+                    let closed = fs.close(handle);
+                    resized?;
+                    closed?;
+                }
+                overwrite(fs, path, &bytes)?;
+            }
+            Err(Error::NotFound) => create(fs, path, &bytes)?,
+            Err(error) => return Err(error),
+        }
+        fs.sync()
+    })();
+    if result.is_err() {
+        // An empty first creation or partial copy is not a usable identity.
+        // Storage failure can also prevent removal; boot/check/length checks
+        // still apply, and failure of this derived view never gates login.
+        let _ = match fs.stat(path) {
+            Ok(attr) if attr.kind == absd_fs::Kind::Dir => fs.remove_tree(path, true).map(|_| ()),
+            Ok(_) => fs.unlink(path),
+            Err(Error::NotFound) => Ok(()),
+            Err(error) => Err(error),
+        };
+    }
+    result
+}
+
 /// The file server's own fact at its orderly end, before its final commit.
 pub fn stopped<D: Device>(fs: &mut Fs<D>, boot: &Boot) -> Result<(), Error> {
     overwrite(fs, SERVED_STOPPED, &format_fact(boot, None))
@@ -498,6 +556,124 @@ mod tests {
         assert_eq!(parse_ledger(&trailing), None, "padding must be zero");
         assert_eq!(parse_ledger(b"absd-recovery v1 seq=1 boot=x streak=0 fnv=0000000000000000\n"), None);
         assert_eq!(parse_ledger(&[0u8; LEDGER_BYTES]), None);
+    }
+
+    #[test]
+    fn projection_copies_committed_bytes_and_reuses_its_fixed_allocation() {
+        let disk = image();
+        let mut fs = mount(&disk);
+        fs.mkdir(b"/var/log").unwrap();
+        let (ledger, _) = charge(&mut fs, &boot(1)).unwrap();
+        publish_projection(&mut fs, &ledger).unwrap();
+        let objects = fs.object_count();
+        let blocks = fs.free_blocks();
+        for _ in 0..32 {
+            drop(fs);
+            fs = mount(&disk);
+            let (ledger, _) = charge(&mut fs, &boot(2)).unwrap();
+            publish_projection(&mut fs, &ledger).unwrap();
+            let canonical = read(&mut fs, LEDGER);
+            let projection = read(&mut fs, PROJECTION.as_bytes());
+            assert_eq!(projection.len(), LEDGER_BYTES);
+            assert_eq!(projection, canonical);
+            assert_eq!(parse_ledger(&projection), Some(ledger));
+            assert_eq!(fs.object_count(), objects);
+            assert_eq!(fs.free_blocks(), blocks);
+        }
+    }
+
+    #[test]
+    fn an_empty_projection_from_interrupted_creation_is_rebuilt() {
+        let disk = image();
+        let mut fs = mount(&disk);
+        fs.mkdir(b"/var/log").unwrap();
+        charge(&mut fs, &boot(1)).unwrap();
+        create(&mut fs, PROJECTION.as_bytes(), b"").unwrap();
+        drop(fs);
+        let mut fs = mount(&disk);
+        let (ledger, _) = charge(&mut fs, &boot(2)).unwrap();
+        publish_projection(&mut fs, &ledger).unwrap();
+        assert_eq!(parse_ledger(&read(&mut fs, PROJECTION.as_bytes())), Some(ledger));
+    }
+
+    #[test]
+    fn projection_refuses_a_ledger_other_than_the_current_canonical_one() {
+        let disk = image();
+        let mut fs = mount(&disk);
+        fs.mkdir(b"/var/log").unwrap();
+        let (old, _) = charge(&mut fs, &boot(1)).unwrap();
+        publish_projection(&mut fs, &old).unwrap();
+        let (current, _) = charge(&mut fs, &boot(2)).unwrap();
+        assert_eq!(publish_projection(&mut fs, &old), Err(Error::Invalid));
+        assert_eq!(parse_ledger(&read(&mut fs, PROJECTION.as_bytes())), Some(old));
+        publish_projection(&mut fs, &current).unwrap();
+        assert_eq!(parse_ledger(&read(&mut fs, PROJECTION.as_bytes())), Some(current));
+    }
+
+    #[test]
+    fn projection_repairs_wrong_kind_size_or_permissions() {
+        for shape in ["directory", "nonempty-directory", "readonly", "short", "oversized"] {
+            let disk = image();
+            let mut fs = mount(&disk);
+            fs.mkdir(b"/var/log").unwrap();
+            let (ledger, _) = charge(&mut fs, &boot(1)).unwrap();
+            let path = PROJECTION.as_bytes();
+            create(&mut fs, b"/var/log/keep", b"unrelated log").unwrap();
+            let canonical = read(&mut fs, LEDGER);
+            match shape {
+                "directory" => fs.mkdir(path).unwrap(),
+                "nonempty-directory" => {
+                    fs.mkdir(path).unwrap();
+                    fs.mkdir(b"/var/log/network-recovery/child").unwrap();
+                    create(&mut fs, b"/var/log/network-recovery/child/data", b"wrong shape").unwrap();
+                    fs.set_readonly_path(b"/var/log/network-recovery/child/data", true).unwrap();
+                }
+                "readonly" => {
+                    create(&mut fs, path, &[0; LEDGER_BYTES]).unwrap();
+                    fs.set_readonly_path(path, true).unwrap();
+                }
+                "short" => create(&mut fs, path, b"short").unwrap(),
+                _ => create(&mut fs, path, &[0; LEDGER_BYTES + 1]).unwrap(),
+            }
+            publish_projection(&mut fs, &ledger).unwrap();
+            let attr = fs.stat(path).unwrap();
+            assert_eq!(attr.kind, absd_fs::Kind::File, "{shape}");
+            assert!(!attr.readonly, "{shape}");
+            assert_eq!(attr.size, LEDGER_BYTES as u64, "{shape}");
+            assert_eq!(read(&mut fs, path), canonical, "{shape}");
+            assert_eq!(read(&mut fs, LEDGER), canonical, "{shape}");
+            assert_eq!(read(&mut fs, b"/var/log/keep"), b"unrelated log", "{shape}");
+        }
+    }
+
+    #[test]
+    fn an_existing_projection_updates_on_a_full_disk() {
+        let disk = image();
+        let mut fs = mount(&disk);
+        fs.mkdir(b"/var/log").unwrap();
+        let (ledger, _) = charge(&mut fs, &boot(1)).unwrap();
+        publish_projection(&mut fs, &ledger).unwrap();
+        let handle = fs.open(b"/var/filler", OpenFlags {
+            write: true, create: true, create_new: true, ..OpenFlags::default()
+        }).unwrap();
+        let chunk = [0xa5; 4096];
+        let mut offset = 0;
+        loop {
+            match fs.write_at(handle, offset, &chunk) {
+                Ok(n) => offset += n as u64,
+                Err(Error::NoSpace) => break,
+                Err(error) => panic!("{error:?}"),
+            }
+        }
+        fs.close(handle).unwrap();
+        fs.sync().unwrap();
+        assert_eq!(fs.free_blocks(), 0);
+        drop(fs);
+        let mut fs = mount(&disk);
+        let (ledger, _) = charge(&mut fs, &boot(2)).unwrap();
+        publish_projection(&mut fs, &ledger).unwrap();
+        assert_eq!(fs.free_blocks(), 0);
+        assert_eq!(parse_ledger(&read(&mut fs, PROJECTION.as_bytes())), Some(ledger));
     }
 
     #[test]

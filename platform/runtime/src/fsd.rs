@@ -20,6 +20,7 @@ use absd_fsd::proto::{self, Frame, Mount, Reader, derive, op, status};
 use absd_fsd::version;
 
 use crate::syscall3;
+use crate::wire_kind::WireKind;
 
 const SYS_WRITE: u64 = 1;
 const SYS_GETPID: u64 = 4;
@@ -524,9 +525,10 @@ pub(crate) fn stat(path: &[u8]) -> Result<[u8; proto::ATTR_BYTES], i64> {
     attr(Frame::request(op::STAT).bytes(path).finish())
 }
 
-/// The kind word of an attribute record: 1 file, 2 directory.
-pub(crate) fn kind(attr: &[u8; proto::ATTR_BYTES]) -> u32 {
-    u32::from_le_bytes(attr[..4].try_into().unwrap())
+/// The kind of an attribute record: 1 file, 2 directory; any other word
+/// is refused with -5 (SPEC A21), never read as either.
+pub(crate) fn kind(attr: &[u8; proto::ATTR_BYTES]) -> Result<WireKind, i64> {
+    crate::wire_kind::of_attr(attr)
 }
 
 pub(crate) fn size(attr: &[u8; proto::ATTR_BYTES]) -> u64 {
@@ -601,8 +603,9 @@ pub(crate) fn read_file(path: &[u8], limit: u64) -> Result<Vec<u8>, i64> {
 pub(crate) fn read_file_into(path: &[u8], limit: u64, bytes: &mut Vec<u8>) -> Result<(), i64> {
     bytes.clear();
     let attr = stat(path)?;
-    if kind(&attr) != 1 {
-        return Err(-21);
+    match kind(&attr)? {
+        WireKind::File => {}
+        WireKind::Dir => return Err(-21),
     }
     if size(&attr) > limit {
         return Err(-27);

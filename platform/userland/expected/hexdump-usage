@@ -1,0 +1,5 @@
+status 2
+--- stdout
+--- stderr
+usage: hexdump [-bcCdox] [-v] [-n LEN] [-s SKIP] [FILE ...]
+custom formats -e/-f are unsupported

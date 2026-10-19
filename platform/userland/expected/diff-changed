@@ -1,0 +1,13 @@
+status 1
+--- stdout
+--- "words.txt"
++++ "words2.txt"
+@@ -1,6 +1,6 @@
+ b
+ a
+-a
++x
+ c
+ c
+ c
+--- stderr

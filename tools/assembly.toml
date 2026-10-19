@@ -13,16 +13,16 @@ held = []
 # and the README says the same; an item leaves this list only when a receipt
 # for the exact release revisions exists.
 not_run = [
-  "kernel suite (kernel `make check`) on kernel 260b4a2",
-  "platform gate, core profile (`tools/check.sh platform`) on platform 65cf80f with kernel 260b4a2",
-  "platform gate, full profile with the Pulse, AG, Nightshift and NQ workloads (development repositories only)",
-  "second clean build to compare image digests",
+  "clean-room rebuild from this proposed public tree compared with the published RC1 operator ISO, enrollment ISO and raw disk",
+  "kernel suite and platform core gate from this assembled source snapshot",
+  "external independent reproduction of the published RC1 binaries",
+  "TinyCC compiler qualification: NOT_RUN, not included in the public source",
 ]
 
 [release]
-id = "absd-preview-20261010"
-date = "2026-10-10"
-status = "technical preview: built, booted and smoke-tested from a clean clone under software emulation; the qualification suites were not run on these revisions (see not_run); scheduled after 2026-10-17"
+id = "absd-source-rc1"
+date = "2026-10-18"
+status = "proposed corresponding first-party source for the published absd-preview-rc1 binaries; source checks, clean-room reconstruction and publication are separate decisions; no external reproduction claim"
 
 [toolchain]
 rust_kernel = "1.98.0 (kernel/rust-toolchain.toml)"
@@ -32,23 +32,32 @@ clang = "18.1.3 (clang, llvm-ar-18, llvm-strip-18)"
 qemu = "8.2.2 (qemu-system-x86_64)"
 grub = "2.12 (grub-mkrescue, with xorriso 1.5.6)"
 groff = "1.23.0 (exact; platform/scripts/verify-inputs.sh)"
+lld_c_kit = "17 (ld.lld-17; clang-18 builtins archive from libclang-rt-18-dev; these host package builds are not fully digest-pinned)"
+
+[notice_check]
+script = "tools/rc1_notices.py"
+base_env = "ABSD_RC1_BASE_NOTICES"
 
 [[component]]
 name = "kernel"
+keep_check_inputs = true
 role = "kernel, architecture support, boot, kernel tests"
 source = "absd-kernel (private development repository)"
-commit = "260b4a20755a70db2ec8aa4556b9c576285fe284"
+commit = "d208b61bcd4826181bf9f401551ab620d4eabba0"
 dest = "kernel"
 readiness = true
 # Campaign records, review transcripts, hardware survey receipts and the
 # agent instructions: development custody, not source.
-exclude = ["docs/*/*", "AGENTS.md"]
+exclude = ["docs/*/*", "docs/BUILD-REPRODUCIBILITY.md", "docs/FRAME-ADMISSION-V0-IMPLEMENTATION.md",
+           "docs/FRAME-ADMISSION-V0-INTERFACE.md", "docs/NATIVE-USB-STAGE2.md", "docs/NATIVE-USB-STAGE3.md",
+           "docs/STORAGE-STALE-WRITE-FENCE.md", "AGENTS.md"]
 
 [[component]]
 name = "platform"
+keep_check_inputs = true
 role = "native userspace, servers, shell, SSH, Rust standard-library port, image tooling, platform tests"
 source = "absd-rust-std (private development repository)"
-commit = "65cf80f9440f8bba018f5993aa70744e4e0d5b64"
+commit = "0fada7ed031bd84e3a469e717c1d0be5dbefedd6"
 dest = "platform"
 readiness = true
 # Qualification receipts recorded on the development host, agent
@@ -58,18 +67,22 @@ readiness = true
 # projects' NOTICE files; and the extended integration profile's own
 # programs and reference tools (integration/, durable/, tools/, the request
 # builder), which are written against those projects' code and in places
-# repeat it. Only the extended profile reads any of this, and it is run from
-# the development repositories, not from a release.
-exclude = ["docs/u1-endurance-20261008/*", "docs/user-tools-20261008/*", "AGENTS.md",
+# repeat it. The core ABI-facts checker also reads the generic integration
+# linker script, so keep that exact input; it contains no external program.
+# Other integration programs remain excluded with the extended profile.
+keep = ["integration/user-linker.ld"]
+exclude = ["docs/*/*", "cports/demand/*.log", "AGENTS.md",
+           "docs/BUILD-REPRODUCIBILITY-20261017.md", "docs/C-PORTABILITY-ASSUMPTIONS.md", "docs/NATIVE-DHCP.md", "docs/NATIVE-ICMP-ECHO-PROOF.md", "docs/NATIVE-ICMP-ECHO.md", "docs/NATIVE-ICMP.md", "docs/NATIVE-IPV6-DAD-PROOF.md", "docs/NATIVE-IPV6-ECHO-PROOF.md", "docs/NATIVE-IPV6-MTU1280-PROOF.md", "docs/NATIVE-IPV6-ROUTED-TCP.md", "docs/NATIVE-QUIC-EXPERIMENT.md", "docs/NATIVE-SNTP-PROOF.md", "docs/NATIVE-SNTP.md", "docs/NATIVE-TCP.md", "docs/NATIVE-TLS-EXPERIMENT.md", "docs/NATIVE-UDP.md",
            "patches/ag-*.patch", "patches/nq-absd.patch", "patches/nightshiftd-absd.patch", "patches/pulse-*.patch",
            "ag/*", "nq/*", "provenance/upstream-notices/*",
-           "integration/*", "durable/*", "tools/*", "fixtures/nightshift-pipeline/tools/*"]
+           "integration/*", "durable/*", "tools/*", "fixtures/nightshift-pipeline/tools/*",
+           "tcc/patches/*.patch", "tcc/build/*"]
 
 # Cross-references between components that must agree with the commits above.
 [[pin]]
 component = "kernel"
-file = "platform/scripts/check-all.sh"
-pattern = 'kernel_commit=\$\{ABSD_KERNEL_COMMIT:-([0-9a-f]{40})\}'
+file = "tools/rebuild-rc1.sh"
+pattern = 'export ABSD_KERNEL_COMMIT=([0-9a-f]{40})'
 
 # Private-material findings accepted with a stated reason and the number of
 # lines the reason was written for. Everything else the scan finds, and any
@@ -147,7 +160,7 @@ reason = "a release is one new commit of an assembled tree; no development histo
 [[discharged]]
 component = "platform"
 obligation = "PORT-SIBLING-CHECKOUTS"
-reason = "a release builds, boots and runs its core checks from this tree alone; only the extended integration profile, run from the development repositories, uses other checkouts"
+reason = "the core source and public dependency pins are included; private other-project inputs belong to the excluded extended profile. A clean-room rebuild and core qualification of this snapshot remain explicitly NOT_RUN, not implied by this discharge."
 [[discharged]]
 component = "platform"
 obligation = "OWNER-PROJECT-NOTICES"
@@ -156,3 +169,679 @@ reason = "this tree carries no Pulse or Nightshift material: their source, the p
 component = "platform"
 obligation = "PRIVATE-PROJECT-MATERIAL"
 reason = "owner decision 2026-10-10: no source of the owner's other projects is in a release; what remains are ABSD's own test programs and synthetic fixtures for the extended profile"
+
+[[source_edit]]
+component = "kernel"
+path = "Makefile"
+input_sha256 = "2b13013df4d4cd23671f696f6814542b4c90111ae7e2294eb53f36db36a3944e"
+output_sha256 = "58bae5f0e6d9bf7c13bbad8b53c41a17b807cb765237db9460b9c58816050c64"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 1206
+input_sha256 = "f217dcba488016c6f83197db4fa50786f8698f0564e64e2b8cd86e023b01c049"
+text = "# Host-only frame v0 gate. No emulator or external effects.\n"
+
+[[source_edit.change]]
+line = 518
+input_sha256 = "a0aeda03223b6e04057d3d8f1111d1959fd8b3fb748d1714c68a92b41cea1c37"
+text = "# The AHCI census ISO (docs/hardware/SATA-AHCI-CENSUS.md):\n"
+
+[[source_edit]]
+component = "platform"
+path = "c/vectors/startup/README.md"
+input_sha256 = "38b631239108ecd0b40dab90da616cab46861f387f26b6fab2364188f5540c6e"
+output_sha256 = "0bef52f3c4934dbbc11730b1adaa651c88c1c616786f9745a821dfb7c297bbe1"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 34
+input_sha256 = "9b84c3b181b09789592c3dd7013cfb82659f5c5ae44444c840014c8c9a65040d"
+text = "    R=/path/to/c-kit\n"
+
+[[source_edit]]
+component = "platform"
+path = "cports/programs.tsv"
+input_sha256 = "9f03ef17f5e5a9a34b1532950cdbda337d6b158e737f698ca8fdf71fcaa5c626"
+output_sha256 = "f7eeb6a8bf3545bcdcc7346180fdead422e2d6fed353f2d0e60e3269a99fc296"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 8
+input_sha256 = "c505d3b785c65416fe0fefcff562000bcb19a5f303b5347f6b4859e3e1f730d9"
+text = "# the source-download directory selected by the C-port build scripts.\n"
+
+[[source_edit]]
+component = "platform"
+path = "fixtures/native-dhcp/captured-client.json"
+input_sha256 = "3f274ab041cd912e84007cfbcab5e461f942551599f1114289095aced4368d46"
+output_sha256 = "967cf95c8dbef63b629ba7da5057647dd1cbd306aeabc407ae1eee5bb69eae4c"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 3
+input_sha256 = "0bb393388b191f8a5ccad7d3a1c4e21aea284373c1e2b5d90963a3a52994dfce"
+text = "  \"capture\": \"native-dhcp.pcap (development capture not included)\",\n"
+
+[[source_edit]]
+component = "platform"
+path = "fixtures/native-dhcp/captured-offer.json"
+input_sha256 = "7979277ead39c34c54f97d869d0eed31ddfa87976d5d2df6dd4721c87e6c78fd"
+output_sha256 = "2e1a678c9080647005d3779e1d3472a2423c749ebf58b7c39f8c46fcc8aeb462"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 4
+input_sha256 = "0bb393388b191f8a5ccad7d3a1c4e21aea284373c1e2b5d90963a3a52994dfce"
+text = "  \"capture\": \"native-dhcp.pcap (development capture not included)\",\n"
+
+[[source_edit]]
+component = "platform"
+path = "media/z2-usb.toml"
+input_sha256 = "6a786df8e375bde4700f0c45b600bd2c7b4c20029f31bde5307bd0cee21b1135"
+output_sha256 = "131719b7d3f708d3c24315f50927c80523352b0fc0c3ffc1ff8b6b006fd198d5"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 3
+input_sha256 = "edfaaf2be5af27b3131fa8cc0989ea0345bb053cb02ea3ff0e6c376a8dfafc74"
+text = "# bf8c7583/f8184ca, the development checkout).\n"
+
+[[source_edit.change]]
+line = 2
+input_sha256 = "bdd07b99b215bad32f3b76608362a75359698db007e44d01d6db303456e084a5"
+text = "# attended boot (generalised from the S4 recipe for\n"
+
+[[source_edit]]
+component = "platform"
+path = "provenance.toml"
+input_sha256 = "39d097cade9185b80eabd1072bd9f486734cb1038af65628131b6a328374eed3"
+output_sha256 = "51f416b510ada376e8c0192e5d9df248b3d80808e5e72f486b62055543d8eb19"
+reason = "Preserve existing comment curation; correct two labels to the existing recorded upstream terms. The named adapted files are excluded; no source publication election is made by these labels."
+
+[[source_edit.change]]
+line = 64
+input_sha256 = "4ee79e40a294c930a970459f32890c5299e989233e5c56de3b6af2928485672b"
+text = "# The enrollment key cases (slice A): authorized_keys inputs\n"
+
+[[source_edit.change]]
+line = 88
+input_sha256 = "be307b583289f147c992c5d20fa1ce1aaecd41d1120ba137130146a1645e8f41"
+text = "# checkout path the development checkout \u2014 short\n"
+
+[[source_edit.change]]
+line = 196
+input_sha256 = "1f86d7f4d3d8c8126a4df239f6d0099870c29cdaa55956856753c240dcb4c8fc"
+text = "license = \"LGPL-2.1-or-later\"\n"
+
+[[source_edit.change]]
+line = 208
+input_sha256 = "1f86d7f4d3d8c8126a4df239f6d0099870c29cdaa55956856753c240dcb4c8fc"
+text = "license = \"LGPL-2.1-or-later\"\n"
+
+[[source_edit.change]]
+line = 213
+input_sha256 = "336834a999aaa6366cb2c6d7f21bed0cd8ad77a227518b6bd2ce32e3e3fa194f"
+text = "# the development checkout as tool output; no upstream text.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/build-tcc.sh"
+input_sha256 = "f598e489c54f2a419a846d9aa1e658339acdb3f27d5eb5b7506b290ba3eae05c"
+output_sha256 = "b439c5bdf8d3646f2b02c81b8db046fe4243e10d9d83d4c06c6972d436258e7a"
+reason = "Keep the original script body for existing static checks; public-only entry refuses omitted TinyCC work before environment processing, external commands or output creation."
+
+[[source_edit.change]]
+line = 1
+input_sha256 = "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"
+text = "#!/bin/sh\n# Public snapshot: the omitted TinyCC stage is never a passing test.\nprintf '%s\\n' 'TCC STAGE NOT_RUN: not included in the public source' >&2\nexit 78\n"
+
+[[source_edit.change]]
+line = 51
+input_sha256 = "6c871674ef41c2906e36c113f391acb997645d3ea8689bede25104612de996c2"
+text = "# repository encloses the build directory (here the development checkout), not tinycc's.\n"
+
+[[source_edit.change]]
+line = 66
+input_sha256 = "d46f72732def88c7a74361a2ee718fc7baa581d94fe912796b52520cf9aee9af"
+text = "# A pristine copy of the pinned commit; a plain directory under the development checkout, so\n"
+
+[[source_edit.change]]
+line = 249
+input_sha256 = "fdd21edb4dcc82da527c1099ca5142783fc00da36cfc1bcd0f75f8ae870e031f"
+text = "# Picolibc's assert); the image must carry no the development checkout path of its own.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/media.py"
+input_sha256 = "fcce6ebb2059efc2f5aa31beb713e689c7b639d96c8a4ffb441af0cc909a2b9e"
+output_sha256 = "d45551aa4ee587343852d9167269ebe728fcc7bcab8115f724f46e2191a86abb"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+
+[[source_edit.change]]
+line = 2
+input_sha256 = "999bdf77179c12f43c24ed987515f61c1a8af063c0547bffe2bc1f532b7575e9"
+text = "\"\"\"Reproducible boot media for one frozen kernel/platform pair.\n"
+
+[[source_edit.change]]
+line = 3
+input_sha256 = "ff1627881a0f2b9b848f3695a08294d23b183c6a772e4f306f858e3efa6e3013"
+text = "Generalises the S4 recipe (the development checkout,\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-ipv6-echo-matrix.py"
+input_sha256 = "a94e3291e5e4ec5902e8cd03f12f1b630a9a3fbfbfe97fed421eb7b10f290d58"
+output_sha256 = "15a9eac33dbe76e98298fc53ba35654358ba8285aaf40107f9c908bfb568ae60"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 129
+input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
+text = "# globals, profiles or classifier. Guest execution requires a dedicated VM.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-ipv6-mtu1280-matrix.py"
+input_sha256 = "a7aa2078f532c044c1d5d67fd2157476c978d4448b6af41bb39605f926273cec"
+output_sha256 = "51a8c6b952a7d015537698691b53cc3e398cf77d0425157833a5a59d301bb362"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 84
+input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
+text = "# globals, profiles or classifier. Guest execution requires a dedicated VM.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-ipv6-route-matrix.py"
+input_sha256 = "4b1fd7cd23cd3c0f8325961551c3eb034a3b511bb02ed2d7e3dbe53998cfb8c2"
+output_sha256 = "d561118c6e0e7a45cd9cfc7d21c66692f2b791370ff9582f6acfee080a81102a"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 80
+input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
+text = "# globals, profiles or classifier. Guest execution requires a dedicated VM.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-ipv6-routed-tcp-matrix.py"
+input_sha256 = "0f93d3363dc4c05728cbfc53bf233df84089a116341843695b98a12f7de76a61"
+output_sha256 = "756edf97125bbf06852789ff5ea294f1c81837516aa80ebbdaf590ee0368bf11"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 80
+input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
+text = "# globals, profiles or classifier. Guest execution requires a dedicated VM.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-sntp-matrix-tests.py"
+input_sha256 = "baa07c36c8fba698cd039ec7d302e493acfaa8305812b013b8d2f8b92a0345d7"
+output_sha256 = "0245c39e5fca7e10838bdfd4e62114838fa694914fa07459f5a3f0720533c489"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 4
+input_sha256 = "c4fa7a93e045952d01d0ce4ce733684d3acf5da742552b94e251a13187411319"
+text = "Execute on a dedicated VM; source-only tests do not establish guest behavior.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-agent-exec.sh"
+input_sha256 = "9e6cc62d0304f7e468b72cda6fbbf060cb749ddfe71574efc3d5d667a8e5be02"
+output_sha256 = "e34320bf13745d185bd03247c3c31a5d23a8c868bbebc1a18db705acfbb23d54"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 9
+input_sha256 = "948f966eb410963b20d11ac7129d85b7d1a0c721f4184aa2fe83a0e54197f40b"
+text = "# the protected kernel source or a kernel source checkout); ABSD_QEMU (default\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-clang-guest.sh"
+input_sha256 = "90ca42b571da0684b10d166f260311cfeb6911498bbff19c8c7decf03ed2a685"
+output_sha256 = "d85164ea2c56d5653baefd4c5baaa5ee0d306d2c0084c422670c7ec4bb012ef8"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 19
+input_sha256 = "a1326182e7259f37e5182192eda0cc3d6ae957f971edbc66b5f29c6e449ad8df"
+text = "# the protected kernel source); ABSD_CLANG_PLATFORM (required; a built platform\n"
+[[source_edit.change]]
+line = 74
+input_sha256 = "bb29fa44fb44f1d319d91dadcd094a9d6e0f972ec337ce9273bb6333c7d5a267"
+text = "# (the first guest run stamped the protected kernel source HEAD this way; GUEST-RESULT.md).\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-cports.sh"
+input_sha256 = "eb93bca3ada0ff4d6ced079c8919bcc0e13f0d84b5121871ce29f981ac142827"
+output_sha256 = "db29342d03a9ab4547bc26f8891b855f4b99679161e964fe1cf6c446ad5b3acf"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 11
+input_sha256 = "25060e9c02af0dfcc4d65edc4272f9bdf914b4e5330c6a647b3ec6bc62b21073"
+text = "# the protected kernel source); ABSD_SKIP_BUILD=1 reuses the adapter archive, the\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-perf-matrix.sh"
+input_sha256 = "71f476e180080303c6a686911c2b0a93cb728141cc230464378bdfe650b66c8f"
+output_sha256 = "f0152c4912d3d46968ffe8be5722533b5726538ab91829b5557edf90dbc0ac0a"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 10
+input_sha256 = "3fa5b3431211e992124bd5e6bb7e0f34f1f8e0fb992a84adb4a4e8fb87cb3fa6"
+text = "# ABSD_PERF_RECORD to measure, not as the gate. The baseline is TCG-only.\n"
+[[source_edit.change]]
+line = 11
+input_sha256 = "22a2f8ea028ce5283b4efdae8a9728e65479d1714c10ef049fdb2416f5d8e130"
+text = "#\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-tcc.sh"
+input_sha256 = "dd8b62ae51f6f4f8be989e3a97347665a0891ad529d22cb843dfbddfaf795409"
+output_sha256 = "090e3721190a2215015877985a7abe51a18ba4787f34f4fb4efea6b57084983c"
+reason = "Keep the original script body for existing static checks; public-only entry refuses omitted TinyCC work before environment processing, external commands or output creation."
+
+[[source_edit.change]]
+line = 1
+input_sha256 = "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"
+text = "#!/bin/sh\n# Public snapshot: the omitted TinyCC stage is never a passing test.\nprintf '%s\\n' 'TCC STAGE NOT_RUN: not included in the public source' >&2\nexit 78\n"
+
+[[source_edit.change]]
+line = 18
+input_sha256 = "510d074d2473ac7f64278894678e4bdaa24b8655523ba00116264e2294efd0c0"
+text = "# the protected kernel source); ABSD_SKIP_BUILD=1 reuses the staged tree and the\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-userland-matrix.sh"
+input_sha256 = "7f8584215f9f15fcdb36e86ec2e9c8b079981b020083795d6b68cf8c7f4ea674"
+output_sha256 = "a0be9fc5bea3328973d9f1c7a742b2b7baeb9a15d9c8a0d469a735dc59c0101a"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 9
+input_sha256 = "259ca43105cb7962b2effb09774f57a7373b135959d8fd13477d6c1a1168453d"
+text = "# the protected kernel source); ABSD_USERLAND_PLATFORM (required);\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_absd_try.py"
+input_sha256 = "b07091f8e2f5028e50fb504f07af0826038e12da2557af8300cc1b40f3c70e66"
+output_sha256 = "688b29898fe82ce86d59dca096f8194b27f3a5785cb263662d764efb8a4726eb"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 551
+input_sha256 = "363fa7ae8bf3ee680c9de4de208bd86b01a4349af841ff0547cea424b518b0a0"
+text = "REAL_DISK = pathlib.Path(os.environ.get(\"ABSD_TRY_REAL_DISK\", \"/nonexistent/absd-reference/absd-operator.img\"))\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_media.py"
+input_sha256 = "f245856a1cb173088e31675fdd005e1f1943de18fcf4974e0674f7917d2f8981"
+output_sha256 = "1f240f3cebd0cbeaeb09560065b5f50b507552856986cb17b2f9a70e7bd475e4"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 4
+input_sha256 = "e0e7050850d3aa55ad8289a328ef0456d0dfa23829a48972eed4d85be5e90740"
+text = "Against S4's retained candidate (/nonexistent/absd-s4-candidate,\n"
+[[source_edit.change]]
+line = 34
+input_sha256 = "5545c43e8baba0e9fd36952c5e74c85b8d185880cd6d06e4573e8b2f55abd17b"
+text = "S4 = pathlib.Path(os.environ.get(\"ABSD_S4_CANDIDATE\", \"/nonexistent/absd-s4-candidate\"))\n"
+[[source_edit.change]]
+line = 475
+input_sha256 = "9509818287ffce523d29b7f45baa9e045ab5d661ded7a91221f19ec4ae5c7646"
+text = "U1B = pathlib.Path(os.environ.get(\"ABSD_U1B_IMAGE\", \"/nonexistent/absd-u1b-image\"))\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/testdata/candidate8-release-manifest-v1.toml"
+input_sha256 = "edd1dfb59302cb0496f95031ccdecce1262166c34db978f41b996010f14e1e6b"
+output_sha256 = "1d3bae2c1600d1df0e341777dc8fc4117e0399ddefc9d23dc9a9df2a25e6a054"
+reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
+[[source_edit.change]]
+line = 3
+input_sha256 = "c8928a869382c052e0c3ae133b7591d47a3729f74e45203aab8d3be1cdcd0a5a"
+text = "# file is /unavailable/development-record\n"
+[[source_edit.change]]
+line = 23
+input_sha256 = "0eb2ace549ccd2b0881669589eea44c0ec2418aa5776388f2b2fdab59f85d85f"
+text = "kernel_repository = \"/unavailable/development-record\"\n"
+[[source_edit.change]]
+line = 24
+input_sha256 = "e88afc5496329b2bf248b1ba93dc2b398181e9a112e1c5ac702eb0b8736378fc"
+text = "kernel_remote = \"/unavailable/development-record\"\n"
+[[source_edit.change]]
+line = 27
+input_sha256 = "a28aeb5e47f5b78557ccb4143553aff596a4f060eabdf88e07287b1ef5508564"
+text = "platform_repository = \"/unavailable/development-record\"\n"
+[[source_edit.change]]
+line = 28
+input_sha256 = "547b8ee36758484d3e6ffed399cdda5c690a107d4e1eb4c6e23b068eecf86b14"
+text = "platform_remote = \"/unavailable/development-record\"\n"
+[[source_edit.change]]
+line = 41
+input_sha256 = "20800a76fadedc38c2a7978c37f484d6ec7dcb7b749a7b77aa73b94e3ec8df93"
+text = "components_toml = \"/unavailable/development-record\"\n"
+
+[[accept]]
+kinds = ["development-path"]
+paths = ["platform/scripts/run-agent-exec.sh", "platform/scripts/run-c-kit.sh", "platform/scripts/run-clang-guest.sh", "platform/scripts/run-cports.sh", "platform/scripts/run-tcc.sh", "platform/scripts/run-userland-matrix.sh"]
+lines = 12
+reason = "literal refusal checks against the protected development kernel source; preserve their behavior in public tests"
+
+[[accept]]
+kinds = ["development-path"]
+paths = ["platform/scripts/build-tcc.sh"]
+lines = 2
+reason = "literal output checks that reject embedded development paths; these are detection needles"
+
+[[discharged]]
+component = "kernel"
+obligation = "XHCI-LEGACY-MASKS-ON-MERGE"
+reason = "At d208b61b src/xhci_legacy.rs cites xHCI 1.2 sections 7.1.1/Table 7-4 and 7.1.2/Table 7-5 beside the masks; this source remains unchanged."
+
+[[pin]]
+component = "platform"
+file = "tools/rebuild-rc1.sh"
+pattern = 'export ABSD_PLATFORM_COMMIT=([0-9a-f]{40})'
+
+[[source_edit]]
+component = "platform"
+path = "scripts/media_operator.py"
+input_sha256 = "08d59cfc08fe2fe79f1258e64ea296a6896d81a37e27922cf43d72420cb8ab1a"
+output_sha256 = "dd51030372819dbc5c7529ec6cb4a4796ed9755e848d428d79d129c8fc80c462"
+reason = "Public rebuild tool adaptation: force fresh Python cache prefix and disable bytecode writes for the isolated child builder; no kernel/service algorithm change."
+[[source_edit.change]]
+line = 384
+input_sha256 = "a728bf8a5626ef2d82d859ec5a25c7022913aa24ebfc55e6594fd053c50fccc5"
+text = "    command = [\"/usr/bin/python3\", \"-I\", \"-B\", \"-X\", f\"pycache_prefix={work / 'python-cache'}\", str(platform / \"scripts\" / \"operator_image.py\"), \"build\", \"--kernel\", str(kernel),\n"
+
+[[discharged]]
+component = "kernel"
+obligation = "I219-ON-MERGE"
+reason = "The frozen source carries LICENSES/BSD-3-Clause.txt, the Intel driver header and matching provenance rule. Published RC1 notices archive 9d2760276584cebce0dac55cdcc9a5cb75618497e8720c26bd5e45c4960eae4b contains Intel-I219-BSD-3-Clause.txt. The about-page contradiction was corrected in public site main 58126fb07ca19b919ef7e668790cfc7faa8dfcaa, gh-pages 4492679, verified deployed at 2026-10-18T22:10:27Z. Additional if_em/Picolibc/libm texts are separately enforced by NOTICES."
+
+[[source_edit]]
+component = "kernel"
+path = "docs/NATIVE-USB-STAGE1.md"
+input_sha256 = "0b6d94f4b9593c97a200831c3c32845e5929f4a7d2df222bfb8465526da95457"
+output_sha256 = "c8cd249a81b861dda9b89efa361a0a89adb24b20c1e416292adcbc9d6140af6f"
+reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+[[source_edit.change]]
+line = 3
+input_sha256 = "3f0b26c2d9f9a57a2624cb96bae579cc1be8beeca4532d9a63783300e156d73c"
+text = "Tracked internally.\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/NETWORK.md"
+input_sha256 = "e7a804b054eca264c3719032d901f8f60a73bafe1b7f706adc687ed26aea911e"
+output_sha256 = "25ba3acdc79a0e63a5aebc260f5c54242d98e9fbf6d7fa92968be74b9b08c0d7"
+reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+[[source_edit.change]]
+line = 294
+input_sha256 = "62e6810de7173d6e3211d5a7f2dfc8f780cc894143e5f1cac352c9623d03acd3"
+text = "consumer recorded in the internal tracker.\n"
+[[source_edit.change]]
+line = 360
+input_sha256 = "08a027b79b0daffa8ff0d57fe4d89332000497d527f3120ca436b1904d3d6269"
+text = "frames late. Measured (recorded internally, QEMU 8.2.2, Vultr bare metal, three\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/OWNERSHIP-BOUNDARIES.md"
+input_sha256 = "f0c0b192a6c99dd504709bddc75576ff1fd0e6d801126fc11e6594ca3e270376"
+output_sha256 = "5205672596a387a3150f3595cde37c38b1826bcf58b7965b10d81ebbdb694233"
+reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+[[source_edit.change]]
+line = 250
+input_sha256 = "e727a63dbe8cfc49245504807c4e9a29e7e505f1f99d1b71a441ee35624299c3"
+text = "existing native-storage lane, recorded internally;\n"
+[[source_edit.change]]
+line = 251
+input_sha256 = "9475850f6ab47d4fe094d182d63f1e20842834ccc4390a25cf5b25ac3fa3f936"
+text = "this note does not admit a second lane.\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/USB-PPC-LATE-TRIP.md"
+input_sha256 = "8efdd40942a7a1f8da73ad7b79f678aff0f8c8ad06311adba985675fc7025d7c"
+output_sha256 = "48384c14cc552811c920bb6b1e9c4e123c104b2af28b35bc9c93c016e3a3fca3"
+reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+[[source_edit.change]]
+line = 3
+input_sha256 = "4d4f6c29d586881f65bb74c513c9f8bff88b55a0a86079881b27435a906fa60a"
+text = "B-M1 is admitted under the internal USB tracking record, from `26854f60`, for a kernel\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/USB-PPC-LIVENESS.md"
+input_sha256 = "afda8ae3f7065d2697f56fee1090c4a9d75e79bf1c924d566f210f2c9e33b706"
+output_sha256 = "88e178afe79d3facce733c90f83489f06cf6ca079e40d97cc8450e10a6bfb038"
+reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+[[source_edit.change]]
+line = 3
+input_sha256 = "4862c74f50a02023ae7e3759d1bc891083b7593d675028271ca25f1b0f652104"
+text = "Admitted by the integration steward in the internal tracker on 2026-10-17,\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/USERSPACE.md"
+input_sha256 = "39085c40065884526c84ecbb1b5a0b685bc21394c0acef58b695ffbf20d0c513"
+output_sha256 = "870d790c79ca1dc06fb94e40bc0ec61853cb7c587fadc9342a701014598b655f"
+reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+[[source_edit.change]]
+line = 75
+input_sha256 = "f009769178a82b2c771ef9dbf7f3cfd74a9f81457655fdccb116fce0bab13e92"
+text = "(`make ENROLL_STREAM=1 durable-iso`, configuration decision recorded internally\n"
+[[source_edit.change]]
+line = 76
+input_sha256 = "1e32782c16d6db0ad902bd59d4d64f6af51a0c5d3d591efc021b39db4ce24112"
+text = "on 2026-10-16). The choice is made when the image is built, so no boot option or kernel\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/ENROLLMENT.md"
+input_sha256 = "2d60d62d84a37746b4c01020a9c6c86428afef90c98015fb47c046352b1a08f1"
+output_sha256 = "940003c07d1ca02cde8cc858bc503ce125b8ecc7f4aba7990097b0995a1b52f5"
+reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+[[source_edit.change]]
+line = 18
+input_sha256 = "c66bcd6855123a221fc757921775b3299ede019bac1a7a333b1252976214d30c"
+text = "The configuration decision recorded internally on 2026-10-16 makes the enrollment image\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-ICMPV6-FEEDBACK.md"
+input_sha256 = "c718e6164a50c4b3734dd0d83f5aab31a1ce3965630019b32f009a93e15b6fd2"
+output_sha256 = "1a6eff870f16645f6f01149e4b0dc0e52050d23a9cc2fd8a1f6f0d9a039c4b50"
+reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+[[source_edit.change]]
+line = 6
+input_sha256 = "c386fc278a8a34346a26b5e2e0d7dd2c891a49a93308df690cb47e45c08aeb8d"
+text = "and tree. Canonical coordination is recorded internally. This source task\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/main.rs"
+input_sha256 = "eef57829e7049d17e6c024851467e53faf8bb998a5df5b42b5dcbe97244e6a92"
+output_sha256 = "f4f6087e597c2e8d5407c9b2437cf67561fe6b928416d345153ba1e0c602605d"
+reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+[[source_edit.change]]
+line = 1035
+input_sha256 = "e3ef9352926884af64187f80972ecff3d64f02643ae0a31d7cbc1bcf2cb376e0"
+text = "        // AHCI census slice 1: a separate census entry, before storage or\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/survey_facts.rs"
+input_sha256 = "2d375da425887ac55bc20eacb33c9765b56d94f445eedb873f0c792efb4ca5e6"
+output_sha256 = "955c41e2e27bdbbce2c7d6c238b49e0c363f1bc7802944112230f58008c05b9e"
+reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+[[source_edit.change]]
+line = 513
+input_sha256 = "b08f324b4002e05d36b0ab0dfcc7a3c5b864486f066c6b9f438b3c0b29dea5d8"
+text = "// ATA IDENTIFY DEVICE decoding (the AHCI census): pure word\n"
+[[source_edit.change]]
+line = 832
+input_sha256 = "8946cc155e493faa204efc0e421cf07673d5a2e885869e26f6d29c0ff1052c20"
+text = "// AHCI port engine stop handling: what the census may do\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/ahci.rs"
+input_sha256 = "2e2fe8bb5c64fe872b45b26b4e2af64934cd10be8f3b92afd2b56ef05831ec1c"
+output_sha256 = "da69845d78a10adc3de6da17754b30ea7b993593b443ca2718cd62f4ccc2c43e"
+reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+[[source_edit.change]]
+line = 2
+input_sha256 = "149a9cded60e063ad2f3dc6af019816fa2fe55464156df77197fbf42187f2441"
+text = "//! with IDENTIFY DEVICE alone (AHCI census, slice 1).\n"
+
+[[source_edit]]
+component = "kernel"
+path = "scripts/ahci-census-check.py"
+input_sha256 = "cc20c220e7bcca3a5785c3f927f318fe890f187ba8a2f0546aa1d8a3b1036d6d"
+output_sha256 = "4a1b76cad08b50d75368fcd3597be2688acfb16b6a323a578b1368ef7b035369"
+reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+[[source_edit.change]]
+line = 2
+input_sha256 = "7968dfe8b26358060bb45d4ad84425128636585ebb01a3fe2e96ba8cb0c96f91"
+text = "\"\"\"Gate for the AHCI census entry (docs/hardware/SATA-AHCI-CENSUS.md).\n"
+
+[[source_edit]]
+component = "platform"
+path = "ssh/Cargo.toml"
+input_sha256 = "2cd51eed3ccacd73aa344408c6049fe4dfdaa63a9c3b240ab1f3dc2db6c8e033"
+output_sha256 = "106195da818e39b54428abf213b113a5c4a78ade606c777b5db9f92fda24571f"
+reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+[[source_edit.change]]
+line = 31
+input_sha256 = "5794d5579c7e0674d073ef8a388707e2d8649ab3e8303c5be7275b2f08f33437"
+text = "# The worker of the dedicated enrollment image (slice A,\n"
+
+[[source_edit]]
+component = "platform"
+path = "ssh/src/enroll_main.rs"
+input_sha256 = "9405a9ff6f5c88b4a67cf033027b7ed017d770084752903dbe832cef75bebe92"
+output_sha256 = "86640a462c3274e48848eb062f77b73a4219e47846faacebacb6e3c3134e8393"
+reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+[[source_edit.change]]
+line = 2
+input_sha256 = "0316012590074378926f34eba27a1e42e11caac1ec84b3b110237f7105f43a28"
+text = "//! `absd-enroll`, the worker of the dedicated enrollment image\n"
+[[source_edit.change]]
+line = 3
+input_sha256 = "284cc990f59dbb365354962cfbe4b7b81fb08bd83de300ba892b178c2330bdd2"
+text = "//! (slice A; kernel `docs/USERSPACE.md`, \"enrollment build\"). Init gives\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/enroll-matrix.py"
+input_sha256 = "b6c3f3241932c159eed1cb0346eb552109613ad8db15574d27c9476d184a7b3c"
+output_sha256 = "100ccc2f7afa20755672e4df54fc520b0bc0e483607ade790c530ac5990e4058"
+reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+[[source_edit.change]]
+line = 2
+input_sha256 = "f55a95beedaea89f5312b7d776f10f574a5abbb33fcaa479bbdb2f2d24e68d92"
+text = "\"\"\"The enrollment image's case matrix (slice A).\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/absd_try.py"
+input_sha256 = "9a8ce4870b45784ac5861f0e5e3660d6be5467b0af1ae6e12eda69415baae667"
+output_sha256 = "42caa4a806b636367d7c9870de6a019cffce451de64c25d36b8c05ed31d7e9c9"
+reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+[[source_edit.change]]
+line = 3
+input_sha256 = "e6a4d2d816cf661b66cfcf91840ccee10121779f840b3dee939b7362b5f58de8"
+text = "(design docs/preview-pipeline-20261015/DESIGN.md, slice C).\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/release_manifest.py"
+input_sha256 = "dacd6116a9428e6df3a184992ecbeecfe98852da5c2e0e2f63745c56e2fc113c"
+output_sha256 = "b215fc3f2362bacca1d5ecb5808d446e621f295c54acef51e12e685e50445822"
+reason = "Public recipe adaptation: remove private sibling lineage default; retain explicit --components and ABSD_COMPONENTS_TOML. Unset lineage stays absent, as on a public checkout without the private sibling. No compiled artifact or runtime algorithm changes."
+[[source_edit.change]]
+line = 790
+input_sha256 = "901f07145beb30057793dbcf3dc6c19dc5fb2689e78d060202686f45ff0a7e57"
+text = "                   help=\"the qualified-lineage file (default: ABSD_COMPONENTS_TOML; \"\n"
+[[source_edit.change]]
+line = 791
+input_sha256 = "4c477a3dd2bd36734eb788a29bc68be0724f14e990e7250648972d0d74c30543"
+text = "                        \"no implicit file when unset)\")\n"
+[[source_edit.change]]
+line = 817
+input_sha256 = "fa34f72bed11c29911f20d3b7cd3390cb10fa81aede0c3dd22a7e4fd807dca2a"
+text = "            components = args.components\n"
+[[source_edit.change]]
+line = 818
+input_sha256 = "3f9d2ded55137f4db0f3319fedc17cad1caf4e810327375f300a12d2d76e417e"
+text = ""
+
+[[source_edit]]
+component = "platform"
+path = "scripts/verify-inputs.sh"
+input_sha256 = "833da4f047f628fe8ca0b8c455d6d904d14ad114d926dc9a05b865aefcbaccae"
+output_sha256 = "7f3684e53bfcd9fb1785c563970c37421b1e723ae54c0b38838ee41b572f8007"
+reason = "Public curation correspondence: update only the first-party SSH Cargo manifest expected hash to its declared curated output. Keep actual comparison/refusal behavior and every other upstream, compiler, lock and reference pin unchanged."
+[[source_edit.change]]
+line = 322
+input_sha256 = "3948c7c3d9f2fde70fad68622422860e04b3dcb38664d8927cc29bc91018938a"
+text = "    106195da818e39b54428abf213b113a5c4a78ade606c777b5db9f92fda24571f \\\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/PROVENANCE.md"
+input_sha256 = "67e9b0e1fdcdad936a79ffbcd4085e4542557a2a04d6c341287d975eb5bb5783"
+output_sha256 = "e759f9527c6cceaf56016e19751b87d445bb083ec74c11341315a92c536bf45e"
+reason = "Record the owner three-tier policy and exact omitted TinyCC scope; historical baseline statements are not updated into new qualification claims."
+
+[[source_edit.change]]
+line = 188
+input_sha256 = "794699cede84f7fc6f5608be23d00e37f61adaaab80856cffc44c0fd8c0e2ab0"
+text = "  the kernel and platform repositories by hand.\n\n## Owner distribution policy, 2026-10-19\n\nThe owner distinguishes three scopes. Code distributed as part of ABSD\nmust be permissively licensed. Libraries incorporated into ABSD binaries\nhave a strong preference against LGPL. External build and test tools are\nevaluated case by case; their execution alone does not incorporate their\ncode or determine the license of independently authored files.\n\nProvenance must distinguish copied context or modified upstream expression,\nindependently authored additions, generated configuration and mere API use.\nA patch target's license is not sufficient evidence to classify every added\nline. Mixed patch files still carry their copied upstream material. Generated\noutput requires its own provenance assessment; generation alone does not\nsettle copyright or license applicability.\n\nFor the public RC1 source, the three mixed TinyCC patches and generated\nconfiguration are excluded. Five locally introduced TinyCC build-support\nfiles are omitted because their only consumer is that unavailable stage;\nthis is a scope decision, not a finding of LGPL derivation. TinyCC compiler\nqualification is NOT_RUN / not included in the public source. Its public\nstage entry points refuse explicitly; kernel/core checks and their refusal\ncriteria are unchanged. The private isolated stage remains separate.\n\nAn inventory is a bounded evidence record, not legal clearance. Report any\nadditional GPL/LGPL finding with its actual scope before publication. Notice\ntexts for unbuilt upstream files and permissive alternatives already elected\nmust not be described as incorporated copyleft code. GRUB/Unifont boot\ncomponents and their separate source/notices remain separately disclosed;\nthis source correction does not replace or relicense them.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/stage-tcc.sh"
+input_sha256 = "a4bd21d1c3f3dd3bc73a18dd308e02ba98a358a182383ef99548ef8c057271fc"
+output_sha256 = "420615bd3c61b6e6f5fbbd2d71d2f62d0e6f25d58648225b40fa89f3b56e40da"
+reason = "Keep the original script body for existing static checks; public-only entry refuses omitted TinyCC work before environment processing, external commands or output creation."
+
+[[source_edit.change]]
+line = 1
+input_sha256 = "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"
+text = "#!/bin/sh\n# Public snapshot: the omitted TinyCC stage is never a passing test.\nprintf '%s\\n' 'TCC STAGE NOT_RUN: not included in the public source' >&2\nexit 78\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/tcc-unpatched-arrays.sh"
+input_sha256 = "6d8e7344079f64d64eab0062bf3c1cd56c0501762a8787e2577a58ac6cc30c9e"
+output_sha256 = "bef32c6e1198df137ef03acabdbbd4a1972d99afd1a83bbe01da94d5c23e8ffd"
+reason = "Keep the original script body for existing static checks; public-only entry refuses omitted TinyCC work before environment processing, external commands or output creation."
+
+[[source_edit.change]]
+line = 1
+input_sha256 = "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"
+text = "#!/bin/sh\n# Public snapshot: the omitted TinyCC stage is never a passing test.\nprintf '%s\\n' 'TCC STAGE NOT_RUN: not included in the public source' >&2\nexit 78\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/tcc-matrix.py"
+input_sha256 = "85c3ad290341791188c02ec56c0132f4b5e4c157aefdfcf6f504895ed54569a2"
+output_sha256 = "0285f59f1981d807bc42eafc1afbbfb21ee62fda2883a3b2b33ee64f846dfa92"
+reason = "Public direct CLI refuses omitted TinyCC stage before imports or output creation; importable judging helpers remain available to independent host tests."
+
+[[source_edit.change]]
+line = 110
+input_sha256 = "f6b1e108417aff6cfa9be55f270524a97fb99f40f91a2a4af4863735397511d5"
+text = "if __name__ == \"__main__\":\n    print(\"TCC STAGE NOT_RUN: not included in the public source\", flush=True)\n    raise SystemExit(78)\n\nimport argparse, hashlib, os, pathlib, re, select, shutil, struct, subprocess, sys, time\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/tcc-matrix-selftest.py"
+input_sha256 = "8428f540d1d0dd16c7f6a7b0cbf09260f97ae92fb348621c3cc7c1ca42a2ca7c"
+output_sha256 = "705de90d52143d39e393e4116cdfd757899cab1fe74bb69f808948af2d7768e4"
+reason = "Public direct CLI refuses omitted TinyCC stage before imports or output creation; importable judging helpers remain available to independent host tests."
+
+[[source_edit.change]]
+line = 39
+input_sha256 = "46cb1d926aa74ff99bbdc63f612bb37b8a45d8b76f04f9fdfb1066540950f77e"
+text = "if __name__ == \"__main__\":\n    print(\"TCC STAGE NOT_RUN: not included in the public source\", flush=True)\n    raise SystemExit(78)\n\nimport argparse, contextlib, importlib.util, io, pathlib, subprocess, sys, types\n"

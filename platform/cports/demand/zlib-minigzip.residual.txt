@@ -1,0 +1,11 @@
+_exit	exit.c:51
+calloc	fdopen.c:54
+close	gzwrite.c
+fcntl	gzlib.c
+free	gzlib.c
+lseek	gzlib.c
+malloc	gzlib.c
+open	gzlib.c
+read	gzread.c
+unlink	minigzip.c
+write	gzwrite.c

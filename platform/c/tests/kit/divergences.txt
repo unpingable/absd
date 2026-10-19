@@ -1,0 +1,6 @@
+# Cases whose ABSD output differs from Linux by contract. PROGRAM<TAB>REASON
+# The ABSD output of a diverging case is pinned in absd-expected/<program>.out;
+# run-c-kit.sh requires the ABSD run to match it exactly and to differ from Linux.
+alloc	NATIVE LIMIT: the 32 MiB heap window (contract 2, 3) ends the churn loop with ENOMEM near 31 MiB live and refuses 40 MiB malloc and realloc (original kept); Linux allocates all of it
+errno	DELIBERATE INCOMPATIBILITY (shell route; contract 5, 6): /bin and /etc are read-only mounts of the session, so create in /bin and write-open of /etc are EROFS where Linux (no root) says EACCES, and ENOENT for a host without /etc/motd; the cwd-relative O_CREAT|O_EXCL lines and the rest agree
+short writer	DELIBERATE INCOMPATIBILITY (shell route; contract 2, 4): a pipe holds 1024 bytes and a write to a pipe with no reader is EPIPE without a signal, so the writer reports the failed write once head has its 1000 bytes; Linux's 64 KiB pipe takes all 30000 bytes first; stdout and status are Linux's

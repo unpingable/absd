@@ -1,0 +1,32 @@
+.Dd October 13, 2026
+.Dt HEXDUMP 1
+.Os ABSD
+.Sh NAME
+.Nm hexdump
+.Nd display a stream of bytes in conventional formats
+.Sh SYNOPSIS
+.Nm
+.Op Fl bcCdox
+.Op Fl v
+.Op Fl n Ar length
+.Op Fl s Ar skip
+.Op Ar file ...
+.Sh DESCRIPTION
+This bounded adaptation of Toybox 0.8.15 concatenates the named files;
+no file or a dash reads standard input. Default and -x display little-endian
+two-byte hexadecimal; -b byte octal; -c escaped characters; -d two-byte decimal;
+-o two-byte octal; -C hexadecimal and ASCII. Modes are mutually exclusive.
+-v expands repeats; -n limits displayed bytes, including zero; -s skips across
+file boundaries. Partial final blocks are displayed.
+Numbers are unsigned decimal or hexadecimal with optional Toybox size suffixes.
+.Xr toybox 7
+records origin and license.
+.Sh LIMITS
+Custom -e and -f formats are refused. Counters use checked unsigned 64-bit
+arithmetic. Streaming buffers are fixed; processing time scales with input.
+Reported I/O errors return 2; success returns 0. External termination is
+separate, including Linux SIGPIPE on a closed output pipe.
+.Sh SEE ALSO
+.Xr od 1 ,
+.Xr diff 1 ,
+.Xr toybox 7

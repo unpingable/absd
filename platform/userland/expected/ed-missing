@@ -1,0 +1,5 @@
+status 1
+--- stdout
+?
+cannot open input file
+--- stderr

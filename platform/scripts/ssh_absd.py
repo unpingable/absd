@@ -39,6 +39,9 @@ here = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("exec_matrix", here / "exec-matrix.py")
 em = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(em)
+from served_ram import served_qemu
+from e1000_rx import wait_rx_setup, RxSetupFailed
+from served_kernel import kernel_make
 import absd_fs  # noqa: E402
 import absd_inputs  # noqa: E402
 import release_record  # noqa: E402
@@ -46,8 +49,8 @@ import release_record  # noqa: E402
 IMAGE_BYTES = 16 * 1024 * 1024
 DEVICE_SECTORS = IMAGE_BYTES // 512
 COMMANDS = ["echo", "pwd", "ls", "cat", "printenv", "uname"]
-# Commands that change the filesystem, installed when built.
-EXTRA_COMMANDS = ["mkdir", "rm", "mv"]
+# Additional filesystem tools and read-only diagnostics, installed when built.
+EXTRA_COMMANDS = ["mkdir", "rm", "mv", "net-status"]
 # The manual's reader; its pages come from manual() below.
 MAN_COMMAND = "man"
 MAN_ROOT = "/share/man"
@@ -165,7 +168,7 @@ class AbsdTarget:
     def iso(self, step, worker, input_bytes=b"", options="", server=""):
         input_path = self.work / f"input-{hashlib.sha256(input_bytes).hexdigest()}.bin"
         input_path.write_bytes(input_bytes)
-        subprocess.run(["make", "--no-print-directory", "-C", str(self.kernel), "durable-iso",
+        subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(self.kernel), "durable-iso",
                         f"DURABLE_STEP={step}", f"EXTERNAL_USER_ELF={worker}", f"EXTERNAL_INPUT={input_path}",
                         "EXTERNAL_READER_ELF=", "EXTERNAL_READER_INPUT=", f"DURABLE_OPTIONS={options}",
                         f"FILE_SERVER_ELF={server}"],
@@ -183,7 +186,7 @@ class AbsdTarget:
             self.boots += 1
             log = work / f"import-{self.boots:03d}.serial.log"
             status = subprocess.run([str(self.kernel / "scripts" / "durable-boot.sh"), str(iso), str(self.image),
-                                     str(log), "600", *self.qemu.split()], check=True, capture_output=True,
+                                     str(log), "600", *served_qemu(self.qemu)], check=True, capture_output=True,
                                     text=True).stdout.strip()
             text = captured(log.read_bytes())
             if status != "3" or f"FIXTURE IMPORT OK files={len(entries)}" not in text:
@@ -205,6 +208,10 @@ class AbsdTarget:
     # The only files a boot writes that a session did not ask for: the
     # file server's and sshd's logs and their rotated copies (README "Logs").
     LOGS = ("/var/log/fsd", "/var/log/fsd.0", "/var/log/sshd", "/var/log/sshd.0")
+    # Declared owner records change at startup or on transitions.
+    # Their exact writable-file shapes stay in comparisons; only changing
+    # content and serial are excluded, never the log subtree.
+    OWNER_SAMPLES = {"/var/log/network-status": 512, "/var/log/network-recovery": 128}
     # The recovery ledger and facts (absd_fsd::recovery): charged by the
     # file server on every boot and left by sshd, so they change on a boot
     # that only loaded the host key.
@@ -216,19 +223,28 @@ class AbsdTarget:
         return hashlib.sha256(repr(self.system_objects()).encode()).hexdigest()
 
     def system_objects(self):
-        """Every object on the image but the four log files and the recovery
-        state, read by the host: path, kind, read-only flag, serial, and
-        bytes, so a changed flag, a new directory, a rewritten file, or
-        anything else under /var/log still counts. The guest may be
+        """Every object on the image but the four log files and recovery state:
+        ordinary rows keep path, kind, read-only flag, serial and byte digest.
+        The bounded owner sample keeps its presence and shape in the same
+        five-field layout, with no serial and a size marker instead of a digest.
+        A changed flag, a new directory, a rewritten file, or anything else
+        under /var/log still counts. The guest may be
         committing a log line while this reads, so a read that finds the
         image mid-commit is retried."""
+        def object_row(path, record):
+            if (path in self.OWNER_SAMPLES and not record["dir"]
+                    and not record["readonly"] and record["size"] == self.OWNER_SAMPLES[path]):
+                return (path, record["dir"], record["readonly"], None,
+                        f"owner-sample-size:{record['size']}")
+            return (path, record["dir"], record["readonly"], record["serial"],
+                    hashlib.sha256(absd_fs.content(region, selected, record)).hexdigest())
+
         for attempt in range(20):
             try:
                 region = absd_fs.fs_region(self.image, DEVICE_SECTORS)
                 selected = absd_fs.select(region)
                 objects = sorted(
-                    (path, record["dir"], record["readonly"], record["serial"],
-                     hashlib.sha256(absd_fs.content(region, selected, record)).hexdigest())
+                    object_row(path, record)
                     for path, record in absd_fs.tree(region, selected).items()
                     if path not in self.LOGS and path not in self.STATE)
                 return objects
@@ -251,25 +267,38 @@ class AbsdTarget:
         server = self.root / ("absd-fsd-regenerate.elf" if regenerate else "absd-fsd.elf")
         return self.iso(0, self.root / "sshd.elf", options="net fsd", server=server)
 
-    def start(self, fresh=False, regenerate=False, qemu_extra=None, expect_sweep=False):
+    def start(self, fresh=False, regenerate=False, qemu_extra=None, expect_sweep=False, expect_nic_fault=False):
         """`expect_sweep`: the previous generation ended by a fault or a
         stop with a session bound, so the file server removes its scratch
         before serving (`FSD SWEEP`); that removal, and nothing else, may
-        change the image on this boot."""
+        change the image on this boot. `expect_nic_fault` is only for an
+        explicitly injected ring-fault observation: return startup identity
+        without claiming receive preparation, since its expected reset may
+        precede the receive gate. The caller must still judge fault/recovery."""
         iso = self.sshd_iso(regenerate)
         self.boots += 1
         self.log = self.work / f"sshd-{self.boots:03d}.serial.log"
         before = self.system_objects()
         qemu = qemu_extra if qemu_extra is not None else self.qemu
         netdev = f"-netdev user,id=n0,net=10.0.2.0/24,hostfwd=tcp:127.0.0.1:{self.port}-:22 -device e1000,netdev=n0"
+        end_boots_on_signal()
         self.proc = subprocess.Popen(
             [str(self.kernel / "scripts" / "durable-boot.sh"), str(iso), str(self.image), str(self.log),
-             str(self.boot_seconds), *qemu.split(), *netdev.split()],
+             str(self.boot_seconds), *served_qemu(qemu), *netdev.split()],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+        LIVE_BOOTS.add(self)
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
             text = self.output()
             if "SSH LISTENING" in text:
+                if expect_nic_fault:
+                    if "NIC RING FAULT INJECTED " not in self.serial():
+                        raise Failed("ring-fault observation requested without an injection marker")
+                else:
+                    try:
+                        wait_rx_setup(self.serial, lambda: self.proc.poll() is None, deadline)
+                    except RxSetupFailed as error:
+                        raise Failed(str(error)) from error
                 break
             if self.proc.poll() is not None:
                 raise Failed(f"sshd boot ended: status {self.proc.stdout.read()!r}\n{text[-2000:]}")
@@ -303,7 +332,7 @@ class AbsdTarget:
                              f"only loaded the host key: removed={[o[0] for o in removed]} added={[o[0] for o in added]}")
         return {"generated": generated, "public": public, "fingerprint": m.group(3),
                 "entropy": "ok" if "SSH ENTROPY OK source=rdrand" in text else "missing",
-                "image_changed": before != after}
+                "image_changed": before != after, "receive_prepared": not expect_nic_fault}
 
     def output(self):
         try:
@@ -335,6 +364,7 @@ class AbsdTarget:
                         pass
                 self.proc.wait()
         self.proc = None
+        LIVE_BOOTS.discard(self)
 
     def restart(self, regenerate=False):
         self.stop()
@@ -349,9 +379,12 @@ class AbsdTarget:
         iso = self.sshd_iso()
         self.boots += 1
         log = self.work / f"sshd-{self.boots:03d}-no-rdrand.serial.log"
-        qemu = self.qemu.split()[0]
+        qemu = served_qemu(self.qemu)
+        # This negative entropy case deliberately drops CPU feature options,
+        # but retains the configured RAM rather than reverting to 128 MiB.
         status = subprocess.run([str(self.kernel / "scripts" / "durable-boot.sh"), str(iso), str(self.image), str(log),
-                                 "300", qemu, "-netdev", "user,id=n0", "-device", "e1000,netdev=n0"],
+                                 "300", *served_qemu([qemu[0]], memory=qemu[-1]),
+                                 "-netdev", "user,id=n0", "-device", "e1000,netdev=n0"],
                                 check=True, capture_output=True, text=True).stdout.strip()
         serial = log.read_bytes().decode(errors="replace")
         text = captured(log.read_bytes())
@@ -656,6 +689,48 @@ def manual(root):
         raise Failed(f"no rendered manual in {base}: run scripts/render-man.sh")
     return [(f"{MAN_ROOT}/{path.relative_to(base)}", path.read_bytes())
             for path in sorted(base.rglob("*")) if path.is_file()]
+
+
+# Targets whose boot may still be running: what the handlers below end.
+LIVE_BOOTS = set()
+END_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+_previous_handlers = {}
+
+
+def _end_boots(signum, frame):
+    """SIGTERM, SIGINT or SIGHUP to the driver: QEMU runs in its own session
+    (start_new_session), so the signal does not reach it; stop() every live
+    boot, then let the signal do what it did before (the default ends the
+    process with that signal; SIGINT still raises KeyboardInterrupt).
+    SIGKILL cannot be caught: after a SIGKILL of the driver QEMU lives
+    until durable-boot.sh's own `timeout` ends it (--boot-seconds, 3000 s
+    by default). That bound is disclosed, not fixed."""
+    for target in list(LIVE_BOOTS):
+        try:
+            target.stop()
+        except Exception:
+            pass
+    previous = _previous_handlers.get(signum, signal.SIG_DFL)
+    if callable(previous):
+        previous(signum, frame)
+        return
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
+def end_boots_on_signal():
+    """Installs _end_boots for END_SIGNALS, keeping whatever was there to
+    chain to. A signal the process ignores (nohup's SIGHUP) stays ignored;
+    off the main thread nothing can be installed and nothing changes."""
+    for signum in END_SIGNALS:
+        try:
+            current = signal.getsignal(signum)
+            if current is _end_boots or current == signal.SIG_IGN:
+                continue
+            signal.signal(signum, _end_boots)
+        except ValueError:
+            return
+        _previous_handlers[signum] = current
 
 
 def descendants(pid):

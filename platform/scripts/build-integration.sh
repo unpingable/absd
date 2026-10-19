@@ -28,9 +28,12 @@ fi
 # manifest names the staged AG and Pulse crates. SQLite (bundled by
 # rusqlite) is C: compiled freestanding against the declarations in
 # sqlite/include, whose symbols absd-sqlite and absd-runtime define.
+absd_full_rustflags integration
 clang_include=$(clang -print-resource-dir)/include
 (cd "$root/integration" && env -u CARGO_ENCODED_RUSTFLAGS -u RUSTFLAGS \
     -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER \
+    -u CARGO_TARGET_X86_64_UNKNOWN_ABSD_RUSTFLAGS -u CARGO_BUILD_RUSTFLAGS \
+CARGO_ENCODED_RUSTFLAGS="$ABSD_FULL_RUSTFLAGS" \
 ABSD_REAL_RUSTC=$toolchain/bin/rustc \
 ABSD_STAGED_SYSROOT=$stage \
 RUSTC=$root/scripts/rustc-staged.sh \

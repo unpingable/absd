@@ -1,0 +1,10 @@
+{
+  "version": "toybox-0.8.15",
+  "url": "https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz",
+  "archive_sha256": "44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e",
+  "upstream_member": "toybox-0.8.15/toys/pending/hexdump.c",
+  "upstream_sha256": "2eaf4a12216b03a4b2f3b58289ff84bd4c397376edd93ad9f1deda8e371e9d8b",
+  "license_sha256": "948039f91e7e23916019047a035c69214447323c5fc272aefc0fd21e505bf41d",
+  "patch_sha256": "c8b093022bc5982e5483bf6b1bef10941465a8dab3da6d6f4dac3a08caa6e1c1",
+  "adapted_sha256": "4297b21a9804322af0aa13c4e4d1b680b1a5153c1f6ae38c0d97a0b693899e0e"
+}

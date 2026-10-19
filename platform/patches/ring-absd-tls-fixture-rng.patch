@@ -1,0 +1,15 @@
+diff --git a/src/rand.rs b/src/rand.rs
+--- a/src/rand.rs
++++ b/src/rand.rs
+@@ -123,6 +123,11 @@ impl crate::sealed::Sealed for SystemRandom {}
+ // implementation.
+ #[cfg(any(
+     all(feature = "less-safe-getrandom-custom-or-rdrand", target_os = "none"),
++    all(
++        feature = "less-safe-getrandom-custom-or-rdrand",
++        target_os = "absd",
++        target_arch = "x86_64"
++    ),
+     all(feature = "less-safe-getrandom-espidf", target_os = "espidf"),
+     target_os = "aix",
+     target_os = "android",

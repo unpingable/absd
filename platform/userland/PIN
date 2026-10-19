@@ -1,0 +1,9 @@
+# The base userland's pinned upstream (scripts/stage-userland.sh). Tab-separated:
+# NAME VERSION URL SHA256 LICENSE. SHA256 is over the downloaded tarball and was
+# recorded on 2026-10-12 from the first download, before the tarball was
+# extracted or read (trust on first use: suckless publishes no digest beside the
+# tarball; the download went to an empty directory and nothing else was fetched).
+# LICENSE is the SPDX id of the upstream's own LICENSE file, which is carried
+# verbatim as userland/sbase.LICENSE.
+sbase	0.1	https://dl.suckless.org/sbase/sbase-0.1.tar.gz	86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634	MIT
+toybox	0.8.15	https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz	44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e	0BSD

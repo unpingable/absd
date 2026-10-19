@@ -1,11 +1,14 @@
 KERNEL := target/debug/absd-kernel
 ISO := build/absd-kernel.iso
 QEMU := qemu-system-x86_64
+# Map source paths in every kernel compilation unit, including dependencies.
+KERNEL_CARGO = sh scripts/kernel-cargo.sh
 EXTERNAL_TARGET := build/external/target
 EXTERNAL_KERNEL := $(EXTERNAL_TARGET)/debug/absd-kernel
 EXTERNAL_INPUT ?= tests/external-input.txt
 EXTERNAL_EXPECTED ?= $(EXTERNAL_INPUT)
 EXTERNAL_USER_ELF ?=
+EXTERNAL_KERNEL_FEATURES ?=
 # Optional second durable program: runs after the worker with a read-only
 # duplicate of the block handle, fed EXTERNAL_READER_INPUT.
 EXTERNAL_READER_ELF ?=
@@ -16,6 +19,8 @@ FILE_SERVER_ELF ?=
 # A qualification boot's NIC-worker deadline in ticks (init's default is an
 # hour); a served boot (DURABLE_OPTIONS="net fsd served") has none.
 NET_WAIT_TICKS ?=
+# 1 builds a dedicated enrollment image (docs/USERSPACE.md); empty otherwise.
+ENROLL_STREAM ?=
 # Broker mode (docs/BROKER.md): the workflow policy init embeds, and the
 # programs it may start for the worker. Empty means no broker.
 BROKER_POLICY ?=
@@ -47,7 +52,7 @@ else
 $(error BLOCK_DEVICE must be ata or nvme)
 endif
 
-.PHONY: provenance-check provenance-full machine-recover-iso machine-recover-test net-iso net-test durable-iso durable-reader-test broker-test spawn-image-test elf-matrix-test disclosure-probe-test block-probe-iso block-probe-test nvme-iso nvme-test framebuffer-iso framebuffer-test physical-build physical-iso physical-iso-test physical-iso-gate survey-iso survey-gate laptop-test laptop-matrix check user build iso fault-iso kernel-fault-iso shell-iso fuzz-iso external-build external-iso external-test external-live-iso external-live-test external-live-reject external-live-negative run shell fault-test kernel-fault-test shell-test fuzz-test smoke mutants debug clean
+.PHONY: nic-cold-rx-measure provenance-check provenance-full whole-ram-iso whole-ram-test machine-recover-iso machine-recover-test xhci-iso xhci-test net-iso net-test durable-iso durable-reader-test broker-test spawn-image-test elf-matrix-test disclosure-probe-test block-probe-iso block-probe-test nvme-iso nvme-test framebuffer-iso framebuffer-test physical-build physical-iso physical-iso-test physical-iso-gate survey-iso survey-gate laptop-test laptop-matrix check user build iso fault-iso kernel-fault-iso shell-iso fuzz-iso external-build external-iso external-test external-live-iso external-live-test external-live-reject external-live-negative run shell fault-test kernel-fault-test shell-test fuzz-test smoke mutants debug clean
 
 # The complete canonical verification, in the order HANDOFF.md lists it.
 # Third-party material, licences and release obligations against the recorded
@@ -65,10 +70,21 @@ check:
 	python3 scripts/test_provenance.py
 	python3 scripts/models/rt-fixture.py
 	python3 scripts/models/smp-lifetime.py --self-test
+	python3 scripts/models/xhci-irq.py --self-test
+	python3 scripts/models/usb-keyboard.py --self-test
+	python3 scripts/models/usb-recovery.py
+	python3 scripts/xhci-observe.py --self-test
+	python3 scripts/xhci-controller-test.py --self-test
+	python3 scripts/usb-keyboard-test.py --self-test
+	python3 scripts/usb-keyboard-recovery-test.py --self-test
+	python3 scripts/test-i219-info.py
+	python3 scripts/check-nvme-probe-order.py --self-test
 	cargo test --workspace --exclude absd-user
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets -- -D warnings
+	$(MAKE) arm64-build
 	$(MAKE) smoke
+	$(MAKE) whole-ram-test
 	$(MAKE) fault-test
 	$(MAKE) kernel-fault-test
 	$(MAKE) framebuffer-test
@@ -76,6 +92,11 @@ check:
 	$(MAKE) fuzz-test
 	$(MAKE) hostile-test
 	$(MAKE) machine-recover-test
+	$(MAKE) acpi-test
+	$(MAKE) tsc-calibration-test
+	$(MAKE) xhci-controller-test
+	USB_KEYBOARD_CASES='keyboard absent console-test' $(MAKE) usb-keyboard-test
+	USB_RECOVERY_CASES='cycles empty' $(MAKE) usb-keyboard-recovery-test
 	$(MAKE) debug
 	@echo 'check: all canonical targets passed'
 
@@ -93,7 +114,7 @@ user:
 # The kernel is interrupted in ring 0 (boot timer test, controlled fault),
 # so it must not keep data below RSP.
 build:
-	cargo rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
+	$(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
 
 iso: build
 	mkdir -p build/iso/boot/grub
@@ -105,6 +126,26 @@ run: iso
 	@set -eu; status=0; \
 	$(QEMU) -cdrom $(ISO) -display none -serial stdio -no-reboot -no-shutdown -device isa-debug-exit,iobase=0xf4,iosize=0x04 || status=$$?; \
 	if [ "$$status" -ne 3 ]; then echo "unexpected QEMU exit: $$status" >&2; exit 1; fi
+
+# Clock 6a (docs/clock-contract-20261015 §6a): the TIMER CALIBRATION line
+# under TCG, its invtsc flip, and the interrupts-off stall control that must
+# widen the spread (scripts/tsc-calibration-check.py).
+tsc-stall-iso: build
+	mkdir -p build/tsc-stall-iso/boot/grub
+	cp $(KERNEL) build/tsc-stall-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD tsc calibration stall" {' '  multiboot2 /boot/absd-kernel tsc-calibration-stall' '  boot' '}' > build/tsc-stall-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-tsc-stall.iso build/tsc-stall-iso
+
+.PHONY: tsc-calibration-test
+tsc-calibration-test: iso tsc-stall-iso
+	python3 scripts/tsc-calibration-check.py --iso $(ISO) --stall-iso build/absd-tsc-stall.iso --work build/tsc-calibration --qemu "$(QEMU)"
+# The KVM-only controls (needs /dev/kvm): the invtsc flip on model host and
+# the KVM-vs-TCG comparison under host load (scripts/tsc-calibration-compare.py).
+.PHONY: tsc-calibration-kvm-test
+tsc-calibration-kvm-test: iso tsc-stall-iso
+	@test -r /dev/kvm -a -w /dev/kvm || { echo 'tsc-calibration-kvm-test: needs KVM (/dev/kvm)' >&2; exit 1; }
+	python3 scripts/tsc-calibration-check.py --kvm --iso $(ISO) --stall-iso build/absd-tsc-stall.iso --work build/tsc-calibration-kvm --qemu "$(QEMU)"
+	python3 scripts/tsc-calibration-compare.py --iso $(ISO) --work build/tsc-calibration-compare --qemu "$(QEMU)"
 
 fault-iso: build
 	mkdir -p build/fault-iso/boot/grub
@@ -154,6 +195,37 @@ framebuffer-test: framebuffer-iso
 	grep -q '^FRAMEBUFFER CONSOLE OK width=[0-9]* height=[0-9]* ' "$$output"; \
 	grep -q '^KERNEL FAULT vector=14 ' "$$output"; \
 	echo 'framebuffer-test: screen matches the serial stream (build/framebuffer.ppm)'
+
+# GRUB removes these ranges from the memory map it passes (cutmem, given in
+# KiB: GRUB parses its numbers as 32-bit before the suffix), so every
+# whole-RAM boot also has holes above 4 GiB with edges that are not 2 MiB
+# aligned. They lie inside the high RAM of every case below.
+WHOLE_RAM_CUTS := 0x140003000-0x140505000 0x161234000-0x161235000
+
+whole-ram-iso: build
+	mkdir -p build/whole-ram-iso/boot/grub
+	cp $(KERNEL) build/whole-ram-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' $(foreach cut,$(WHOLE_RAM_CUTS),"cutmem $$(($(word 1,$(subst -, ,$(cut)))/1024))K $$(($(word 2,$(subst -, ,$(cut)))/1024))K") 'menuentry "ABSD whole RAM" {' '  multiboot2 /boot/absd-kernel whole-ram-test' '  boot' '}' > build/whole-ram-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-whole-ram.iso build/whole-ram-iso
+
+# Whole-RAM frame tracking (docs/x86-whole-ram-20261015), under TCG: q35 with
+# 4 and 8 GiB (RAM on both sides of the PCI hole), and i440fx with 6 GiB and
+# low RAM ending at 0xbfe01000, so the low row's end above 1 GiB and the high
+# row's end above 4 GiB are both unaligned. The kernel discloses the map, its
+# reservations and what it tracks; the host oracle derives the reservations
+# from the kernel ELF and its own plan and recomputes every count. The kernel
+# then allocates every free frame, writes one per 2 MiB page through the
+# direct map, frees them all, and runs the userspace suite with every frame
+# below 4 GiB held.
+whole-ram-test: whole-ram-iso
+	@set -eu; for case in q35:4G q35:8G pc,max-ram-below-4g=0xbfe01000:6G; do \
+	  machine=$${case%:*}; ram=$${case##*:}; name=$$(echo "$$machine-$$ram" | tr ',=' '--'); \
+	  output="build/whole-ram-$$name.serial.log"; rm -f "$$output"; status=0; \
+	  timeout 600s $(QEMU) -machine "$$machine" -m $$ram -cdrom build/absd-whole-ram.iso -display none -serial file:$$output -no-reboot -no-shutdown -device isa-debug-exit,iobase=0xf4,iosize=0x04 >/dev/null 2>&1 || status=$$?; \
+	  if [ "$$status" -ne 3 ]; then echo "whole-ram-test: unexpected QEMU exit $$status for $$case ($$output)" >&2; exit 1; fi; \
+	  python3 scripts/whole-ram-check.py --ram "$$ram" --kernel build/whole-ram-iso/boot/absd-kernel --fragmented $(foreach cut,$(WHOLE_RAM_CUTS),--cut $(cut)) "$$output"; \
+	done; \
+	echo 'whole-ram-test: three maps tracked, allocated above 4 GiB, freed exactly (build/whole-ram-*.serial.log)'
 
 # Interactive shell on this terminal; type `quit` to end the session.
 shell: shell-iso
@@ -247,15 +319,15 @@ external-build:
 	if [ -n "$$override" ]; then test -f "$$override"; fi; \
 	reader="$(EXTERNAL_READER_ELF)"; reader_input="$(EXTERNAL_READER_INPUT)"; \
 	if [ -n "$$reader" ]; then test -f "$$reader"; test -f "$$reader_input"; reader_input=$$(realpath "$$reader_input"); fi; \
-	ABSD_EXTERNAL_INPUT="$(abspath $(EXTERNAL_INPUT))" \
+	ABSD_EXTERNAL_INPUT="$(if $(ENROLL_STREAM),,$(abspath $(EXTERNAL_INPUT)))" \
 	ABSD_EXTERNAL_READER_ELF="$$reader" ABSD_EXTERNAL_READER_INPUT="$$reader_input" \
 	ABSD_BROKER_POLICY="$(if $(BROKER_POLICY),$(abspath $(BROKER_POLICY)))" \
 	ABSD_FILE_SERVER_ELF="$(if $(FILE_SERVER_ELF),$(abspath $(FILE_SERVER_ELF)))" \
-	ABSD_NET_WAIT_TICKS="$(NET_WAIT_TICKS)" \
+	ABSD_NET_WAIT_TICKS="$(NET_WAIT_TICKS)" ABSD_ENROLL_STREAM="$(ENROLL_STREAM)" \
 	ABSD_OWNER_1_ELF="$(if $(OWNER_1_ELF),$(abspath $(OWNER_1_ELF)))" ABSD_OWNER_2_ELF="$(if $(OWNER_2_ELF),$(abspath $(OWNER_2_ELF)))" \
 	ABSD_OWNER_3_ELF="$(if $(OWNER_3_ELF),$(abspath $(OWNER_3_ELF)))" ABSD_OWNER_4_ELF="$(if $(OWNER_4_ELF),$(abspath $(OWNER_4_ELF)))" \
 	ABSD_EXTERNAL_USER_ELF="$$override" CARGO_TARGET_DIR="$(EXTERNAL_TARGET)" \
-	cargo rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
+	$(KERNEL_CARGO) rustc --bin absd-kernel $(if $(EXTERNAL_KERNEL_FEATURES),--features $(EXTERNAL_KERNEL_FEATURES)) -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
 
 external-iso: external-build
 	mkdir -p build/external/iso/boot/grub
@@ -370,6 +442,11 @@ nvme-iso: build
 # read-only default, against one QEMU NVMe namespace. The host checks the
 # image file itself between boots (scripts/nvme-image-check.py). A 4 KiB-LBA
 # namespace must be refused by name.
+.PHONY: nvme-first-read-test
+nvme-first-read-test: nvme-iso
+	python3 scripts/nvme-first-read-test.py --self-test
+	python3 scripts/nvme-first-read-test.py --qemu '$(QEMU)'
+
 nvme-test: nvme-iso
 	@set -eu; image="build/nvme.img"; rm -f "$$image" build/nvme-*.serial.log; truncate -s 2M "$$image"; \
 	boot() { status=0; timeout 60s $(QEMU) -cdrom "build/absd-nvme-$$1.iso" -drive if=none,id=nvm,file="$$image",format=raw -device nvme,serial=$(NVME_SERIAL),drive=nvm$$3 -display none -serial file:"build/nvme-$$2.serial.log" -no-reboot -no-shutdown -device isa-debug-exit,iobase=0xf4,iosize=0x04 >/dev/null 2>&1 || status=$$?; \
@@ -408,7 +485,7 @@ OVMF ?= /usr/share/ovmf/OVMF.fd
 PHYSICAL_TARGET := build/physical/target
 PHYSICAL_KERNEL := $(PHYSICAL_TARGET)/debug/absd-kernel
 physical-build:
-	CARGO_TARGET_DIR=$(PHYSICAL_TARGET) cargo rustc --bin absd-kernel --features block-read-only -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
+	CARGO_TARGET_DIR=$(PHYSICAL_TARGET) $(KERNEL_CARGO) rustc --bin absd-kernel --features block-read-only -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
 
 physical-iso: physical-build
 	rm -rf build/physical-iso
@@ -437,6 +514,53 @@ survey-iso: physical-build
 	  > build/survey-iso/boot/grub/grub.cfg
 	grub-mkrescue -o $(SURVEY_ISO) build/survey-iso
 	@sha256sum $(SURVEY_ISO) $(PHYSICAL_KERNEL)
+
+# The AHCI census ISO (docs/hardware/SATA-AHCI-CENSUS.md):
+# the read-only kernel with the census as its default entry (exits QEMU) and
+# a halting entry for a physical machine. Gate: scripts/ahci-census-check.py
+# under q35/ich9-ahci with two disks and a CD, QEMU traces showing IDENTIFY
+# DEVICE as the only ATA command, images unchanged; a machine without AHCI;
+# the pretend-RAID fixture's refusal; an empty controller.
+AHCI_CENSUS_ISO := build/absd-ahci-census.iso
+ahci-census-iso: physical-build
+	rm -rf build/ahci-census-iso
+	mkdir -p build/ahci-census-iso/boot/grub
+	cp $(PHYSICAL_KERNEL) build/ahci-census-iso/boot/absd-kernel
+	printf '%s\n' 'insmod all_video' 'set timeout=10' 'set default=0' \
+	  'menuentry "ABSD AHCI census: IDENTIFY only, nothing written (halts on screen)" {' '  multiboot2 /boot/absd-kernel ahci-census halt-on-exit' '  boot' '}' \
+	  'menuentry "ABSD AHCI census: IDENTIFY only, nothing written (exits QEMU)" {' '  multiboot2 /boot/absd-kernel ahci-census' '  boot' '}' \
+	  'menuentry "ABSD AHCI census: pretend-RAID refusal fixture (halts)" {' '  multiboot2 /boot/absd-kernel ahci-census ahci-census-pretend-raid halt-on-exit' '  boot' '}' \
+	  > build/ahci-census-iso/boot/grub/grub.cfg
+	grub-mkrescue -o $(AHCI_CENSUS_ISO) build/ahci-census-iso
+	@sha256sum $(AHCI_CENSUS_ISO) $(PHYSICAL_KERNEL)
+# The gate's ISOs: the same kernel with the QEMU-exiting census, and with
+# the pretend-RAID fixture, as default entries (GRUB entries cannot be
+# chosen from QEMU's command line). The physical ISO's default halts.
+ahci-census-qemu-iso: physical-build
+	rm -rf build/ahci-census-qemu-iso
+	mkdir -p build/ahci-census-qemu-iso/boot/grub
+	cp $(PHYSICAL_KERNEL) build/ahci-census-qemu-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD AHCI census (exits QEMU)" {' '  multiboot2 /boot/absd-kernel ahci-census' '  boot' '}' > build/ahci-census-qemu-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-ahci-census-qemu.iso build/ahci-census-qemu-iso
+ahci-census-raid-iso: physical-build
+	rm -rf build/ahci-census-raid-iso
+	mkdir -p build/ahci-census-raid-iso/boot/grub
+	cp $(PHYSICAL_KERNEL) build/ahci-census-raid-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD AHCI census: pretend-RAID refusal fixture" {' '  multiboot2 /boot/absd-kernel ahci-census ahci-census-pretend-raid' '  boot' '}' > build/ahci-census-raid-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-ahci-census-raid.iso build/ahci-census-raid-iso
+# The stuck-stop fixture: the first IDENTIFY's post-command engine stop is
+# treated as failed (QEMU's engine always stops), so the gate sees the
+# controller-level fail-closed path.
+ahci-census-stuck-iso: physical-build
+	rm -rf build/ahci-census-stuck-iso
+	mkdir -p build/ahci-census-stuck-iso/boot/grub
+	cp $(PHYSICAL_KERNEL) build/ahci-census-stuck-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD AHCI census: stuck engine stop fixture" {' '  multiboot2 /boot/absd-kernel ahci-census ahci-census-pretend-stuck-stop' '  boot' '}' > build/ahci-census-stuck-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-ahci-census-stuck.iso build/ahci-census-stuck-iso
+
+.PHONY: ahci-census-test
+ahci-census-test: ahci-census-iso ahci-census-qemu-iso ahci-census-raid-iso ahci-census-stuck-iso
+	python3 scripts/ahci-census-check.py --iso build/absd-ahci-census-qemu.iso --raid-iso build/absd-ahci-census-raid.iso --stuck-iso build/absd-ahci-census-stuck.iso --physical-iso $(AHCI_CENSUS_ISO) --work build/ahci-census --qemu "$(QEMU)"
 
 # The survey ISO's gate (scripts/survey-gate.sh): its entries, then its
 # default entry under SeaBIOS and OVMF with NVMe, e1000, and ATA attached,
@@ -485,10 +609,105 @@ laptop-test: physical-iso nvme-iso
 laptop-matrix: physical-iso
 	@sh scripts/laptop-matrix.sh build/absd-physical.iso "$(QEMU)"
 
-# NIC qualification ISOs (docs/NETWORK.md): the reflector boot, and the
-# same boot with an out-of-ring receive head injected into the device.
+# Bounded xHCI bring-up ISOs (docs/xhci-20261010/RECORD.md): the probe
+# boot, three rounds in one boot, the hotplug boot, and one per injected
+# fault. `xhci-probe` is the only mode word that touches an xHCI.
+xhci-iso: build
+	@set -eu; for phase in probe:'xhci-probe' rounds:'xhci-probe xhci-rounds=3' hotplug:'xhci-probe xhci-hotplug' \
+	    bar-bounds:'xhci-probe xhci-fault=bar-bounds' run-timeout:'xhci-probe xhci-fault=run-timeout' \
+	    command-timeout:'xhci-probe xhci-fault=command-timeout' foreign-event:'xhci-probe xhci-fault=foreign-event' \
+	    malformed-event:'xhci-probe xhci-fault=malformed-event' bad-slot:'xhci-probe xhci-fault=bad-slot' \
+	    stale-event:'xhci-probe xhci-fault=stale-event' short-read:'xhci-probe xhci-fault=short-read' \
+	    scratch-one:'xhci-probe xhci-scratchpads=1 xhci-observe' \
+	    scratch-many:'xhci-probe xhci-scratchpads=32 xhci-rounds=2 xhci-observe' \
+	    scratch-limit:'xhci-probe xhci-scratchpads=64 xhci-observe' \
+	    scratch-over:'xhci-probe xhci-scratchpads=65' \
+	    page-8k:'xhci-probe xhci-scratchpads=4 xhci-pagesize=2' \
+	    page-multi:'xhci-probe xhci-scratchpads=4 xhci-pagesize=3' \
+	    page-multi-none:'xhci-probe xhci-pagesize=3' \
+	    scratch-alloc:'xhci-probe xhci-scratchpads=8 xhci-fault=scratchpad-alloc xhci-rounds=2' \
+	    scratch-reclaim:'xhci-probe xhci-scratchpads=2 xhci-fault=early-reclaim' \
+	    legacy-release:'xhci-probe xhci-firmware=release' \
+	    legacy-delayed:'xhci-probe xhci-firmware=delayed' \
+	    legacy-never:'xhci-probe xhci-firmware=never' \
+	    legacy-late:'xhci-probe xhci-firmware=late' \
+	    legacy-reacquire-smi:'xhci-probe xhci-firmware=reacquire-smi' \
+	    legacy-duplicate:'xhci-probe xhci-firmware=duplicate' \
+	    legacy-smi:'xhci-probe xhci-firmware=smi-flip' \
+	    legacy-smi-stuck:'xhci-probe xhci-firmware=smi-stuck' \
+	    legacy-clears-os:'xhci-probe xhci-firmware=clears-os' \
+	    legacy-unowned:'xhci-probe xhci-firmware=unowned' \
+	    legacy-reacquire:'xhci-probe xhci-firmware=reacquire xhci-scratchpads=2' \
+	    legacy-reacquire-late:'xhci-probe xhci-firmware=reacquire-late xhci-scratchpads=2' \
+	    both:'xhci-probe xhci-firmware=delayed xhci-scratchpads=32 xhci-observe' \
+	    both-alloc:'xhci-probe xhci-firmware=release xhci-scratchpads=8 xhci-fault=scratchpad-alloc xhci-rounds=2' \
+	    both-run-timeout:'xhci-probe xhci-firmware=release xhci-scratchpads=8 xhci-fault=run-timeout' \
+	    both-never:'xhci-probe xhci-firmware=never xhci-scratchpads=8' \
+	    both-ovmf:'xhci-probe xhci-firmware=delayed xhci-scratchpads=32'; do \
+	  name=$${phase%%:*}; line=$${phase#*:}; \
+	  mkdir -p build/xhci-$$name-iso/boot/grub; cp $(KERNEL) build/xhci-$$name-iso/boot/absd-kernel; \
+	  printf '%s\n' 'insmod all_video' 'set timeout=0' 'menuentry "ABSD xHCI qualification" {' "  multiboot2 /boot/absd-kernel $$line" '  boot' '}' > build/xhci-$$name-iso/boot/grub/grub.cfg; \
+	  grub-mkrescue -o build/absd-xhci-$$name.iso build/xhci-$$name-iso >/dev/null 2>&1; \
+	done
+
+# Controller present/absent/empty, never probed by the default boot, three
+# rounds, super/high/full speeds, register bounds, run and command
+# timeouts, substituted foreign, malformed and stale events, a real short
+# data stage, the controller's own error completion, detach/re-attach over QMP, the bounded hotplug wait,
+# and an OVMF-used controller (scripts/xhci-test.sh). QEMU qemu-xhci only.
+xhci-test: xhci-iso iso
+	@sh scripts/xhci-test.sh "$(QEMU)"
+
+# Admitted stage 1 MSI-X controller cases. Ordinary boots do not probe USB.
+.PHONY: xhci-controller-iso xhci-controller-test
+xhci-controller-iso: build
+	@set -eu; for phase in base:'xhci-controller' observe:'xhci-controller xhci-observe' rounds:'xhci-controller xhci-rounds=3' \
+	    masked:'xhci-controller xhci-fault=masked-vector' storm:'xhci-controller xhci-fault=interrupt-storm' \
+	    late:'xhci-controller xhci-fault=late-msi' run-timeout:'xhci-controller xhci-fault=run-timeout' \
+	    legacy-smi:'xhci-controller xhci-firmware=smi-flip' legacy-reacquire:'xhci-controller xhci-firmware=reacquire-smi' \
+	    legacy-probe-loss:'xhci-controller xhci-firmware=reacquire'; do \
+	  name=$${phase%%:*}; line=$${phase#*:}; \
+	  mkdir -p build/xhci-controller-$$name-iso/boot/grub; cp $(KERNEL) build/xhci-controller-$$name-iso/boot/absd-kernel; \
+	  printf '%s\n' 'set timeout=0' 'menuentry "ABSD USB controller" {' "  multiboot2 /boot/absd-kernel $$line" '  boot' '}' > build/xhci-controller-$$name-iso/boot/grub/grub.cfg; \
+	  grub-mkrescue -o build/absd-xhci-controller-$$name.iso build/xhci-controller-$$name-iso >/dev/null 2>&1; \
+	done
+
+xhci-controller-test: xhci-controller-iso
+	python3 scripts/xhci-controller-test.py "$(QEMU)"
+
+.PHONY: usb-keyboard-iso
+usb-keyboard-iso: build
+	@set -eu; for phase in base:'shell usb-keyboard usb-keyboard-observe' \
+	    masked:'shell usb-keyboard usb-keyboard-observe usb-keyboard-fault=masked-vector' \
+	    console-test:'shell usb-keyboard usb-keyboard-observe usb-keyboard-test' \
+	    recover:'shell usb-keyboard usb-keyboard-observe usb-keyboard-recover' \
+	    recover-late-entry:'shell usb-keyboard usb-keyboard-observe usb-keyboard-recover usb-keyboard-recovery-test=late-entry' \
+	    recover-reset-timeout:'shell usb-keyboard usb-keyboard-observe usb-keyboard-recover usb-keyboard-recovery-test=reset-timeout' \
+	    recover-enumeration-hold:'shell usb-keyboard usb-keyboard-observe usb-keyboard-recover usb-keyboard-recovery-test=enumeration-hold' \
+	    combo-probe:'xhci-probe usb-keyboard' combo-ap:'usb-keyboard smp-kernel-only' \
+	    combo-controller:'xhci-controller usb-keyboard' \
+	    combo-test:'usb-keyboard usb-keyboard-test' combo-recovery:'shell usb-keyboard-recover'; do \
+	  name=$${phase%%:*}; line=$${phase#*:}; \
+	  mkdir -p build/usb-keyboard-$$name-iso/boot/grub; cp $(KERNEL) build/usb-keyboard-$$name-iso/boot/absd-kernel; \
+	  printf '%s\n' 'set timeout=0' 'menuentry "ABSD USB keyboard" {' "  multiboot2 /boot/absd-kernel $$line" '  boot' '}' > build/usb-keyboard-$$name-iso/boot/grub/grub.cfg; \
+	  grub-mkrescue -o build/absd-usb-keyboard-$$name.iso build/usb-keyboard-$$name-iso >/dev/null 2>&1; \
+	done
+	CARGO_TARGET_DIR=build/usb-keyboard-smp-target cargo rustc --bin absd-kernel --features smp-user-test -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
+	mkdir -p build/usb-keyboard-combo-user-iso/boot/grub
+	cp build/usb-keyboard-smp-target/debug/absd-kernel build/usb-keyboard-combo-user-iso/boot/absd-kernel
+	sha256sum build/usb-keyboard-smp-target/debug/absd-kernel > build/usb-keyboard-combo-user-kernel.txt
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD USB refuses SMP user mode" {' '  multiboot2 /boot/absd-kernel smp-user-test usb-keyboard' '  boot' '}' > build/usb-keyboard-combo-user-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-usb-keyboard-combo-user.iso build/usb-keyboard-combo-user-iso >/dev/null 2>&1
+
+.PHONY: usb-keyboard-test
+usb-keyboard-test: usb-keyboard-iso
+	python3 scripts/usb-keyboard-test.py "$(QEMU)"
+
+# NIC qualification ISOs (docs/NETWORK.md): the reflector boot, the same
+# boot with an out-of-ring receive head injected into the device, and with
+# the transmit-hold fixture released when carrier returns, or never.
 net-iso: build
-	@set -eu; for phase in probe:'net-probe' fault:'net-probe nic-ring-fault'; do \
+	@set -eu; for phase in probe:'net-probe' fault:'net-probe nic-ring-fault' hold:'net-probe nic-tx-hold' stuck:'net-probe nic-tx-hold-stuck'; do \
 	  name=$${phase%%:*}; line=$${phase#*:}; \
 	  mkdir -p build/net-$$name-iso/boot/grub; cp $(KERNEL) build/net-$$name-iso/boot/absd-kernel; \
 	  printf '%s\n' 'set timeout=0' 'menuentry "ABSD NIC qualification" {' "  multiboot2 /boot/absd-kernel $$line" '  boot' '}' > build/net-$$name-iso/boot/grub/grub.cfg; \
@@ -500,7 +719,19 @@ net-iso: build
 # frames are refused (scripts/nic-reflect.py); the same boot with the link
 # down before the probe (granted, nothing on the wire, recovered when the
 # harness raises the link); then a device head register outside its ring
-# disabling the NIC; then a `net-probe` boot with no NIC.
+# disabling the NIC; then the link down with the transmit-hold fixture: a
+# bound without carrier is a link outcome and is released when carrier
+# returns, and a hold that never releases disables the NIC as a device
+# outcome; then a `net-probe` boot with no NIC.
+# Measurement only, not a gate (docs/NETWORK.md, "Limits"): times the first
+# frame the guest receives after the probe's RCTL write, at send delays of
+# 0, 500, 900 and 1100 ms after the guest's hello. Prints one JSON line each.
+nic-cold-rx-measure: net-iso
+	@set -eu; for delay in 0 500 900 1100; do \
+	  timeout 120s python3 -I scripts/nic-cold-rx.py build/nic-cold-rx-$$delay $$delay $(QEMU) -m 256 -display none -no-reboot -no-shutdown \
+	    -device isa-debug-exit,iobase=0xf4,iosize=0x04 -cdrom build/absd-net-probe.iso; \
+	done
+
 net-test: net-iso
 	@set -eu; common="$(QEMU) -display none -no-reboot -no-shutdown -device isa-debug-exit,iobase=0xf4,iosize=0x04"; \
 	log=build/net-probe.serial.log; \
@@ -514,7 +745,7 @@ net-test: net-iso
 	grep -qx 'NET status=0 frames=0 processes=0 cells=0 pipes=0' $$log; \
 	grep -qx 'NIC STATS rx_frames=39 rx_refused=3 rx_missed=0 tx_frames=39 tx_refused=5 tx_errors=0 flags=1' $$log; \
 	grep -qx 'NET WORKLOAD OK' $$log; grep -qx 'ABSD BOOT OK' $$log; \
-	if grep -q 'PANIC\|KERNEL FAULT\|NIC DISABLED\|NIC PROBE LINK' $$log; then echo "net-test: unexpected output matching 'PANIC\|KERNEL FAULT\|NIC DISABLED\|NIC PROBE LINK' in $$log" >&2; exit 1; fi; \
+	if grep -q 'PANIC\|KERNEL FAULT\|NIC DISABLED\|NIC PROBE LINK\|NIC TX HOLD\|NIC PROBE TX' $$log; then echo "net-test: unexpected output matching 'PANIC\|KERNEL FAULT\|NIC DISABLED\|NIC PROBE LINK\|NIC TX HOLD\|NIC PROBE TX' in $$log" >&2; exit 1; fi; \
 	log=build/net-linkdown.serial.log; \
 	timeout 180s python3 scripts/nic-reflect.py --link-down build/net-linkdown-sockets "$$log" $$common -cdrom build/absd-net-probe.iso; \
 	grep -q '^NIC CONTROLLER pci=[0-9a-f:.]* vendor=8086 device=100e mac=52:54:00:12:34:56$$' $$log; \
@@ -526,7 +757,7 @@ net-test: net-iso
 	grep -qx 'NIC PROBE OK' $$log; \
 	grep -qx 'NIC STATS rx_frames=39 rx_refused=3 rx_missed=0 tx_frames=40 tx_refused=5 tx_errors=0 flags=1' $$log; \
 	grep -qx 'NET WORKLOAD OK' $$log; grep -qx 'ABSD BOOT OK' $$log; \
-	if grep -q 'PANIC\|KERNEL FAULT\|NIC DISABLED\|NIC UNAVAILABLE\|NETWORK LINK OK' $$log; then echo "net-test: unexpected output matching 'PANIC\|KERNEL FAULT\|NIC DISABLED\|NIC UNAVAILABLE\|NETWORK LINK OK' in $$log" >&2; exit 1; fi; \
+	if grep -q 'PANIC\|KERNEL FAULT\|NIC DISABLED\|NIC UNAVAILABLE\|NETWORK LINK OK\|NIC TX HOLD\|NIC PROBE TX' $$log; then echo "net-test: unexpected output matching 'PANIC\|KERNEL FAULT\|NIC DISABLED\|NIC UNAVAILABLE\|NETWORK LINK OK\|NIC TX HOLD\|NIC PROBE TX' in $$log" >&2; exit 1; fi; \
 	log=build/net-fault.serial.log; rm -f "$$log"; status=0; \
 	timeout 60s $$common -cdrom build/absd-net-fault.iso -serial file:$$log -nic user,model=e1000 >/dev/null 2>&1 || status=$$?; \
 	test "$$status" -eq 3; \
@@ -535,12 +766,32 @@ net-test: net-iso
 	grep -qx 'NIC FAIL CLOSED OK' $$log; \
 	grep -qx 'NIC STATS rx_frames=0 rx_refused=0 rx_missed=0 tx_frames=0 tx_refused=0 tx_errors=0 flags=2' $$log; \
 	grep -qx 'NET WORKLOAD OK' $$log; \
+	if grep -q 'NIC TX HOLD\|NIC PROBE TX' $$log; then echo "net-test: unexpected transmit-hold output in $$log" >&2; exit 1; fi; \
+	log=build/net-txhold.serial.log; \
+	timeout 180s python3 scripts/nic-reflect.py --tx-hold build/net-txhold-sockets "$$log" $$common -cdrom build/absd-net-hold.iso; \
+	grep -q '^NIC TX HOLD FIXTURE ARMED mode=release kind=\(tctl\|software\)$$' $$log; \
+	grep -qx 'NIC LINK DOWN AT PROBE rx_descriptors=32 tx_descriptors=16 buffer_bytes=2048' $$log; \
+	grep -q '^NIC PROBE TX HELD held_ticks=[0-9]* refused_ticks=\([0-9]\|[1-4][0-9]\)$$' $$log; \
+	grep -qx 'NIC PROBE TX RELEASED tx_frames=2 tx_errors=1' $$log; \
+	grep -qx 'NIC STATS rx_frames=0 rx_refused=0 rx_missed=0 tx_frames=2 tx_refused=0 tx_errors=1 flags=1' $$log; \
+	grep -qx 'NET WORKLOAD OK' $$log; grep -qx 'ABSD BOOT OK' $$log; \
+	if grep -q 'PANIC\|KERNEL FAULT\|NIC DISABLED' $$log; then echo "net-test: unexpected output matching 'PANIC\|KERNEL FAULT\|NIC DISABLED' in $$log" >&2; exit 1; fi; \
+	log=build/net-txstuck.serial.log; \
+	timeout 180s python3 scripts/nic-reflect.py --tx-hold-stuck build/net-txstuck-sockets "$$log" $$common -cdrom build/absd-net-stuck.iso; \
+	grep -q '^NIC TX HOLD FIXTURE ARMED mode=stuck kind=\(tctl\|software\)$$' $$log; \
+	grep -qx 'NIC LINK DOWN AT PROBE rx_descriptors=32 tx_descriptors=16 buffer_bytes=2048' $$log; \
+	grep -q '^NIC PROBE TX HELD held_ticks=[0-9]* refused_ticks=\([0-9]\|[1-4][0-9]\)$$' $$log; \
+	grep -qx 'NIC DISABLED reason=tx-timeout' $$log; \
+	grep -qx 'NIC PROBE TX STUCK DISABLED tx_errors=2' $$log; \
+	grep -qx 'NIC STATS rx_frames=0 rx_refused=0 rx_missed=0 tx_frames=0 tx_refused=0 tx_errors=2 flags=2' $$log; \
+	grep -qx 'NET WORKLOAD OK' $$log; \
+	if grep -q 'PANIC\|KERNEL FAULT' $$log; then echo "net-test: unexpected output matching 'PANIC\|KERNEL FAULT' in $$log" >&2; exit 1; fi; \
 	log=build/net-absent.serial.log; rm -f "$$log"; status=0; \
 	timeout 60s $$common -cdrom build/absd-net-probe.iso -serial file:$$log -nic none >/dev/null 2>&1 || status=$$?; \
 	test "$$status" -eq 7; \
 	grep -qx 'NIC UNAVAILABLE Absent' $$log; grep -qx 'init: FAILED at no NIC' $$log; \
-	grep -qx 'NET WORKLOAD FAILED' $$log; if grep -q 'NETWORK LINK OK\|ABSD BOOT OK' $$log; then echo "net-test: unexpected output matching 'NETWORK LINK OK\|ABSD BOOT OK' in $$log" >&2; exit 1; fi; \
-	echo 'net-test: NETWORK LINK OK, refusals, byte-exact reflection, oversize refused, link down at the probe granted and recovered, ring fault disables the NIC, absent NIC refused'
+	grep -qx 'NET WORKLOAD FAILED' $$log; if grep -q 'NETWORK LINK OK\|ABSD BOOT OK\|NIC TX HOLD\|NIC PROBE TX' $$log; then echo "net-test: unexpected output matching 'NETWORK LINK OK\|ABSD BOOT OK\|NIC TX HOLD\|NIC PROBE TX' in $$log" >&2; exit 1; fi; \
+	echo 'net-test: NETWORK LINK OK, refusals, byte-exact reflection, oversize refused, link down at the probe granted and recovered, ring fault disables the NIC, transmit bound without carrier held and released, stuck hold disabled, absent NIC refused'
 
 durable-reader-test:
 	@scripts/durable-reader-test.sh "$(QEMU)"
@@ -557,6 +808,9 @@ spawn-image-test:
 
 elf-matrix-test:
 	@scripts/elf-matrix-test.sh "$(QEMU)"
+
+spawn-image-rollback-test:
+	@scripts/spawn-image-rollback-test.sh "$(QEMU)"
 
 disclosure-probe-test:
 	@scripts/disclosure-probe-test.sh "$(QEMU)"
@@ -616,6 +870,13 @@ debug: iso
 	$(QEMU) -cdrom $(ISO) -display none -serial stdio -no-reboot -no-shutdown -d int,cpu_reset -D build/qemu-debug.log -device isa-debug-exit,iobase=0xf4,iosize=0x04 || status=$$?; \
 	if [ "$$status" -ne 3 ]; then echo "unexpected QEMU exit: $$status" >&2; exit 1; fi; \
 	test -s build/qemu-debug.log; echo 'debug: QEMU interrupt trace at build/qemu-debug.log'
+
+# ACPI table reading, MADT topology, FADT reset/S5 and opt-in S5 power-off
+# on q35 TCG (scripts/acpi-test.sh, docs/x86-acpi-20261015/RESULT.md).
+.PHONY: acpi-test
+acpi-test: iso
+	cargo test --lib -- acpi::
+	sh scripts/acpi-test.sh $(ISO)
 
 smoke: iso
 	@set -eu; output="build/smoke.serial.log"; rm -f "$$output"; \
@@ -780,7 +1041,7 @@ mutants:
 		( scratch="$$(mktemp -d $${TMPDIR:-/tmp}/absd-mutant.XXXXXX)"; \
 		  trap 'rm -rf "$$scratch"' EXIT INT TERM; \
 		  CARGO_TARGET_DIR="$$scratch/target" RUSTFLAGS="--cfg $$mutant" \
-		    cargo rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie; \
+		    $(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie; \
 		  mkdir -p "$$scratch/iso/boot/grub"; \
 		  cp "$$scratch/target/debug/absd-kernel" "$$scratch/iso/boot/absd-kernel"; \
 		  cp grub.cfg "$$scratch/iso/boot/grub/grub.cfg"; \
@@ -887,7 +1148,7 @@ fpu-mutants:
 		( scratch="$$(mktemp -d $${TMPDIR:-/tmp}/absd-mutant.XXXXXX)"; \
 		  trap 'rm -rf "$$scratch"' EXIT INT TERM; \
 		  CARGO_TARGET_DIR="$$scratch/target" RUSTFLAGS="--cfg $$mutant" \
-		    cargo rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie; \
+		    $(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie; \
 		  mkdir -p "$$scratch/iso/boot/grub"; \
 		  cp "$$scratch/target/debug/absd-kernel" "$$scratch/iso/boot/absd-kernel"; \
 		  $(FPU_GRUB) > "$$scratch/iso/boot/grub/grub.cfg"; \
@@ -930,5 +1191,41 @@ arm64-smp-build:
 	ABSD_ARM_FEATURES=arm64-smp-qualification sh scripts/build-arm64.sh
 arm64-weak-memory-test:
 	python3 scripts/models/arm64-weak-memory.py --output "$(or $(WEAK_MEMORY_RESULT),build/arm64/weak-memory.json)"
+# GICv3 and the GICv2 regression on QEMU virt (docs/ARM64.md): both images
+# first, then one vCPU under each version, the refusal controls, and two
+# and four vCPUs; TCG by default, ARM64_GIC_ARGS adds e.g. --accel hvf --full-smp.
+.PHONY: arm64-gic-test
+arm64-gic-test:
+	sh scripts/build-arm64.sh
+	ABSD_ARM_BUILD=$(CURDIR)/build/arm64-smp ABSD_ARM_FEATURES=arm64-smp-qualification sh scripts/build-arm64.sh
+	python3 scripts/arm64-gic-qualify.py --image build/arm64/kernel.img --smp-image build/arm64-smp/kernel.img \
+	    --work "$(or $(ARM64_GIC_WORK),build/arm64-gic)" $(ARM64_GIC_ARGS)
 portability-x86-test:
 	sh scripts/portability-x86-test.sh
+
+# Host-only frame v0 gate. No emulator or external effects.
+# with nice 19, CARGO_BUILD_JOBS<=4 and a load monitor (stop above 8).
+.PHONY: check-frame-admission-host
+check-frame-admission-host:
+	python3 scripts/provenance.py check
+	python3 scripts/test_provenance.py
+	python3 scripts/models/rt-fixture.py
+	python3 scripts/models/smp-lifetime.py --self-test
+	python3 scripts/xhci-observe.py --self-test
+	python3 scripts/test-i219-info.py
+	python3 scripts/check-frame-admission.py
+	python3 scripts/check-frame-admission.py --self-test
+	python3 scripts/check-frame-admission-log.py --self-test
+	cargo test --workspace --exclude absd-user --features frame-admission-v0
+	cargo run --example frame_vm_qualification --features frame-admission-v0
+	cargo fmt --all -- --check
+	cargo clippy --workspace --all-targets --features frame-admission-v0 -- -D warnings
+	@mkdir -p build/frame-v0
+	@if cargo check --lib --features frame-admission-v0,frame-reservation-experiment >build/frame-v0/mixed.log 2>&1; then echo 'test: mixed supported/private configuration accepted' >&2; exit 1; fi
+	@grep -q 'supported frame admission cannot include private dispatch' build/frame-v0/mixed.log
+	@if RUSTFLAGS='--cfg absd_mutant_frame_authority' cargo test --lib --features frame-admission-v0 frame_admission::tests::ready_is_bound_incremental_and_irreversible >build/frame-v0/authority-mutant.log 2>&1; then echo 'test: ungated authority mutant survived' >&2; exit 1; fi
+	@grep -q 'test frame_admission::tests::ready_is_bound_incremental_and_irreversible ... FAILED' build/frame-v0/authority-mutant.log
+	@echo 'FRAME ADMISSION HOST OK (guest gates remain separate)'
+.PHONY: usb-keyboard-recovery-test
+usb-keyboard-recovery-test: usb-keyboard-iso
+	python3 scripts/usb-keyboard-recovery-test.py "$(QEMU)"

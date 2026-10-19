@@ -9,12 +9,15 @@
 //! that state and waits for the harness to raise the link; nothing is
 //! re-opened. Step 1 (with the kernel's `nic-ring-fault` injection): the
 //! NIC must refuse every send and receive and report itself disabled.
+//! Step 2 (kernel `nic-tx-hold`) and step 3 (`nic-tx-hold-stuck`): the link
+//! is down at the probe and the kernel holds a descriptor posted without
+//! carrier; see `tx_hold`.
 #![no_std]
 #![no_main]
 
 use absd_user::{
     Console, Error, NIC_FRAME_MAX, Nic, NicInfo, RIGHT_READ, RIGHT_WRITE, Start, close, duplicate,
-    sleep,
+    sleep, time,
 };
 
 const ETHERTYPE: [u8; 2] = [0x88, 0xb5];
@@ -30,10 +33,11 @@ absd_user::entry!(main);
 fn main(start: Start) -> i32 {
     let console = start.console;
     let nic = Nic::from_raw(start.handle);
-    let result = if start.arg == 1 {
-        fail_closed(console, nic)
-    } else {
-        reflect(console, nic)
+    let result = match start.arg {
+        1 => fail_closed(console, nic),
+        2 => tx_hold(console, nic, false),
+        3 => tx_hold(console, nic, true),
+        _ => reflect(console, nic),
     };
     match result {
         Ok(()) => 0,
@@ -206,6 +210,96 @@ fn reflect(console: Console, nic: Nic) -> Result<(), &'static str> {
         info.rx_frames, info.rx_refused, info.tx_frames
     ));
     let _ = console.write_str("NIC PROBE OK\n");
+    Ok(())
+}
+
+/// Kernel `nic-tx-hold` (step 2) or `nic-tx-hold-stuck` (step 3), harness
+/// `nic-reflect.py --tx-hold[-stuck]`: the link is down at the probe and
+/// the kernel's fixture holds a descriptor posted without carrier. The
+/// first send waits out its bound and gets the link outcome (`NoCarrier`,
+/// one `tx_errors`, the NIC enabled); the next is refused at once with no
+/// counter moving; receive still answers. Once the harness raises the link
+/// the next send goes out after the held one (released: `tx_frames` 2), or
+/// the bound that then runs with carrier present disables the NIC (stuck:
+/// `Io`, `tx_errors` 2). The fixture shows the driver's rule, not a device.
+fn tx_hold(console: Console, nic: Nic, stuck: bool) -> Result<(), &'static str> {
+    use absd_abi::nic::{NIC_FLAG_DISABLED, NIC_FLAG_LINK_UP};
+    let info = nic.info().map_err(|_| "info")?;
+    if info.flags & (NIC_FLAG_LINK_UP | NIC_FLAG_DISABLED) != 0
+        || info.tx_frames != 0
+        || info.tx_errors != 0
+    {
+        return Err("tx hold: a fresh NIC with the link down expected");
+    }
+    let mut held = hello_frame(info.mac);
+    held[14..24].copy_from_slice(b"ABSD-HELD1");
+    let start = time();
+    if nic.send(&held) != Err(Error::NoCarrier) {
+        return Err("tx hold: first send without carrier");
+    }
+    let held_ticks = time() - start;
+    let after = nic.info().map_err(|_| "info after the bound")?;
+    if after.flags & NIC_FLAG_DISABLED != 0
+        || after.tx_errors != 1
+        || after.tx_frames != 0
+        || held_ticks < 100
+    {
+        return Err("tx hold: counters after the bound");
+    }
+    let mut refused = hello_frame(info.mac);
+    refused[14..24].copy_from_slice(b"ABSD-HELD2");
+    let start = time();
+    if nic.send(&refused) != Err(Error::NoCarrier) {
+        return Err("tx hold: second send while held");
+    }
+    let refused_ticks = time() - start;
+    if nic.info().map_err(|_| "info after the refusal")? != after || refused_ticks >= 50 {
+        return Err("tx hold: the refusal waited or counted");
+    }
+    let mut buffer = [0u8; NIC_FRAME_MAX];
+    if nic.receive(&mut buffer, 0) != Err(Error::Again) {
+        return Err("tx hold: receive while held");
+    }
+    let _ = console.line(format_args!(
+        "NIC PROBE TX HELD held_ticks={held_ticks} refused_ticks={refused_ticks}\n"
+    ));
+    let mut waited = 0u64;
+    while nic.info().map_err(|_| "info while held")?.flags & NIC_FLAG_LINK_UP == 0 {
+        if waited >= LINK_WAIT_TICKS {
+            return Err("tx hold: link never came up");
+        }
+        sleep(100);
+        waited += 100;
+    }
+    let mut next = hello_frame(info.mac);
+    next[14..24].copy_from_slice(b"ABSD-AFTER");
+    let result = nic.send(&next);
+    let last = nic.info().map_err(|_| "final info")?;
+    if stuck {
+        if result != Err(Error::Io)
+            || last.flags & NIC_FLAG_DISABLED == 0
+            || last.tx_errors != 2
+            || last.tx_frames != 0
+        {
+            return Err("tx hold stuck: device outcome");
+        }
+        let _ = console.line(format_args!(
+            "NIC PROBE TX STUCK DISABLED tx_errors={}\n",
+            last.tx_errors
+        ));
+    } else {
+        if result.is_err()
+            || last.flags & NIC_FLAG_DISABLED != 0
+            || last.tx_frames != 2
+            || last.tx_errors != 1
+        {
+            return Err("tx hold: release");
+        }
+        let _ = console.line(format_args!(
+            "NIC PROBE TX RELEASED tx_frames={} tx_errors={}\n",
+            last.tx_frames, last.tx_errors
+        ));
+    }
     Ok(())
 }
 

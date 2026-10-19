@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use absd_fs::{Device, Error, Fs, SECTOR};
-use absd_fsd::proto::{self, Frame, Mount, Reader, derive, op};
+use absd_fsd::proto::{self, Frame, Mount, Reader, derive, op, status as errno};
 use absd_fsd::{CONTROL, Event, Inbox, PipeState, Server, Taken};
 
 #[derive(Clone)]
@@ -226,11 +226,10 @@ fn lent_channel_dead_holders_partial_frame_never_runs_and_parent_request_does() 
     }
 }
 
-/// Audit D7 (latent, not repaired in this campaign): a nested read-only
-/// carve-out from DERIVE LIST can be escaped by renaming an ancestor. Kept
-/// as a characterization test; it passes while the gap exists.
+/// Audit D7: the derived channel cannot move a read-only carve-out out of
+/// its mount path by renaming an ancestor under a wider writable mount.
 #[test]
-fn nested_readonly_carveout_escaped_by_ancestor_rename() {
+fn nested_readonly_carveout_cannot_be_escaped_by_ancestor_rename() {
     let mut s = setup();
     s.fs.mkdir(b"/home/operator").unwrap();
     s.fs.mkdir(b"/home/operator/a").unwrap();
@@ -256,12 +255,16 @@ fn nested_readonly_carveout_escaped_by_ancestor_rename() {
     assert_eq!(status(&s.dispatch(2, body(&o), &q, 1)), -30);
     let from = b"/home/operator/a";
     let r = Frame::request(op::RENAME).u8(0).u16(from.len() as u16).bytes(from).bytes(b"/home/operator/z").finish();
-    assert_eq!(status(&s.dispatch(2, body(&r), &q, 1)), 0);
+    assert_eq!(status(&s.dispatch(2, body(&r), &q, 1)), errno::BUSY);
     let o = Frame::request(op::OPEN).u32(2).bytes(b"/home/operator/z/b/secret").finish();
-    let hh = status(&s.dispatch(2, body(&o), &q, 1));
-    assert!(hh > 0);
-    let w = Frame::request(op::WRITE_AT).u64(hh as u64).u64(0).bytes(b"over").finish();
-    assert_eq!(status(&s.dispatch(2, body(&w), &q, 1)), 4);
+    assert_eq!(status(&s.dispatch(2, body(&o), &q, 1)), errno::NOT_FOUND);
+    let o = Frame::request(op::OPEN).u32(2).bytes(b"/home/operator/a/b/secret").finish();
+    assert_eq!(status(&s.dispatch(2, body(&o), &q, 1)), errno::READ_ONLY);
+    let h = s.fs.open(b"/home/operator/a/b/secret", absd_fs::OpenFlags { read: true, ..Default::default() }).unwrap();
+    let mut bytes = [0; 4];
+    assert_eq!(s.fs.read_at(h, 0, &mut bytes).unwrap(), 4);
+    assert_eq!(&bytes, b"orig");
+    s.fs.close(h).unwrap();
 }
 
 /// Audit D4: one session can fill the object budget; before the repair the

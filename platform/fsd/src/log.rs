@@ -119,3 +119,88 @@ impl LogFile {
         })
     }
 }
+
+/// How the previous generation ended, as this boot's file server recorded it
+/// in its own log before serving: the `FSD RECOVERY seq=… streak=…
+/// previous=…` line that follows `started: boot <id>` (ssh/src/fsd_server.rs).
+/// The ledger itself cannot be read for this: the file server overwrites it
+/// before anything is served (recovery::charge).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Generation {
+    pub seq: u64,
+    pub streak: u64,
+    /// `none`, `ended`, `failed` or `not_ready` (recovery::Previous::name).
+    pub previous: &'static str,
+}
+
+/// Why [`generation`] could not say: never a guess.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Unknown {
+    /// Neither log file holds this boot's `started:` line (rotated out, or
+    /// dropped).
+    NoBootLine,
+    /// This boot's `started:` line has no recovery line after it.
+    NoRecoveryLine,
+    /// The recovery line after it is not in the recorded form.
+    Malformed,
+}
+
+impl Unknown {
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::NoBootLine => "no line for this boot in /var/log/fsd or /var/log/fsd.0",
+            Self::NoRecoveryLine => "this boot's log has no recovery line",
+            Self::Malformed => "this boot's recovery line is malformed",
+        }
+    }
+}
+
+const PREVIOUS: [&str; 4] = ["none", "ended", "failed", "not_ready"];
+
+/// This boot's recovery record from the file server's log: `rotated` is
+/// `/var/log/fsd.0` (older lines, possibly empty) and `current` is
+/// `/var/log/fsd`; `boot` is this boot's identity in lower-case hex. Takes
+/// the first `started: boot <boot>` line and the first recovery line after
+/// it, and refuses to take a line from any other boot.
+pub fn generation(rotated: &[u8], current: &[u8], boot: &str) -> Result<Generation, Unknown> {
+    let started = format!("started: boot {boot}, ");
+    let mut after_start = false;
+    for raw in rotated.split(|&b| b == b'\n').chain(current.split(|&b| b == b'\n')) {
+        // `TIME fsd: TEXT`, the form `line` writes.
+        let Some(text) = core::str::from_utf8(raw).ok().and_then(|l| l.split_once(" fsd: ")).map(|(_, t)| t)
+        else {
+            continue;
+        };
+        if text.starts_with("started: boot ") {
+            if after_start {
+                // Another start before this boot's recovery line: either
+                // a later run (the finalize run) or another boot.
+                return Err(Unknown::NoRecoveryLine);
+            }
+            after_start = text.starts_with(&started);
+            continue;
+        }
+        if !after_start {
+            continue;
+        }
+        if let Some(rest) = text.strip_prefix("FSD RECOVERY ") {
+            return parse_recovery(rest).ok_or(Unknown::Malformed);
+        }
+    }
+    Err(if after_start { Unknown::NoRecoveryLine } else { Unknown::NoBootLine })
+}
+
+fn parse_recovery(rest: &str) -> Option<Generation> {
+    let mut words = rest.split(' ');
+    let seq = words.next()?.strip_prefix("seq=")?;
+    let streak = words.next()?.strip_prefix("streak=")?;
+    let previous = words.next()?.strip_prefix("previous=")?;
+    if words.next().is_some() || [seq, streak].iter().any(|n| n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit())) {
+        return None;
+    }
+    Some(Generation {
+        seq: seq.parse().ok()?,
+        streak: streak.parse().ok()?,
+        previous: PREVIOUS.into_iter().find(|&name| name == previous)?,
+    })
+}

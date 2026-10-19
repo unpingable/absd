@@ -89,136 +89,195 @@ pub extern "C" fn user_syscall_dispatch(frame: *mut u64) -> u64 {
         crate::smp_user::syscall_entry(frame, number);
         crate::smp_app_pressure::refusal_entry(pid, program, number);
         let [arg0, arg1, arg2] = crate::arch_runtime::frame_arguments(frame);
-        let result = match number {
-            0x7fff => crate::smp_user::test_call(arg0, arg1, arg2),
-            SYS_WRITE => match syscall_write(current, arg0, arg1, arg2, 0) {
-                WaitOutcome::Done(result) => result,
-                WaitOutcome::Blocked => {
-                    crate::arch_runtime::set_frame_result(frame, 0);
-                    switch_from_frame(frame, false);
+        #[cfg(feature = "frame-admission-v0")]
+        let supported = absd_kernel::frame_admission::dispatch(
+            number,
+            || supported_admit_self(current, arg0, arg1, arg2),
+            || supported_spawn_reserved(current, arg0, arg1, arg2),
+        );
+        #[cfg(not(feature = "frame-admission-v0"))]
+        let supported: Option<i64> = None;
+        let result = if let Some(result) = supported {
+            result
+        } else {
+            match number {
+                0x7fff => crate::smp_user::test_call(arg0, arg1, arg2),
+                #[cfg(feature = "frame-reservation-experiment")]
+                0x7ff0 => {
+                    if arg1 != 0 || arg2 != 0 {
+                        ERROR_INVALID
+                    } else {
+                        match vm::frames().admit(pid as u32, arg0 as usize) {
+                            Ok(()) => 0,
+                            Err(
+                                absd_kernel::memory::AdmissionError::NoCapacity
+                                | absd_kernel::memory::AdmissionError::NoRecord,
+                            ) => ERROR_NO_MEMORY,
+                            Err(_) => ERROR_INVALID,
+                        }
+                    }
                 }
-            },
-            SYS_YIELD => {
-                crate::arch_runtime::set_frame_result(frame, 0);
-                switch_from_frame(frame, false);
-            }
-            SYS_EXIT => {
-                let process = &mut table().entries[current];
-                process.exit_status = arg0 as i32;
-                process.state = ProcessState::Exited;
-                stats().exits += 1;
-                serial::write("USER EXIT pid=");
-                serial::decimal(pid);
-                serial::write(" status=");
-                serial::signed(arg0 as i32);
-                serial::write("\n");
-                enter_kernel_context_and_reap()
-            }
-            SYS_GETPID => pid as i64,
-            SYS_SPAWN => syscall_spawn(current, arg0, arg1, arg2),
-            SYS_SPAWN_MANY_COPY => syscall_spawn_many_copy(current, arg0, arg1, arg2),
-            SYS_SPAWN_IMAGE => syscall_spawn_image(current, arg0, arg1, arg2),
-            SYS_MAP => syscall_map(current, arg0),
-            SYS_UNMAP => syscall_unmap(current, arg0, arg1),
-            SYS_CLOSE => syscall_close(current, arg0),
-            SYS_DUPLICATE => syscall_duplicate(current, arg0, arg1),
-            SYS_PIPE_CREATE => syscall_pipe_create(current),
-            SYS_PIPE_INFO => syscall_pipe_info(current, arg0, arg1),
-            SYS_CELL_CREATE => syscall_cell_create(current, arg0),
-            SYS_READ => match syscall_read(current, arg0, arg1, arg2, 0) {
-                WaitOutcome::Done(result) => result,
-                WaitOutcome::Blocked => {
-                    crate::arch_runtime::set_frame_result(frame, 0);
-                    switch_from_frame(frame, false);
+                #[cfg(feature = "frame-reservation-experiment")]
+                0x7ff1 => experimental_spawn(current, arg0, arg1, arg2),
+                #[cfg(feature = "frame-reservation-experiment")]
+                0x7ff2 => {
+                    if arg1 != 0 || arg2 != 0 {
+                        ERROR_INVALID
+                    } else {
+                        let frames = vm::frames();
+                        match arg0 {
+                            0 => frames.frames_owned_by(pid as u32) as i64,
+                            1 => frames.idle_reserved_frames() as i64,
+                            2 => frames.reservation(pid as u32).map_or(0, |r| r.0 as i64),
+                            3 => {
+                                1 | if cfg!(feature = "frame-admission-qualification") {
+                                    2
+                                } else {
+                                    0
+                                }
+                            }
+                            _ => ERROR_INVALID,
+                        }
+                    }
                 }
-            },
-            SYS_CELL_READ => syscall_cell_read(current, arg0, arg1),
-            SYS_CELL_TRANSITION => syscall_cell_transition(current, arg0, arg1, arg2),
-            SYS_WAIT => match syscall_wait(current, arg0, arg1, arg2) {
-                WaitOutcome::Done(result) => result,
-                WaitOutcome::Blocked => {
-                    crate::arch_runtime::set_frame_result(frame, 0);
-                    switch_from_frame(frame, false);
+
+                #[cfg(feature = "frame-reservation-experiment")]
+                0x7ff3 => {
+                    syscall_spawn_image_inner(current, arg0, arg1, 0, Some(arg2 as usize), false)
                 }
-            },
-            SYS_TIME => now() as i64,
-            SYS_BLOCK_INFO => syscall_block_info(current, arg0, arg1),
-            SYS_BLOCK_READ => syscall_block_read(current, arg0, arg1, arg2),
-            SYS_BLOCK_WRITE => syscall_block_write(current, arg0, arg1, arg2),
-            SYS_BLOCK_FLUSH => syscall_block_flush(current, arg0),
-            SYS_BLOCK_READ_MANY => syscall_block_read_many(current, arg0, arg1, arg2),
-            SYS_BLOCK_WRITE_MANY => syscall_block_write_many(current, arg0, arg1, arg2),
-            SYS_MACHINE_STOP => syscall_machine_stop(current, pid, arg0, arg1),
-            SYS_MACHINE_RESTART => syscall_machine_restart(current, pid, arg0),
-            SYS_MACHINE_RECOVER => syscall_machine_recover(current, pid, arg0),
-            SYS_BOOT_ID => syscall_boot_id(current, arg0),
-            SYS_WALL_CLOCK => syscall_wall_clock(),
-            SYS_FRAME_STATS => syscall_frame_stats(current, arg0),
-            SYS_RESOURCE_CENSUS => syscall_resource_census(current, arg0),
-            SYS_ABI_VERSION => absd_abi::KERNEL_ABI as i64,
-            absd_kernel::nic::SYS_NIC_INFO => nic::syscall_nic_info(current, arg0, arg1),
-            absd_kernel::nic::SYS_NIC_SEND => nic::syscall_nic_send(current, arg0, arg1, arg2),
-            absd_kernel::nic::SYS_NIC_RECEIVE => {
-                match nic::syscall_nic_receive(current, arg0, arg1, arg2) {
+                #[cfg(feature = "frame-admission-qualification")]
+                0x7ff4 => {
+                    syscall_spawn_image_inner(current, arg0, arg1, 0, Some(arg2 as usize), true)
+                }
+                SYS_WRITE => match syscall_write(current, arg0, arg1, arg2, 0) {
                     WaitOutcome::Done(result) => result,
                     WaitOutcome::Blocked => {
                         crate::arch_runtime::set_frame_result(frame, 0);
                         switch_from_frame(frame, false);
                     }
-                }
-            }
-            SYS_INFO => syscall_info(current, arg0, arg1),
-            SYS_KILL => match syscall_kill(current, arg0) {
-                WaitOutcome::Done(result) => result,
-                WaitOutcome::Blocked => {
+                },
+                SYS_YIELD => {
                     crate::arch_runtime::set_frame_result(frame, 0);
                     switch_from_frame(frame, false);
                 }
-            },
-            SYS_TRANSFER => match syscall_transfer(current, arg0, arg1, arg2) {
-                WaitOutcome::Done(result) => result,
-                WaitOutcome::Blocked => {
+                SYS_EXIT => {
+                    let process = &mut table().entries[current];
+                    process.exit_status = arg0 as i32;
+                    process.state = ProcessState::Exited;
+                    stats().exits += 1;
+                    serial::write("USER EXIT pid=");
+                    serial::decimal(pid);
+                    serial::write(" status=");
+                    serial::signed(arg0 as i32);
+                    serial::write("\n");
+                    enter_kernel_context_and_reap()
+                }
+                SYS_GETPID => pid as i64,
+                SYS_SPAWN => syscall_spawn(current, arg0, arg1, arg2),
+                SYS_SPAWN_MANY_COPY => syscall_spawn_many_copy(current, arg0, arg1, arg2),
+                SYS_SPAWN_IMAGE => syscall_spawn_image(current, arg0, arg1, arg2),
+                SYS_MAP => syscall_map(current, arg0),
+                SYS_UNMAP => syscall_unmap(current, arg0, arg1),
+                SYS_CLOSE => syscall_close(current, arg0),
+                SYS_DUPLICATE => syscall_duplicate(current, arg0, arg1),
+                SYS_PIPE_CREATE => syscall_pipe_create(current),
+                SYS_PIPE_INFO => syscall_pipe_info(current, arg0, arg1),
+                SYS_CELL_CREATE => syscall_cell_create(current, arg0),
+                SYS_READ => match syscall_read(current, arg0, arg1, arg2, 0) {
+                    WaitOutcome::Done(result) => result,
+                    WaitOutcome::Blocked => {
+                        crate::arch_runtime::set_frame_result(frame, 0);
+                        switch_from_frame(frame, false);
+                    }
+                },
+                SYS_CELL_READ => syscall_cell_read(current, arg0, arg1),
+                SYS_CELL_TRANSITION => syscall_cell_transition(current, arg0, arg1, arg2),
+                SYS_WAIT => match syscall_wait(current, arg0, arg1, arg2) {
+                    WaitOutcome::Done(result) => result,
+                    WaitOutcome::Blocked => {
+                        crate::arch_runtime::set_frame_result(frame, 0);
+                        switch_from_frame(frame, false);
+                    }
+                },
+                SYS_TIME => now() as i64,
+                SYS_BLOCK_INFO => syscall_block_info(current, arg0, arg1),
+                SYS_BLOCK_READ => syscall_block_read(current, arg0, arg1, arg2),
+                SYS_BLOCK_WRITE => syscall_block_write(current, arg0, arg1, arg2),
+                SYS_BLOCK_FLUSH => syscall_block_flush(current, arg0),
+                SYS_BLOCK_READ_MANY => syscall_block_read_many(current, arg0, arg1, arg2),
+                SYS_BLOCK_WRITE_MANY => syscall_block_write_many(current, arg0, arg1, arg2),
+                SYS_MACHINE_STOP => syscall_machine_stop(current, pid, arg0, arg1),
+                SYS_MACHINE_RESTART => syscall_machine_restart(current, pid, arg0),
+                SYS_MACHINE_RECOVER => syscall_machine_recover(current, pid, arg0),
+                SYS_BOOT_ID => syscall_boot_id(current, arg0),
+                SYS_WALL_CLOCK => syscall_wall_clock(),
+                SYS_FRAME_STATS => syscall_frame_stats(current, arg0),
+                SYS_RESOURCE_CENSUS => syscall_resource_census(current, arg0),
+                SYS_ABI_VERSION => absd_abi::KERNEL_ABI as i64,
+                absd_kernel::nic::SYS_NIC_INFO => nic::syscall_nic_info(current, arg0, arg1),
+                absd_kernel::nic::SYS_NIC_SEND => nic::syscall_nic_send(current, arg0, arg1, arg2),
+                absd_kernel::nic::SYS_NIC_RECEIVE => {
+                    match nic::syscall_nic_receive(current, arg0, arg1, arg2) {
+                        WaitOutcome::Done(result) => result,
+                        WaitOutcome::Blocked => {
+                            crate::arch_runtime::set_frame_result(frame, 0);
+                            switch_from_frame(frame, false);
+                        }
+                    }
+                }
+                SYS_INFO => syscall_info(current, arg0, arg1),
+                SYS_KILL => match syscall_kill(current, arg0) {
+                    WaitOutcome::Done(result) => result,
+                    WaitOutcome::Blocked => {
+                        crate::arch_runtime::set_frame_result(frame, 0);
+                        switch_from_frame(frame, false);
+                    }
+                },
+                SYS_TRANSFER => match syscall_transfer(current, arg0, arg1, arg2) {
+                    WaitOutcome::Done(result) => result,
+                    WaitOutcome::Blocked => {
+                        crate::arch_runtime::set_frame_result(frame, 0);
+                        switch_from_frame(frame, false);
+                    }
+                },
+                absd_kernel::syscall::SYS_RT_NEXT => {
+                    if arg0 != 0
+                        || arg1 != 0
+                        || arg2 != 0
+                        || table().entries[current].class.rt().is_none()
+                    {
+                        ERROR_INVALID
+                    } else {
+                        crate::sched::rt_complete(&mut table().entries[current]);
+                        crate::arch_runtime::set_frame_result(frame, 0);
+                        switch_from_frame(frame, false);
+                    }
+                }
+                SYS_SLEEP => {
+                    if arg0 == 0 {
+                        crate::arch_runtime::set_frame_result(frame, 0);
+                        switch_from_frame(frame, false);
+                    }
+                    let waiter = &mut table().entries[current];
+                    waiter.state = ProcessState::Waiting;
+                    waiter.wait_kind = WaitKind::Sleep;
+                    waiter.wake_at = deadline(arg0);
+                    crate::sched::rt_arm_fixture(table(), current);
+                    stats().sleeps += 1;
                     crate::arch_runtime::set_frame_result(frame, 0);
                     switch_from_frame(frame, false);
                 }
-            },
-            absd_kernel::syscall::SYS_RT_NEXT => {
-                if arg0 != 0
-                    || arg1 != 0
-                    || arg2 != 0
-                    || table().entries[current].class.rt().is_none()
-                {
-                    ERROR_INVALID
-                } else {
-                    crate::sched::rt_complete(&mut table().entries[current]);
-                    crate::arch_runtime::set_frame_result(frame, 0);
-                    switch_from_frame(frame, false);
+                SYS_CELL_WAIT => match syscall_cell_wait(current, arg0, arg1, arg2) {
+                    WaitOutcome::Done(result) => result,
+                    WaitOutcome::Blocked => {
+                        crate::arch_runtime::set_frame_result(frame, 0);
+                        switch_from_frame(frame, false);
+                    }
+                },
+                _ => {
+                    stats().unknown_refusals += 1;
+                    ERROR_NOT_IMPLEMENTED
                 }
-            }
-            SYS_SLEEP => {
-                if arg0 == 0 {
-                    crate::arch_runtime::set_frame_result(frame, 0);
-                    switch_from_frame(frame, false);
-                }
-                let waiter = &mut table().entries[current];
-                waiter.state = ProcessState::Waiting;
-                waiter.wait_kind = WaitKind::Sleep;
-                waiter.wake_at = deadline(arg0);
-                crate::sched::rt_arm_fixture(table(), current);
-                stats().sleeps += 1;
-                crate::arch_runtime::set_frame_result(frame, 0);
-                switch_from_frame(frame, false);
-            }
-            SYS_CELL_WAIT => match syscall_cell_wait(current, arg0, arg1, arg2) {
-                WaitOutcome::Done(result) => result,
-                WaitOutcome::Blocked => {
-                    crate::arch_runtime::set_frame_result(frame, 0);
-                    switch_from_frame(frame, false);
-                }
-            },
-            _ => {
-                stats().unknown_refusals += 1;
-                ERROR_NOT_IMPLEMENTED
             }
         };
         crate::smp_user::commit_gap(number);
@@ -324,12 +383,128 @@ unsafe fn syscall_spawn(current: usize, program: u64, handle: u64, arg: u64) -> 
     unsafe { publish_child(current, child, no_spawn) }
 }
 
+#[cfg(feature = "frame-reservation-experiment")]
+unsafe fn experimental_spawn(current: usize, program: u64, total: u64, cell: u64) -> i64 {
+    if program & !SPAWN_PROGRAM_MASK & !SPAWN_NO_SPAWN != 0 {
+        return ERROR_INVALID;
+    }
+    let parent = unsafe { table() };
+    if !parent.entries[current].may_spawn {
+        return ERROR_RIGHTS;
+    }
+    if !parent.entries[current].handles.has_free_slot() {
+        return ERROR_TOO_MANY_HANDLES;
+    }
+    let pid = parent.entries[current].pid;
+    let transfer = if cell == 0 {
+        None
+    } else {
+        match parent.entries[current].handles.lookup(cell) {
+            Ok(found) if matches!(found.object, Object::Cell(_)) => Some(Transfer {
+                object: found.object,
+                rights: found.rights,
+                as_console: false,
+            }),
+            Ok(_) => return ERROR_INVALID,
+            Err(error) => return unsafe { handle_error(error) },
+        }
+    };
+    match unsafe {
+        crate::sched::spawn_reserved(
+            (program & SPAWN_PROGRAM_MASK) as usize,
+            pid,
+            total as usize,
+            transfer,
+        )
+    } {
+        Ok(child) => unsafe { publish_child(current, child, program & SPAWN_NO_SPAWN != 0) },
+        Err(error) => error.code(),
+    }
+}
+
+#[cfg(feature = "frame-admission-v0")]
+static mut FRAME_BOOTSTRAP: absd_kernel::frame_admission::BootstrapAdmission =
+    absd_kernel::frame_admission::BootstrapAdmission::new();
+
+#[cfg(feature = "frame-admission-v0")]
+pub(crate) unsafe fn designate_frame_bootstrap(pid: u64) {
+    unsafe { (*core::ptr::addr_of_mut!(FRAME_BOOTSTRAP)).designate(pid) };
+    let index = unsafe { table() }.slot_of(pid).unwrap();
+    unsafe { table() }.entries[index].grant_bootstrap_frame_admission();
+}
+#[cfg(feature = "frame-admission-v0")]
+pub(crate) unsafe fn retire_frame_bootstrap(pid: u64) {
+    unsafe { (*core::ptr::addr_of_mut!(FRAME_BOOTSTRAP)).retire(pid) };
+}
+#[cfg(feature = "frame-admission-v0")]
+unsafe fn frame_admission_allowed(current: usize) -> bool {
+    let p = &unsafe { table() }.entries[current];
+    unsafe { (*core::ptr::addr_of!(FRAME_BOOTSTRAP)).allowed(p.pid, p.may_admit_frames) }
+}
+#[cfg(feature = "frame-admission-v0")]
+unsafe fn supported_admit_self(current: usize, total: u64, reserved1: u64, reserved2: u64) -> i64 {
+    let allowed = unsafe { frame_admission_allowed(current) };
+    let pid = unsafe { table() }.entries[current].pid;
+    absd_kernel::frame_admission::admit_self(
+        unsafe { vm::frames() },
+        pid as u32,
+        allowed,
+        total,
+        reserved1,
+        reserved2,
+    )
+}
+#[cfg(feature = "frame-admission-v0")]
+unsafe fn supported_spawn_reserved(
+    current: usize,
+    request: u64,
+    reserved1: u64,
+    reserved2: u64,
+) -> i64 {
+    let allowed = unsafe { frame_admission_allowed(current) };
+    let request =
+        match absd_kernel::frame_admission::read_request(allowed, reserved1, reserved2, |raw| {
+            let space = unsafe { table() }.entries[current].address_space;
+            let copied = unsafe { copy_from_user(&space, request, raw) }.is_ok();
+            if !copied {
+                unsafe {
+                    stats().pointer_refusals += 1;
+                }
+            }
+            copied
+        }) {
+            Ok(request) => request,
+            Err(code) => return code,
+        };
+    unsafe {
+        syscall_spawn_many_copy_inner(
+            current,
+            request.program_and_flags,
+            request.copies_address,
+            request.copies_count,
+            Some(request.total_frames as usize),
+        )
+    }
+}
+
 /// `spawn_many_copy(program, records, count)`: atomically creates a child
 /// and copies an ordered array of narrowed handles into it. The parent keeps
 /// every source. The child receives the ordered child-handle vector through
 /// its multi-start ABI (`RSI` pointer, `RDX` count); one flagged record may
 /// also replace its console (`RDI`). Duplicate sources are explicitly valid.
 unsafe fn syscall_spawn_many_copy(current: usize, program: u64, records: u64, count: u64) -> i64 {
+    unsafe { syscall_spawn_many_copy_inner(current, program, records, count, None) }
+}
+unsafe fn syscall_spawn_many_copy_inner(
+    current: usize,
+    program: u64,
+    records: u64,
+    count: u64,
+    reservation: Option<usize>,
+) -> i64 {
+    #[cfg(not(feature = "frame-admission-v0"))]
+    let _ = reservation;
+
     if program & !SPAWN_PROGRAM_MASK & !SPAWN_NO_SPAWN != 0 || count > MAX_SPAWN_HANDLES as u64 {
         return ERROR_INVALID;
     }
@@ -349,7 +524,21 @@ unsafe fn syscall_spawn_many_copy(current: usize, program: u64, records: u64, co
         return code;
     }
     let parent = table.entries[current].pid;
-    let child = match unsafe { spawn_many_copy(program as usize, parent, &transfers[..count]) } {
+    #[cfg(feature = "frame-admission-v0")]
+    let result = match reservation {
+        Some(total) => unsafe {
+            crate::sched::spawn_many_copy_reserved(
+                program as usize,
+                parent,
+                &transfers[..count],
+                total,
+            )
+        },
+        None => unsafe { spawn_many_copy(program as usize, parent, &transfers[..count]) },
+    };
+    #[cfg(not(feature = "frame-admission-v0"))]
+    let result = unsafe { spawn_many_copy(program as usize, parent, &transfers[..count]) };
+    let child = match result {
         Ok(child) => child,
         Err(crate::sched::SpawnError::NoHandles) => {
             unsafe { count_handle_refusal(3) };
@@ -357,7 +546,25 @@ unsafe fn syscall_spawn_many_copy(current: usize, program: u64, records: u64, co
         }
         Err(error) => return error.code(),
     };
-    unsafe { publish_child(current, child, no_spawn) }
+    #[cfg(feature = "frame-admission-v0")]
+    if reservation.is_some() && !unsafe { frame_admission_allowed(current) } {
+        unsafe { abort_spawn(child) };
+        return ERROR_RIGHTS;
+    }
+    let result = unsafe { publish_child(current, child, no_spawn) };
+    #[cfg(feature = "frame-admission-v0")]
+    if result > 0 && program == absd_kernel::program::EXTERNAL_WORKLOAD {
+        // Fixed served catalog policy: only the designated init can bind,
+        // and the first successful worker construction owns this generation.
+        if let Some(Transfer {
+            object: Object::Pipe(id),
+            ..
+        }) = transfers[..count].iter().find(|t| t.as_console)
+        {
+            unsafe { (*core::ptr::addr_of_mut!(FRAME_BOOTSTRAP)).bind(parent, *id) };
+        }
+    }
+    result
 }
 
 /// `spawn_image(request, flags, 0)`: `spawn_many_copy` for a static ELF64
@@ -367,7 +574,28 @@ unsafe fn syscall_spawn_many_copy(current: usize, program: u64, records: u64, co
 /// the image is copied by the ordinary loader, and every later failure
 /// rolls the child back completely. ELF refusals are `ERROR_NOT_EXECUTABLE`.
 unsafe fn syscall_spawn_image(current: usize, request: u64, flags: u64, reserved: u64) -> i64 {
-    if flags & !SPAWN_NO_SPAWN != 0 || reserved != 0 {
+    unsafe { syscall_spawn_image_inner(current, request, flags, reserved, None, false) }
+}
+
+unsafe fn syscall_spawn_image_inner(
+    current: usize,
+    request: u64,
+    flags: u64,
+    reserved: u64,
+    reservation: Option<usize>,
+    qualification_abort: bool,
+) -> i64 {
+    #[cfg(not(feature = "frame-reservation-experiment"))]
+    let _ = reservation;
+    if flags & !SPAWN_NO_SPAWN != 0 || reserved != 0 && !cfg!(feature = "spawn-image-rollback-test")
+    {
+        return ERROR_INVALID;
+    }
+    // The qualification build accepts a bounded per-call frame allowance in
+    // the otherwise reserved word. All validation below runs before the quota
+    // is installed; the BKL keeps other allocations out until it is removed.
+    #[cfg(feature = "spawn-image-rollback-test")]
+    if reserved > 64 {
         return ERROR_INVALID;
     }
     let no_spawn = flags & SPAWN_NO_SPAWN != 0;
@@ -415,7 +643,31 @@ unsafe fn syscall_spawn_image(current: usize, request: u64, flags: u64, reserved
         length,
     };
     let parent = table.entries[current].pid;
-    let child = match unsafe { spawn_image(&image, parent, &transfers[..count]) } {
+    #[cfg(feature = "spawn-image-rollback-test")]
+    if reserved != 0 {
+        let frames = unsafe { vm::frames() };
+        assert!(frames.quota().is_none());
+        // The legacy failure-injection ceiling cannot withdraw other PIDs'
+        // admitted backing. Refuse this test configuration before mutation.
+        #[cfg(feature = "frame-reservation-experiment")]
+        if frames.idle_reserved_frames() != 0 {
+            return ERROR_INVALID;
+        }
+        frames.set_quota(Some(frames.allocated_frames() + reserved as usize));
+    }
+    #[cfg(feature = "frame-reservation-experiment")]
+    let result = if let Some(total) = reservation {
+        unsafe { crate::sched::spawn_image_reserved(&image, parent, &transfers[..count], total) }
+    } else {
+        unsafe { spawn_image(&image, parent, &transfers[..count]) }
+    };
+    #[cfg(not(feature = "frame-reservation-experiment"))]
+    let result = unsafe { spawn_image(&image, parent, &transfers[..count]) };
+    #[cfg(feature = "spawn-image-rollback-test")]
+    if reserved != 0 {
+        unsafe { vm::frames() }.set_quota(None);
+    }
+    let child = match result {
         Ok(child) => child,
         Err(crate::sched::SpawnError::NoHandles) => {
             unsafe { count_handle_refusal(5) };
@@ -424,7 +676,7 @@ unsafe fn syscall_spawn_image(current: usize, request: u64, flags: u64, reserved
         Err(crate::sched::SpawnError::BadImage) => return ERROR_NOT_EXECUTABLE,
         Err(error) => return error.code(),
     };
-    unsafe { publish_child(current, child, no_spawn) }
+    unsafe { publish_child_inner(current, child, no_spawn, qualification_abort) }
 }
 
 /// Copies and validates `transfers.len()` `SpawnHandleCopy` records from
@@ -525,6 +777,17 @@ unsafe fn read_transfers(
 /// only then makes the child runnable; if the handle cannot be installed
 /// the child is abandoned whole.
 unsafe fn publish_child(current: usize, child: u64, no_spawn: bool) -> i64 {
+    unsafe { publish_child_inner(current, child, no_spawn, false) }
+}
+
+unsafe fn publish_child_inner(
+    current: usize,
+    child: u64,
+    no_spawn: bool,
+    qualification_abort: bool,
+) -> i64 {
+    #[cfg(not(feature = "frame-admission-qualification"))]
+    let _ = qualification_abort;
     let stopped = {
         let table = unsafe { self::table() };
         table.entries[current].stop != absd_kernel::process::StopState::Active
@@ -544,19 +807,28 @@ unsafe fn publish_child(current: usize, child: u64, no_spawn: bool) -> i64 {
         .insert(Object::Process(child), RIGHT_WAIT | RIGHT_KILL);
     match inserted {
         Ok(handle) => {
+            // Private deterministic control: fully constructed child, copied
+            // object references and parent handle exist, but no activation.
+            #[cfg(feature = "frame-admission-qualification")]
+            if qualification_abort {
+                unsafe { discard_unpublished_child(current, child, handle) };
+                return absd_kernel::syscall::ERROR_AGAIN;
+            }
             // A controlled qualification gap may yield serialization here.
             // The Created child remains invisible until the exact commit.
             unsafe { prepublication_fixture_gap(current, child, handle) };
             crate::smp_user::created_gap();
+            #[cfg(feature = "frame-admission-v0")]
+            if unsafe { vm::frames() }.reservation(child as u32).is_some()
+                && !unsafe { frame_admission_allowed(current) }
+            {
+                unsafe { discard_unpublished_child(current, child, handle) };
+                return ERROR_RIGHTS;
+            }
             if unsafe { self::table() }.entries[current].stop
                 != absd_kernel::process::StopState::Active
             {
-                let closed = unsafe { self::table() }.entries[current]
-                    .handles
-                    .close(handle)
-                    .expect("new child handle vanished before publication");
-                unsafe { release_object(closed.object, closed.rights) };
-                unsafe { abort_spawn(child) };
+                unsafe { discard_unpublished_child(current, child, handle) };
                 return ERROR_INVALID;
             }
             unsafe { activate_spawn(child) };
@@ -570,6 +842,16 @@ unsafe fn publish_child(current: usize, child: u64, no_spawn: bool) -> i64 {
             unsafe { handle_error(error) }
         }
     }
+}
+
+/// Shared by real stopped-parent refusal and the private abort control.
+unsafe fn discard_unpublished_child(current: usize, child: u64, handle: u64) {
+    let closed = unsafe { self::table() }.entries[current]
+        .handles
+        .close(handle)
+        .expect("new child handle vanished before publication");
+    unsafe { release_object(closed.object, closed.rights) };
+    unsafe { abort_spawn(child) };
 }
 
 /// No scheduling gap is admitted on the ordinary path. The kernel-only AP
@@ -876,12 +1158,15 @@ unsafe fn syscall_pipe_info(current: usize, handle: u64, record: u64) -> i64 {
 /// Tries a pipe transfer against `space`. `Ok(Some(n))` moved `n` bytes,
 /// `Ok(None)` means the pipe cannot proceed yet, and `Err` is final.
 unsafe fn try_pipe_transfer(
+    current: usize,
     space: &absd_kernel::process::AddressSpace,
     id: PipeId,
     address: u64,
     length: usize,
     write: bool,
 ) -> Result<Option<usize>, i64> {
+    #[cfg(not(feature = "frame-admission-v0"))]
+    let _ = current;
     let pipes = unsafe { pipes() };
     let scope = crate::smp_leaf_measure::Scope::begin(crate::smp_leaf_measure::STATUS);
     let status = pipes.status(id);
@@ -933,6 +1218,17 @@ unsafe fn try_pipe_transfer(
             return Err(ERROR_FAULT);
         }
         unsafe {
+            #[cfg(feature = "frame-admission-v0")]
+            {
+                let process = &mut table().entries[current];
+                if (*core::ptr::addr_of_mut!(FRAME_BOOTSTRAP)).delivered(
+                    process.pid,
+                    id,
+                    &bytes[..read],
+                ) {
+                    process.may_admit_frames = false;
+                }
+            }
             stats().pipe_reads += 1;
         }
         Ok(Some(read))
@@ -963,7 +1259,7 @@ unsafe fn pipe_operation(
         }
         return WaitOutcome::Done(ERROR_FAULT);
     }
-    match unsafe { try_pipe_transfer(&space, id, address, length, write) } {
+    match unsafe { try_pipe_transfer(current, &space, id, address, length, write) } {
         Ok(Some(count)) => WaitOutcome::Done(count as i64),
         Err(error) => WaitOutcome::Done(error),
         Ok(None) => {
@@ -1002,12 +1298,13 @@ pub(crate) unsafe fn wake_pipe_waiters(id: PipeId, _status: PipeStatus) {
             continue;
         };
         let space = entry.address_space;
-        let result =
-            match unsafe { try_pipe_transfer(&space, id, wait.address, wait.length, wait.write) } {
-                Ok(Some(count)) => count as i64,
-                Err(error) => error,
-                Ok(None) => continue,
-            };
+        let result = match unsafe {
+            try_pipe_transfer(index, &space, id, wait.address, wait.length, wait.write)
+        } {
+            Ok(Some(count)) => count as i64,
+            Err(error) => error,
+            Ok(None) => continue,
+        };
         let entry = &mut table.entries[index];
         entry.clear_wait();
         entry.task.context.set_result((result as u64) as i64);
@@ -1086,6 +1383,14 @@ unsafe fn console_read(current: usize, address: u64, length: u64, timeout: u64) 
     });
     unsafe {
         stats().console_waits += 1;
+        // Shell is a qualification boot mode. Its host may inject an entire
+        // line at once, so a printed prompt is not a blocked-read receipt.
+        // State and transfer registration are complete; this path now
+        // unconditionally returns Blocked before input can be delivered.
+        if stats().console_waits == 1 && crate::sched::boot_mode() == crate::sched::BootMode::Shell
+        {
+            serial::write("\nSHELL CONSOLE BLOCKED\n");
+        }
     }
     WaitOutcome::Blocked
 }
@@ -1106,9 +1411,29 @@ unsafe fn deliver_console_input(
     count as i64
 }
 
-/// Completes the console read of the first process blocked on input, if
-/// any bytes have arrived. Only one reader is served per arrival so bytes
-/// are never split between two waiters out of order.
+/// Read-only qualification observation for the explicit USB Console race
+/// fixture. No table borrow escapes into the driver or ISR.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn usb_keyboard_test_deadline() -> Option<u64> {
+    crate::debug_assert_interrupts_disabled();
+    crate::kernel_lock::assert_held(crate::kernel_lock::BSP);
+    let now = now();
+    unsafe { table() }
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            if entry.state != ProcessState::Waiting || entry.wait_kind != WaitKind::Console {
+                return None;
+            }
+            entry
+                .wake_at
+                .filter(|&deadline| deadline > now && deadline - now <= 1000)
+        })
+        .min()
+}
+
+/// Completes the console read of the first blocked reader. The byte stream
+/// is not split between multiple waiters in one scan.
 pub(crate) unsafe fn wake_console_readers() {
     if serial::input_available() == 0 {
         return;

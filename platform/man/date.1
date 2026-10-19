@@ -36,7 +36,8 @@ cannot tell.
 The same clock stamps the lines of the logs under
 .Pa /var/log
 .Pq Xr afterboot 8 .
-Files carry no times at all; see
+The same clock supplies file modification times; unknown times remain
+unknown, and no command sets them. See
 .Xr filesystem 7 .
 .Sh EXIT STATUS
 0 on success, 1 when the kernel refuses a reading (the clock gave no

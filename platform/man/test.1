@@ -1,0 +1,76 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt TEST 1
+.Os ABSD
+.Sh NAME
+.Nm test
+.Nd evaluate an expression (sbase)
+.Sh SYNOPSIS
+.Nm
+.Ar expression
+.Sh DESCRIPTION
+.Nm
+is sbase 0.1's
+.Nm test ,
+built for ABSD with the C kit and two declared patches
+.Pq Pa userland/patches/test-access-mtime.patch , test-stdout-gate.patch ;
+see
+.Xr sbase 7 .
+It evaluates a file, string or integer expression and reports the result
+in its exit status only; it prints nothing on success.
+The file tests
+.Fl e , Fl f , Fl d , Fl r , Fl s ,
+and the string and integer comparisons, behave as upstream.
+The read, write and execute tests use
+.Fn access
+where upstream uses
+.Fn faccessat ,
+which ABSD does not provide; with one fixed identity the two answer alike.
+.Sh UNSUPPORTED ON ABSD
+.Bl -tag -width Ds
+.It Fl w Ar DIR
+status 2,
+.Ql test: -w DIR: check not supported on this system: Function not implemented
+(SPEC A11).
+.It Fl x Ar FILE
+status 2,
+.Ql ... check not supported on this system: Invalid argument
+(no execute permission exists);
+.Fl x Ar DIR
+is true.
+.It Fl nt , Fl ot
+status 2,
+.Ql test: -nt/-ot: file modification times are not available on this system .
+.It Fl h , Fl L , Fl p , Fl S , Fl b , Fl c
+false: only files and directories exist (A13).
+.It Fl u , Fl g , Fl k
+false: modes are 0644/0444 only.
+.It Fl t Ar FD
+false: no descriptor is a terminal
+.Pf ( Fn isatty
+0).
+.It Li \&[ No form
+the binary honours
+.Ql argv[0]
+.Ql \&[ ,
+but no
+.Pa /bin/[
+is installed.
+.El
+.Pp
+Behaviour on ABSD is predicted until the guest qualification
+.Pq Xr sbase 7 .
+.Sh EXIT STATUS
+0 when the expression is true, 1 when it is false, 2 on an error or one of
+the refusals above.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ test -d /home/operator && echo yes
+yes
+absd$ test -f /etc/missing
+absd-sh: test: exit status 1
+.Ed
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr filesystem 7 ,
+.Xr sbase 7

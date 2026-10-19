@@ -1,0 +1,5 @@
+status 0
+--- stdout
+0000000   b  \n   a  \n   a  \n   c  \n   c  \n   c  \n
+0000014
+--- stderr

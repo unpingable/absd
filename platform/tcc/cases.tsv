@@ -1,0 +1,58 @@
+# Stage 3 cases. KIND compile-run: in ONE session, cd to the session's /tmp
+# mount, "/bin/tcc" SOURCE -o a.out, then ./a.out ARGS...; the a.out bytes are
+# read back from the image and compared to hostcfg tcc's output for the same
+# source and the same path strings; stdout+status compared to host tcc's
+# Linux build of the same source, no normalizers. KIND spawn-refused: the
+# imported ELF is spawned by path and must be refused by the kernel.
+# (scripts/tcc-matrix.py: the session's commands are fed one per line in a held
+# session.) Fix round 0, ruling 3: the kit rows carry the args and stdin of the
+# kit's own c/tests/kit/cases.tsv (Stage 1), in its order. Directives:
+# `# stdin CASE: FILE` (./a.out reads FILE by `<`; the Linux reference the same
+# bytes); `# reference CASE: gcc` (ruling 1: the Linux reference is gcc -O0;
+# host tcc's build still runs and its limitation is printed); `# cwd CASE: DIR`
+# (./a.out runs by its absolute path from DIR, kept across sessions: Stage 1's
+# `stdio write` then `stdio verify` share one directory; the session's scratch
+# directory does not outlive its session); `# retained`/`# removed CASE: FILE`
+# (a file of DIR the case leaves / removes, checked against the Linux twin);
+# `# pipe CASE: WORDS` (the run's stdout goes through `| WORDS`, Stage 1's
+# `short writer | head -c 1000`). Stage 1's `native cat c-stdio.dat` row is a
+# platform-command case, not a kit test: here the host reads the file from
+# the image instead and compares it with the Linux twin's.
+hello	c/tests/kit/hello.c	compile-run
+exit	c/tests/kit/exit.c	compile-run
+# expect exit: atexit handlers run in reverse order and stdout is flushed at exit (P2); equal to gcc's Linux build
+# reference exit: gcc
+alloc	c/tests/kit/alloc.c	compile-run
+math	c/tests/kit/math.c	compile-run
+jmp	c/tests/kit/jmp.c	compile-run
+short.lines	c/tests/kit/short.c	compile-run
+# stdin short.lines: c/tests/kit/inputs/lines.txt
+short.bytes	c/tests/kit/short.c	compile-run
+# stdin short.bytes: c/tests/kit/inputs/bytes.bin
+args	c/tests/kit/args.c	compile-run	one	two	three
+exit.nested	c/tests/kit/exit.c	compile-run	nested
+# reference exit.nested: gcc
+exit._Exit	c/tests/kit/exit.c	compile-run	_Exit
+# reference exit._Exit: gcc
+exit.return	c/tests/kit/exit.c	compile-run	return
+# reference exit.return: gcc
+exit.abort	c/tests/kit/exit.c	compile-run	abort
+# reference exit.abort: gcc
+stdio.write	c/tests/kit/stdio.c	compile-run	write
+# cwd stdio.write: /home/operator/tcc-work
+# retained stdio.write: c-stdio.dat
+stdio.verify	c/tests/kit/stdio.c	compile-run	verify
+# cwd stdio.verify: /home/operator/tcc-work
+# removed stdio.verify: c-stdio.dat
+errno	c/tests/kit/errno.c	compile-run
+stack.inside	c/tests/kit/stack.c	compile-run	inside
+stack.beyond	c/tests/kit/stack.c	compile-run	beyond
+stack.frame1m	c/tests/kit/stack.c	compile-run	frame1m
+stack.touchdepth	c/tests/kit/stack.c	compile-run	touchdepth
+stack.overflow	c/tests/kit/stack.c	compile-run	overflow
+short.writer	c/tests/kit/short.c	compile-run	writer
+# pipe short.writer: "/bin/head" -c 1000
+probe	tcc/cases/probe.c	compile-run
+# expect probe: varargs (int, double, char*), alloca, a dense and a sparse switch, a function-pointer table, static initialisers with relocations, a 5 KiB string literal; equal to the host
+hello-relro	tcc-build/hostcfg-unpatched/hello-relro.elf	spawn-refused
+# expect hello-relro: the kernel refuses PT_GNU_RELRO (elf.rs:167-169) silently (N7): the shell reports `cannot run: not a static ELF64 image the ABSD loader accepts` with status 126, the file is present (ls -l, sha256sum), no SPAWN OK of a child of the shell, and the host gate refuses the same bytes (type 0x6474e552); task-5-context ruling 2

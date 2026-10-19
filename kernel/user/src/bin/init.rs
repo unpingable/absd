@@ -61,6 +61,11 @@ const EXTERNAL_READER_INPUT: &[u8] = include_bytes!(env!("ABSD_EXTERNAL_READER_I
 const EXTERNAL_READER_PRESENT: bool = !env!("ABSD_EXTERNAL_READER_PRESENT").is_empty();
 /// Whether this image carries a file server for `fsd` durable boots.
 const FILE_SERVER_PRESENT: bool = !env!("ABSD_FILE_SERVER_PRESENT").is_empty();
+/// A dedicated enrollment build (`make ENROLL_STREAM=1`, docs/USERSPACE.md):
+/// its one durable worker generation reads its input over absd-stream-v1
+/// instead of the embedded bytes. Chosen when the image is built; no boot
+/// option selects it. Such an image boots nothing else.
+const ENROLL_STREAM: bool = !env!("ABSD_ENROLL_STREAM").is_empty();
 /// The control channel and the client slots of an `fsd` boot.
 const FSD_CHANNELS: usize = 1 + program::FILE_SERVER_SLOTS;
 /// How long init waits for the file server to finish after the worker
@@ -101,11 +106,18 @@ fn main(start: Start) -> i32 {
         || start.arg == program::INIT_MODE_MACHINE_RECOVER_TEST
         || mode == program::INIT_MODE_DURABLE
         || mode == program::INIT_MODE_SERVED_FSD
-        || mode == program::INIT_MODE_SERVED_FSD_EXIT_TEST;
+        || mode == program::INIT_MODE_SERVED_FSD_EXIT_TEST
+        || mode == program::INIT_MODE_SERVED_FSD_HANG_TEST;
     if keeps_machine {
         unsafe { MACHINE = start.machine };
     } else if start.machine != 0 && close(start.machine).is_err() {
         let _ = console.write_str("init: FAILED at machine handle close\n");
+        return 99;
+    }
+    if ENROLL_STREAM && let Err(step) = enroll_admitted(mode, start.nic) {
+        let _ = console.write_str("init: FAILED at ");
+        let _ = console.write_str(step);
+        let _ = console.write_str("\n");
         return 99;
     }
     let result = match start.arg {
@@ -115,6 +127,9 @@ fn main(start: Start) -> i32 {
         }),
         program::INIT_MODE_MACHINE_RECOVER_TEST => run_machine_recover_test(console),
         program::INIT_MODE_SHELL => bootstrap_child(console, program::SHELL),
+        _ if mode == program::INIT_MODE_SHELL && program::init_step(start.arg) == 1 => {
+            bootstrap_child_arg(console, program::SHELL, 1)
+        }
         program::INIT_MODE_FUZZ => bootstrap_child(console, program::FUZZ),
         program::INIT_MODE_HOSTILE => run_hostile(console),
         program::INIT_MODE_FPU_TEST => run_fpu_test(console),
@@ -148,23 +163,30 @@ fn main(start: Start) -> i32 {
         }
         arg if program::init_mode(arg) == program::INIT_MODE_DURABLE_FSD => {
             unsafe { WORKER_NIC = start.nic };
-            run_durable_fsd(console, start.handle, program::init_step(arg), false)
+            run_durable_fsd(
+                console,
+                start.handle,
+                program::init_step(arg),
+                FsdFixture::None,
+            )
         }
         arg if matches!(
             program::init_mode(arg),
-            program::INIT_MODE_SERVED_FSD | program::INIT_MODE_SERVED_FSD_EXIT_TEST
+            program::INIT_MODE_SERVED_FSD
+                | program::INIT_MODE_SERVED_FSD_EXIT_TEST
+                | program::INIT_MODE_SERVED_FSD_HANG_TEST
         ) =>
         {
             unsafe {
                 WORKER_NIC = start.nic;
                 SERVED = true;
             }
-            run_durable_fsd(
-                console,
-                start.handle,
-                program::init_step(arg),
-                program::init_mode(arg) == program::INIT_MODE_SERVED_FSD_EXIT_TEST,
-            )
+            let fixture = match program::init_mode(arg) {
+                program::INIT_MODE_SERVED_FSD_EXIT_TEST => FsdFixture::ExitOnNotice,
+                program::INIT_MODE_SERVED_FSD_HANG_TEST => FsdFixture::HangOnNotice,
+                _ => FsdFixture::None,
+            };
+            run_durable_fsd(console, start.handle, program::init_step(arg), fixture)
         }
         arg if program::init_mode(arg) == program::INIT_MODE_NET_PROBE => {
             run_net_probe(console, start.nic, program::init_step(arg))
@@ -276,16 +298,23 @@ fn external_chunk(console: Console, offset: usize, bytes: &[u8]) -> Result<(), &
     external_line(console, &line)
 }
 
+/// Ends a child whose run init gave up on. The child is killed and waited
+/// for before its input writer closes: closing first would hand a live child
+/// end of file, and a refused stream could then read as a complete input
+/// (an enrollment worker would accept a whole record whose stream was
+/// refused). An enrollment image keeps the writer open if the child did not
+/// end; the boot is failing anyway.
 fn external_abort(child: Child, input_writer: Pipe, writer_open: bool, output_reader: Pipe) {
-    if writer_open {
-        let _ = close(input_writer.raw());
-    }
     let _ = kill(child);
-    if let Ok(outcome) = wait_timeout(Some(child), 500)
+    let ended = wait_timeout(Some(child), 500);
+    if let Ok(outcome) = &ended
         && served()
     {
         unsafe { SERVED_WORKER_HANDLE = 0 };
-        note_served_worker(outcome);
+        note_served_worker(*outcome);
+    }
+    if writer_open && (ended.is_ok() || !ENROLL_STREAM) {
+        let _ = close(input_writer.raw());
     }
     let _ = close(output_reader.raw());
 }
@@ -396,6 +425,24 @@ fn receive_live_input(
     }
 }
 
+/// An enrollment image runs only a plain durable boot, with no NIC,
+/// broker, reader, file server or embedded input beside it.
+fn enroll_admitted(mode: u64, nic: u64) -> Result<(), &'static str> {
+    if mode != program::INIT_MODE_DURABLE {
+        return Err("enroll build: only a durable boot");
+    }
+    if nic != 0 {
+        return Err("enroll build: a NIC was granted");
+    }
+    if broker::enabled() || EXTERNAL_READER_PRESENT || FILE_SERVER_PRESENT {
+        return Err("enroll build: a broker, reader or file server is present");
+    }
+    if !EXTERNAL_INPUT.is_empty() {
+        return Err("enroll build: embedded input is present");
+    }
+    Ok(())
+}
+
 /// A durable boot: the kernel handed init the block device in RSI. The
 /// selected multi-start program receives the input pipe, the block device,
 /// a read-only cell carrying this boot's step number, and its captured
@@ -424,7 +471,7 @@ fn run_durable(console: Console, block: u64, selected: u64, step: u64) -> Result
         ];
         let outcome = run_external_with(
             console,
-            false,
+            ENROLL_STREAM,
             selected,
             &extra,
             EXTERNAL_INPUT,
@@ -456,6 +503,11 @@ fn run_durable(console: Console, block: u64, selected: u64, step: u64) -> Result
         let result = match outcome? {
             Outcome::Exited(0) => Ok(()),
             Outcome::Exited(status) if status == program::DURABLE_WORKER_ABORT_STATUS => {
+                // The stream was consumed by the first generation: a
+                // replacement could only run without its input.
+                if ENROLL_STREAM {
+                    return Err("enroll worker aborted");
+                }
                 if generation >= program::DURABLE_MAX_GENERATIONS {
                     return Err("durable worker generations exhausted");
                 }
@@ -484,14 +536,103 @@ fn run_durable(console: Console, block: u64, selected: u64, step: u64) -> Result
 /// any, and gives the server its ends first. One worker generation: the
 /// client ends are gone once the worker has them, so no replacement could
 /// get them. The boot fails if the server ends while the worker runs.
+// Private wrappers for this embedded S1 consumer, not a general user library.
+const SERVED_INIT_FRAMES: u64 = 16427;
+const SERVED_FSD_FRAMES: u64 = frame_budget(option_env!("ABSD_SERVED_FSD_FRAMES"), 9333);
+const SERVED_SSHD_FRAMES: u64 = frame_budget(option_env!("ABSD_SERVED_SSHD_FRAMES"), 9434);
+const fn frame_budget(value: Option<&str>, fallback: u64) -> u64 {
+    let Some(value) = value else {
+        return fallback;
+    };
+    let bytes = value.as_bytes();
+    let mut total = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        assert!(bytes[i] >= b'0' && bytes[i] <= b'9');
+        total = total * 10 + (bytes[i] - b'0') as u64;
+        i += 1;
+    }
+    assert!(total > 0 && total <= absd_abi::syscall::MAX_FRAME_ADMISSION_FRAMES);
+    total
+}
+
+fn frame_admission_result(
+    mut console: Console,
+    service: &str,
+    frames: u64,
+    raw: i64,
+) -> Result<u64, Error> {
+    if raw < 0 {
+        let _ = writeln!(
+            console,
+            "SERVED FRAME ADMISSION REFUSED service={service} frames={frames} error={raw}"
+        );
+        Err(Error::from_code(raw))
+    } else {
+        Ok(raw as u64)
+    }
+}
+fn admit_served_init(console: Console) -> Result<(), Error> {
+    let raw = unsafe {
+        syscall3(
+            absd_abi::syscall::SYS_FRAME_ADMIT_SELF,
+            SERVED_INIT_FRAMES,
+            0,
+            0,
+        )
+    };
+    frame_admission_result(console, "init", SERVED_INIT_FRAMES, raw).map(|_| ())
+}
+fn spawn_served_reserved(
+    console: Console,
+    service: &str,
+    frames: u64,
+    program: u64,
+    copies: &[SpawnHandleCopy],
+) -> Result<Child, Error> {
+    // Encode both records explicitly: the supported ABI does not rely on
+    // the layout or alignment of the Rust structs.
+    let mut records =
+        [0u8; absd_abi::syscall::MAX_SPAWN_HANDLES * absd_abi::syscall::SPAWN_HANDLE_COPY_BYTES];
+    for (copy, bytes) in copies.iter().zip(
+        records
+            .as_chunks_mut::<{ absd_abi::syscall::SPAWN_HANDLE_COPY_BYTES }>()
+            .0
+            .iter_mut(),
+    ) {
+        bytes[..8].copy_from_slice(&copy.source.to_le_bytes());
+        bytes[8..16].copy_from_slice(&copy.rights.to_le_bytes());
+        bytes[16..].copy_from_slice(&copy.flags.to_le_bytes());
+    }
+    let request = absd_abi::syscall::SpawnReservedRequest {
+        program_and_flags: program,
+        copies_address: records.as_ptr() as u64,
+        copies_count: copies.len() as u64,
+        total_frames: frames,
+    }
+    .to_bytes();
+    let raw = unsafe {
+        syscall3(
+            absd_abi::syscall::SYS_SPAWN_RESERVED_COPY,
+            request.as_ptr() as u64,
+            0,
+            0,
+        )
+    };
+    frame_admission_result(console, service, frames, raw).map(Child::from_raw)
+}
+
 fn run_durable_fsd(
     console: Console,
     block: u64,
     step: u64,
-    qualification_exit: bool,
+    fixture: FsdFixture,
 ) -> Result<(), &'static str> {
     if block == 0 {
         return Err("no block device");
+    }
+    if served() {
+        admit_served_init(console).map_err(|_| "frame self admission")?;
     }
     reserve_multicore_service()?;
     if !FILE_SERVER_PRESENT {
@@ -509,8 +650,19 @@ fn run_durable_fsd(
         server[index] = (request_reader, reply_writer);
         client[index] = (request_writer, reply_reader);
     }
-    let (server_child, server_pid) =
-        spawn_file_server(console, block, &server, qualification_exit)?;
+    // A served boot's two essential services each get a liveness cell
+    // before either is started (docs/service-lifecycle-20261008/
+    // LIVENESS.md): init keeps the originals and reads them in its reap
+    // pass once the generation is ready; each service gets a copy with
+    // read and write rights and transitions it once per loop pass. The
+    // cells are kernel objects init releases at the orderly end, so the
+    // end-of-boot accounting still finds none.
+    if served() {
+        let worker_cell = Cell::create(0).map_err(|_| "served liveness cell")?;
+        let server_cell = Cell::create(0).map_err(|_| "served liveness cell")?;
+        unsafe { SERVED_LIVENESS_CELLS = (worker_cell.raw(), server_cell.raw()) };
+    }
+    let (server_child, server_pid) = spawn_file_server(console, block, &server, fixture)?;
     for (request, reply) in server {
         close(request).map_err(|_| "fsd server end close")?;
         close(reply).map_err(|_| "fsd server end close")?;
@@ -613,6 +765,9 @@ fn end_served(
     stream_failed: bool,
 ) -> Result<(), &'static str> {
     unsafe { SERVED_END_DECIDED = true };
+    // The worker is reaped; the file server ends on its own at the channel
+    // EOF. Neither beats again, and the cells must not survive init.
+    close_served_liveness();
     let restart = worker == Outcome::Exited(program::SERVED_WORKER_RESTART_STATUS);
     // A file server that did not end reports status -1.
     let (server_status, server_failure) = match unsafe { FSD_SERVER_OUTCOME } {
@@ -1118,44 +1273,74 @@ fn spawn_file_server(
     console: Console,
     block: u64,
     server: &[(u64, u64); FSD_CHANNELS],
-    qualification_exit: bool,
+    fixture: FsdFixture,
 ) -> Result<(Child, u64), &'static str> {
-    use absd_user::broker::{ROLE_BLOCK, ROLE_FS_REPLY, ROLE_FS_REQUEST, startup_record};
+    use absd_user::broker::{
+        ROLE_BLOCK, ROLE_FS_REPLY, ROLE_FS_REQUEST, ROLE_LIVENESS, startup_record,
+    };
     let (startup_reader, startup_writer) = split_pipe()?;
     let startup_writer = Pipe::from_raw(startup_writer);
-    let mut copies = [SpawnHandleCopy::new(0, 0); 3 + 2 * FSD_CHANNELS];
-    let mut roles = [(0u8, 0u8); 1 + 2 * FSD_CHANNELS];
+    let mut copies = [SpawnHandleCopy::new(0, 0); 4 + 2 * FSD_CHANNELS];
+    let mut roles = [(0u8, 0u8); 2 + 2 * FSD_CHANNELS];
     copies[0] = SpawnHandleCopy::new(startup_reader, RIGHT_READ);
     copies[1] = SpawnHandleCopy::new(block, RIGHT_READ | RIGHT_WRITE);
     roles[0] = (ROLE_BLOCK, 1);
-    for (index, (request, reply)) in server.iter().enumerate() {
-        let at = 2 + 2 * index;
-        copies[at] = SpawnHandleCopy::new(*request, RIGHT_READ);
-        copies[at + 1] = SpawnHandleCopy::new(*reply, RIGHT_WRITE);
-        roles[1 + 2 * index] = (ROLE_FS_REQUEST, at as u8);
-        roles[2 + 2 * index] = (ROLE_FS_REPLY, at as u8 + 1);
+    let mut count = 2;
+    let mut role_count = 1;
+    for (request, reply) in server.iter() {
+        copies[count] = SpawnHandleCopy::new(*request, RIGHT_READ);
+        copies[count + 1] = SpawnHandleCopy::new(*reply, RIGHT_WRITE);
+        roles[role_count] = (ROLE_FS_REQUEST, count as u8);
+        roles[role_count + 1] = (ROLE_FS_REPLY, count as u8 + 1);
+        count += 2;
+        role_count += 2;
     }
-    copies[2 + 2 * FSD_CHANNELS] = SpawnHandleCopy::console(console.raw(), RIGHT_WRITE);
-    let spawned = spawn_many_copy(
-        program::FILE_SERVER | absd_abi::syscall::SPAWN_NO_SPAWN,
-        &copies,
-    );
+    // Only a served boot's file server beats: the cell exists only there.
+    let server_cell = unsafe { SERVED_LIVENESS_CELLS.1 };
+    if server_cell != 0 {
+        copies[count] = SpawnHandleCopy::new(server_cell, RIGHT_READ | RIGHT_WRITE);
+        roles[role_count] = (ROLE_LIVENESS, count as u8);
+        count += 1;
+        role_count += 1;
+    }
+    copies[count] = SpawnHandleCopy::console(console.raw(), RIGHT_WRITE);
+    count += 1;
+    let selected = program::FILE_SERVER | absd_abi::syscall::SPAWN_NO_SPAWN;
+    let spawned = if served() {
+        spawn_served_reserved(
+            console,
+            "fsd",
+            SERVED_FSD_FRAMES,
+            selected,
+            &copies[..count],
+        )
+    } else {
+        spawn_many_copy(selected, &copies[..count])
+    };
     close(startup_reader).map_err(|_| "fsd startup reader close")?;
     let child = spawned.map_err(|_| "file server spawn")?;
     let mut record = [0u8; 256];
     // The record, not the ELF's build-time argv, controls a kernel-started
-    // file server. Only this named local VM mode passes a failure flag.
+    // file server. Only the named local VM modes pass a failure flag.
     const EXIT_FLAG: &[u8] = b"--qualification-exit-on-notice";
-    let mut encoded = [0u8; 4 + EXIT_FLAG.len()];
-    let args = if qualification_exit {
-        encoded[..2].copy_from_slice(&1u16.to_le_bytes());
-        encoded[2..4].copy_from_slice(&(EXIT_FLAG.len() as u16).to_le_bytes());
-        encoded[4..].copy_from_slice(EXIT_FLAG);
-        &encoded[..]
-    } else {
-        &[0, 0][..]
+    const HANG_FLAG: &[u8] = b"--qualification-hang-on-notice";
+    const _: () = assert!(HANG_FLAG.len() == EXIT_FLAG.len());
+    let flag: &[u8] = match fixture {
+        FsdFixture::None => b"",
+        FsdFixture::ExitOnNotice => EXIT_FLAG,
+        FsdFixture::HangOnNotice => HANG_FLAG,
     };
-    let length = startup_record(&mut record, &roles, args).ok_or("fsd startup record")?;
+    let mut encoded = [0u8; 4 + EXIT_FLAG.len()];
+    let args = if flag.is_empty() {
+        &[0, 0][..]
+    } else {
+        encoded[..2].copy_from_slice(&1u16.to_le_bytes());
+        encoded[2..4].copy_from_slice(&(flag.len() as u16).to_le_bytes());
+        encoded[4..4 + flag.len()].copy_from_slice(flag);
+        &encoded[..4 + flag.len()]
+    };
+    let length =
+        startup_record(&mut record, &roles[..role_count], args).ok_or("fsd startup record")?;
     startup_writer
         .write_all(&record[..length])
         .map_err(|_| "fsd startup write")?;
@@ -1186,6 +1371,88 @@ static mut FSD_SERVER_OUTCOME: Option<i64> = None;
 /// The block handle init keeps through a served boot, regranted once to
 /// the file server's finalize run at a completed orderly end.
 static mut SERVED_BLOCK: u64 = 0;
+/// The liveness cells of a served boot, `(sshd, file server)`: init's
+/// original handles (all rights), created before either service starts
+/// and released at the orderly end. Zero outside a served boot.
+static mut SERVED_LIVENESS_CELLS: (u64, u64) = (0, 0);
+/// The liveness judgment over those cells (docs/service-lifecycle-20261008/
+/// LIVENESS.md); policy in `program::ServedLiveness`, readings from here.
+static mut SERVED_LIVENESS: program::ServedLiveness = program::ServedLiveness::new();
+
+/// The one fixed control argument a qualification served boot passes its
+/// file server; ordinary served boots pass none (`program::INIT_MODE_*`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FsdFixture {
+    None,
+    ExitOnNotice,
+    HangOnNotice,
+}
+
+/// Reads both liveness cells once the generation is ready and judges them.
+/// `Err` names the unresponsive component, in the words `recover_served`
+/// prints; the console line before it carries the idle counts. Before
+/// readiness nothing is judged (pre-ready failures are refusals, never
+/// resets), and the first reading after readiness only starts the clock.
+fn check_served_liveness(console: Console) -> Result<(), &'static str> {
+    let (worker, server) = unsafe { SERVED_LIVENESS_CELLS };
+    if worker == 0 || server == 0 || !unsafe { SERVED_READY } {
+        return Ok(());
+    }
+    let (sshd_version, _) = Cell::from_raw(worker)
+        .read()
+        .map_err(|_| "served liveness cell read")?;
+    let (fsd_version, _) = Cell::from_raw(server)
+        .read()
+        .map_err(|_| "served liveness cell read")?;
+    let now = time();
+    // Init is the only task touching the judgment; a raw pointer avoids a
+    // reference to mutable static data, as the readiness probe does.
+    let judge = core::ptr::addr_of_mut!(SERVED_LIVENESS);
+    if !unsafe { (*judge).started() } {
+        unsafe { (*judge).start(now, sshd_version, fsd_version) };
+        return Ok(());
+    }
+    match unsafe { (*judge).observe(now, sshd_version, fsd_version) } {
+        program::LivenessVerdict::Live => Ok(()),
+        program::LivenessVerdict::Gap { ticks } => {
+            // Informational: a console write failure here must not become
+            // a fault of the services.
+            let mut line = LineBuffer::new();
+            let _ = writeln!(line, "SERVED LIVENESS GAP ticks={ticks}");
+            let _ = external_line(console, &line);
+            Ok(())
+        }
+        program::LivenessVerdict::Stale {
+            component,
+            idle_ticks,
+            sshd_idle_ticks,
+            fsd_idle_ticks,
+        } => {
+            let mut line = LineBuffer::new();
+            let _ = writeln!(
+                line,
+                "SERVED LIVENESS STALE component={} idle_ticks={idle_ticks} bound={} sshd_idle_ticks={sshd_idle_ticks} fsd_idle_ticks={fsd_idle_ticks}",
+                component.name(),
+                program::SERVED_LIVENESS_TICKS
+            );
+            let _ = external_line(console, &line);
+            Err(component.unresponsive_reason())
+        }
+    }
+}
+
+/// Releases init's liveness cells once both services are gone (the
+/// orderly end), so the end-of-boot accounting finds no cell. The services'
+/// copies went with their processes.
+fn close_served_liveness() {
+    let (worker, server) = unsafe { SERVED_LIVENESS_CELLS };
+    unsafe { SERVED_LIVENESS_CELLS = (0, 0) };
+    for handle in [worker, server] {
+        if handle != 0 {
+            let _ = close(handle);
+        }
+    }
+}
 
 fn fsd_boot() -> bool {
     unsafe { FSD_SERVER_PID != 0 }
@@ -1292,7 +1559,7 @@ fn run_external_with(
         || (matches!(party, Party::Worker(_))
             && (worker_nic() != 0 || fsd_boot() || selected == program::EXTERNAL_WORKLOAD));
     let child = if recorded {
-        spawn_worker_brokered(selected, input_reader, extra, output_writer)?
+        spawn_worker_brokered(console, selected, input_reader, extra, output_writer)?
     } else {
         let mut copies = [SpawnHandleCopy::new(0, 0); 4];
         copies[0] = SpawnHandleCopy::new(input_reader, RIGHT_READ);
@@ -1400,6 +1667,16 @@ fn run_external_with(
                     external_abort(child, input_writer, writer_open, output_reader);
                     return Err(error);
                 }
+            }
+            // The liveness judgment rides the same cadence while the worker
+            // runs: a service whose cell stopped moving is a fault during
+            // service, routed exactly as an exit would be.
+            if served()
+                && reaped_worker.is_none()
+                && let Err(error) = check_served_liveness(console)
+            {
+                external_abort(child, input_writer, writer_open, output_reader);
+                return Err(error);
             }
         }
         if !live && input_offset < input_bytes.len() {
@@ -1577,14 +1854,15 @@ fn worker_nic() -> u64 {
 /// record: `[startup, input, block, step, (nic), (request, reply, slots..),
 /// console]`. The broker channel is there only when a policy is embedded.
 fn spawn_worker_brokered(
+    console: Console,
     selected: u64,
     input_reader: u64,
     extra: &[SpawnHandleCopy],
     output_writer: u64,
 ) -> Result<Child, &'static str> {
     use absd_user::broker::{
-        ROLE_BLOCK, ROLE_FS_REPLY, ROLE_FS_REQUEST, ROLE_MACHINE, ROLE_NIC, ROLE_STDIN, ROLE_STEP,
-        startup_record,
+        ROLE_BLOCK, ROLE_FS_REPLY, ROLE_FS_REQUEST, ROLE_LIVENESS, ROLE_MACHINE, ROLE_NIC,
+        ROLE_STDIN, ROLE_STEP, startup_record,
     };
     // An `fsd` worker gets the step cell and channels, never the block.
     let fsd = fsd_boot();
@@ -1603,8 +1881,8 @@ fn spawn_worker_brokered(
         Pipe::from_raw(duplicate(startup.raw(), RIGHT_WRITE).map_err(|_| "broker startup writer")?);
     close(startup.raw()).map_err(|_| "broker startup split")?;
     const CAPACITY: usize = broker::CHANNEL_HANDLES + 2 * FSD_CHANNELS;
-    let mut copies = [SpawnHandleCopy::new(0, 0); 7 + CAPACITY];
-    let mut roles = [(0u8, 0u8); 5 + CAPACITY];
+    let mut copies = [SpawnHandleCopy::new(0, 0); 8 + CAPACITY];
+    let mut roles = [(0u8, 0u8); 6 + CAPACITY];
     copies[0] = SpawnHandleCopy::new(startup_reader, RIGHT_READ);
     copies[1] = SpawnHandleCopy::new(input_reader, RIGHT_READ);
     roles[0] = (ROLE_STDIN, 1);
@@ -1660,6 +1938,15 @@ fn spawn_worker_brokered(
             role_count += 2;
         }
     }
+    // The served worker's liveness cell (docs/service-lifecycle-20261008/
+    // LIVENESS.md): read and write rights, like the file server's.
+    let worker_cell = unsafe { SERVED_LIVENESS_CELLS.0 };
+    if fsd && served() && worker_cell != 0 {
+        copies[count] = SpawnHandleCopy::new(worker_cell, RIGHT_READ | RIGHT_WRITE);
+        roles[role_count] = (ROLE_LIVENESS, count as u8);
+        count += 1;
+        role_count += 1;
+    }
     copies[count] = SpawnHandleCopy::console(output_writer, RIGHT_WRITE);
     count += 1;
     // Only broker mode withholds the spawn right (docs/BROKER.md). A NIC
@@ -1671,7 +1958,17 @@ fn spawn_worker_brokered(
     } else {
         0
     };
-    let spawned = spawn_many_copy(selected | flags, &copies[..count]);
+    let spawned = if fsd && served() {
+        spawn_served_reserved(
+            console,
+            "sshd",
+            SERVED_SSHD_FRAMES,
+            selected | flags,
+            &copies[..count],
+        )
+    } else {
+        spawn_many_copy(selected | flags, &copies[..count])
+    };
     close(startup_reader).map_err(|_| "broker startup reader close")?;
     channel.close();
     if fsd {
@@ -1718,7 +2015,11 @@ static mut EXTERNAL_OUTPUT_OFFSET: usize = 0;
 static mut EXTERNAL_OUTPUT_DIGEST: u32 = 0x811c_9dc5;
 
 fn bootstrap_child(console: Console, selected: u64) -> Result<(), &'static str> {
-    let child = spawn(selected).map_err(|_| "bootstrap spawn")?;
+    bootstrap_child_arg(console, selected, 0)
+}
+
+fn bootstrap_child_arg(console: Console, selected: u64, argument: u64) -> Result<(), &'static str> {
+    let child = spawn_with(selected, 0, argument).map_err(|_| "bootstrap spawn")?;
     let selected_pid = info(Some(child))
         .map_err(|_| "bootstrap child identity")?
         .pid;

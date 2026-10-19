@@ -1,0 +1,4 @@
+--
+System command returns -1
+--
+status=0

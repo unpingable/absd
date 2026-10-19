@@ -19,11 +19,10 @@
 is ripgrep 15.2.0, built unmodified from its published source.
 It searches the named files, or the named directories recursively, for
 lines matching a regular expression and prints them.
-There is no
-.Nm grep
-on ABSD;
-.Nm
-is the search tool.
+It is the search tool for directory trees;
+.Xr grep 1
+(sbase) searches files and standard input with POSIX regular expressions
+and reads a pipe without being told.
 .Pp
 What has been qualified on ABSD (the matrix in
 .Pa scripts/cmds-matrix.py ) :
@@ -130,6 +129,7 @@ $ ssh -p 2222 operator@127.0.0.1 rg -c started /var/log/fsd
 0 when at least one line matched, 1 when none did, 2 on an error.
 .Sh SEE ALSO
 .Xr absd-sh 1 ,
+.Xr grep 1 ,
 .Xr intro 1 ,
 .Xr filesystem 7
 .Pp

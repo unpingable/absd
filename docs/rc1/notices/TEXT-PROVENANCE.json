@@ -1,0 +1,409 @@
+{
+  "input_sources": {
+    "compiler_rt": {
+      "origin": "Ubuntu libclang-rt-18-dev copyright, full Apache-2.0 text",
+      "scope": "conservative notice for clang builtins on the C link line; actual map inclusion checked separately"
+    },
+    "if_em": {
+      "scope": "verbatim opening BSD-2-Clause notice; conservative inclusion for cited derivation, no assertion every file was copied",
+      "source_sha256": "a79d6160c83ef359dfd241893efc0246d74db69db03a225cd535e25b2a2694c5",
+      "url": "https://raw.githubusercontent.com/freebsd/freebsd-src/833d39bd2e38421a14ea489a956261a0fa993fbc/sys/dev/e1000/if_em.c"
+    },
+    "libm": {
+      "locked_in": [
+        "pins/compat/jaq-3.1.1.Cargo.lock",
+        "pins/compat/uu_cut-0.12.0.Cargo.lock",
+        "pins/compat/uu_head-0.12.0.Cargo.lock",
+        "pins/compat/uu_seq-0.12.0.Cargo.lock",
+        "pins/compat/uu_sort-0.12.0.Cargo.lock",
+        "pins/compat/uu_uniq-0.12.0.Cargo.lock",
+        "pins/compat/uu_wc-0.12.0.Cargo.lock"
+      ],
+      "scope": "complete crate LICENSE plus per-file copyright/permission/license comment blocks; original published LICENSE lacks the Sun permission block",
+      "sha256": "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981",
+      "source_files_with_notice_blocks": [
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/acos.rs",
+          "source_sha256": "efd83a6138061209867f06421c6a756b8ca3aab5c6c0a85c4aba31bedb299da5"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/acosf.rs",
+          "source_sha256": "c5c9c74d267725bbe5f9319e6f4a396af6ce46c890b601d3f963a5d74d12e4c3"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/asin.rs",
+          "source_sha256": "9693a7cb61674ec6fe22be9db8fe20276729c48b1562fd86d5421e372a0a12e4"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/asinf.rs",
+          "source_sha256": "25f6b7bbf46fc5aac4ebdd9e00118239747dcd28a79b90b858ddc4633d773d65"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/atan.rs",
+          "source_sha256": "54181dbddf4f77b90b32b9f6819ac989da570dc02b791f3685d20a23d51324be"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/atan2.rs",
+          "source_sha256": "7d028d4d397f7484b8feed7b228eda65b84acac94d27729d236d5df95e38d8f0"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/atan2f.rs",
+          "source_sha256": "b9497b5adb75e2788c404fd121aa64dcfa0e9357b67af3b3e7e6d4624dae1ca1"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/atanf.rs",
+          "source_sha256": "197762f16ed5951236e17d0869c529e857acc329cc287df019ff69e5401f3b4d"
+        },
+        {
+          "blocks": 2,
+          "path": "libm-0.2.16/src/math/cbrt.rs",
+          "source_sha256": "1ed98a0943c46ca48e32af54b6baeb80b6e8da5dda550005711fcb26bfcf12c2"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/cbrtf.rs",
+          "source_sha256": "7a2b4f190e8618c52cb23b47c040a4b4eacca739c68393cf14fb3f5d73988127"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/cos.rs",
+          "source_sha256": "6e81752899c471bd42d04bdf08e0b22bc10a29f92fa2a343281b995fd342f035"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/cosf.rs",
+          "source_sha256": "f48aa954f199fe4f54fd73b4e7886a75f2c08afba7fc31c6a36db5b5f90ced69"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/erf.rs",
+          "source_sha256": "5a69f440d5ca88a5c4a45119837c45b14238836a036675230e10fec41d293a3b"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/erff.rs",
+          "source_sha256": "62c30876390e532d7dc9ac1f1f1c1f654065fba2b2e534e531964d79e1766196"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/exp.rs",
+          "source_sha256": "1d486e847e1752fb9ce74a714096a11adcac935dacd4f17625ff63819103a80d"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/exp2.rs",
+          "source_sha256": "e7270f15a682b69a49e042c80503c206d37c6c895f2c63da59a5e2431fa5fedc"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/exp2f.rs",
+          "source_sha256": "3b4b5cb2e5674e1ce66a6051710738c1a6edc1d1638686fe9c78f0af4792a634"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/expf.rs",
+          "source_sha256": "33b01180ebd01bb2911379476c5411fd05b066f2e17ef66e48c4dde83a7f01c0"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/expm1.rs",
+          "source_sha256": "6cc612ca7cf1384dc15f541b301a1f176efbc79536aff1293408b3121cc30ad3"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/expm1f.rs",
+          "source_sha256": "2b517f1bcb6279c906aad737f08c83ac30d7871e3beff266ea50a01fa18ccc81"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/fma.rs",
+          "source_sha256": "16e72470f5c4407c44183cf06f5868f216c92e0532f3fb387b57dbccf815e2a7"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/ceil.rs",
+          "source_sha256": "66b3def2b00ed9dd6a4f59c73765a050853dfe06c828fdf731987ac99e7c2a88"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/floor.rs",
+          "source_sha256": "7d4f15369abefa27645d6deda51d30febbe60ee9dca76e72a9364d574d0711c0"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/fma.rs",
+          "source_sha256": "ba44930a56d7c1953ab0c96c7c767911c9dc6967083700c8ef02f43672c8482f"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/fmax.rs",
+          "source_sha256": "68d923950c3f1eab68baeab24679ab50918b663904839bc349ef666d9467518f"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/fmaximum.rs",
+          "source_sha256": "c4b8b7080821a2dc65d0a50baf717ccd9ee20b813ce6d6d3f9f01b5700b674fa"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/fmaximum_num.rs",
+          "source_sha256": "2f2d41e1f0160eb73469fa63db27d881b5b8eabc6d62fae7ca1b4b03eb35c5d5"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/fmin.rs",
+          "source_sha256": "9bbdece9606e5eac57f3a91a5db7aab814c8e2b28b6df1813723c6b5715efc55"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/fminimum.rs",
+          "source_sha256": "a6a33085356610eced23957ca86456b7dbe95e0f9d916298d59ce8bd90076b02"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/fminimum_num.rs",
+          "source_sha256": "f5db65654e690adea16da83839d62a707cc814c998fd4a77e63caaaea1472256"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/fmod.rs",
+          "source_sha256": "11aae62d08d656d815184eafd78a3b2d5764b6ce308b89e3819cd049bc491fe7"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/rint.rs",
+          "source_sha256": "deec183fd0da6c0a47ab272a256990cea4f9231db7faff314697886457d6841a"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/sqrt.rs",
+          "source_sha256": "c58e48ec07404d618109ad45332efe46c5246f42a2ddefdf5b25ba19e4ca9a0f"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/generic/trunc.rs",
+          "source_sha256": "46dd2cc35f6da25099ea2202264d8da3330b5ff1a962a8afb671b54b6ef6002d"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/j0.rs",
+          "source_sha256": "1cb991f0151a626744ad1832d4aedfaca681bcfcecc797de5ac5e9baf2342006"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/j0f.rs",
+          "source_sha256": "de97374b6a0019fd8b3d1f553be1708018546491d3b4a5fc650ee2dcdfc9620e"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/j1.rs",
+          "source_sha256": "e0a10746fd11a458d55ee61e758d9f016ff0f2203a07eb9907b5aca709a40469"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/j1f.rs",
+          "source_sha256": "27b586c94d510aa653923b6b83cfec174e1f5da326d9120b0a0135b1190e32dc"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/jn.rs",
+          "source_sha256": "ba36d25d4bbada83aadb3b2986879b7d88b91adb7b502061d21bf96ff3942194"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/jnf.rs",
+          "source_sha256": "b3861e19644ae669fe17db81d91aeaee9c9f9051b59957ab674017684c98fe32"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/k_cos.rs",
+          "source_sha256": "d4867527877c846aa8e2a0b43cf06f03e2d94c321a548acaf8d5171c09ff4057"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/k_cosf.rs",
+          "source_sha256": "8f76089d014e217b96c9eca520271e64d467dc0d6542bf313dd70eb96c040f7f"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/k_sin.rs",
+          "source_sha256": "dfe6524cb2d530ec51eb1a2ab233aeb65b3f12177c1fb2f50f044ea41170f5d8"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/k_sinf.rs",
+          "source_sha256": "cf0e8bbe8d73a6704b7f1f710f5b9d31f190f1c633e894d4f69c4e3bc359eba3"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/k_tan.rs",
+          "source_sha256": "dc3f8ece9187bbd65792a7d1068e676092e9c2a0886f28c80579f9bd94d744b7"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/k_tanf.rs",
+          "source_sha256": "3381d2d4865bfc98e87aadb96bd8986f7691a389569a58fb1cb8db74fb5d9c20"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/lgamma_r.rs",
+          "source_sha256": "5d56169c077b5b9f88902e2d243a7a4b4d06b89295aa84283d6fa15d9c244032"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/lgammaf_r.rs",
+          "source_sha256": "0bc2b5e0eec7666973adaca536f4d5fe978c8793bb340484fff9e5e7abb425f0"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/log.rs",
+          "source_sha256": "df5f4d1325e89621bfcd9cf7788d0d7e20a6ef7f429110fe35b370b3c9362615"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/log10.rs",
+          "source_sha256": "4a96dd2b6a2a505497f2bb7ea956a50491d068dab1b6055a573aec1724a52e40"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/log10f.rs",
+          "source_sha256": "784a576dd4a4071f4f67c670eb9b221cb03014818c4b2d71afbcbd2211431caf"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/log1p.rs",
+          "source_sha256": "bb8ce741e54d8f001d9c12450a14a663bd413014da2ade9ba1f5fbc9ff0c9a88"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/log1pf.rs",
+          "source_sha256": "8736222a9b9004b061f1339bb819c63c6b54414d4a01ef79d5f5a5f0a70677b5"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/log2.rs",
+          "source_sha256": "1ec0cdd94bf4435ff0402d209089b1bdbcb1ba9a4cd5f77807f9c84cf534f980"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/log2f.rs",
+          "source_sha256": "7b3b17ba08df6b5a57dacf6f945bfe1a3c088bee0eb11e201ac5affc7f65925a"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/logf.rs",
+          "source_sha256": "c7dfa5e89fcca0411624fdc594f64c62d5dfa3b91f061fcb7ac3aea18414f238"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/pow.rs",
+          "source_sha256": "c5566d0f48682d107e8803b0ed204ff3521503348f18a4f26cbe3f47fef15192"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/powf.rs",
+          "source_sha256": "819971cb8e927d80113aded3cfe90dcd501c031e0eb1c562b58842fddd1751be"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/rem_pio2.rs",
+          "source_sha256": "5a040ab09dc356bca6d57712327151ed43003e2bac156553e3eb87d1cdefd2d1"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/rem_pio2_large.rs",
+          "source_sha256": "986b5b9ad2c8fba828aee47bf198eab97fab243359ab03eb09783d98ca5847b5"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/rem_pio2f.rs",
+          "source_sha256": "fb34bab63f8d143dfefa4ef2e31e8166bf21f3c67f1519bfc3ca4fb8eb28cafe"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/sin.rs",
+          "source_sha256": "b48cebd120fc2ac93a6563059cabda28a72c8680304eb8335b92b412235cc232"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/sincos.rs",
+          "source_sha256": "a9c414e828c2e78b6bce4d5e4237b1baa93e81d78421aed5cedeab43df64067f"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/sincosf.rs",
+          "source_sha256": "c39b6e3b52be83ccf4015ff105dab55e693577ebfc43745881750e73eebc6fa6"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/sinf.rs",
+          "source_sha256": "b17db34d5da39a0f336d831abcb700fab69402c915321823870f1845e66c03d2"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/support/int_traits/narrowing_div.rs",
+          "source_sha256": "5f5378e33f1da56090d0dce2514926ab465dce65b89ad4ee2f7da07a92f8d5de"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/support/modular.rs",
+          "source_sha256": "cf6a562d6bdf16336f31d41c59e828ad47f85388849d20d6d3b59fc1c3e388a2"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/tan.rs",
+          "source_sha256": "2ea87ca18526753db6d149635ed6c895c8fbafd1e0fa7a9c04f7dc44b4eae986"
+        },
+        {
+          "blocks": 1,
+          "path": "libm-0.2.16/src/math/tanf.rs",
+          "source_sha256": "f7140c4193a57709acde5d290c8f83435562da42924c54cab0aa3a4f26095190"
+        }
+      ],
+      "url": "https://static.crates.io/crates/libm/libm-0.2.16.crate"
+    },
+    "picolibc": {
+      "member": "picolibc-1.8.12/COPYING.picolibc",
+      "scope": "complete upstream aggregate copyright; includes unbuilt files, not a statement every listed license applies to shipped objects",
+      "sha256": "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa",
+      "url": "https://github.com/picolibc/picolibc/releases/download/1.8.12/picolibc-1.8.12.tar.xz"
+    }
+  },
+  "output_files": {
+    "Apache-2.0.txt": {
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "FreeBSD-if_em-BSD-2-Clause.txt": {
+      "bytes": 1503,
+      "sha256": "631418a6257ab0d96d647c8ffddba9436ecad1dce778b1c7351cda93b0cf06eb"
+    },
+    "LLVM-compiler-rt-copyright.txt": {
+      "bytes": 6897,
+      "sha256": "dc2a171c75ca72818f7f4312602f27cb0e4bf6d010a86e7073a3797cb228ddff"
+    },
+    "Picolibc-1.8.12-COPYING.txt": {
+      "bytes": 241837,
+      "sha256": "80a8d14adb2548513e9e86803bbc4b3c97423533efcea8e04fe9814996fb2974"
+    },
+    "libm-0.2.16-LICENSE.txt": {
+      "bytes": 14088,
+      "sha256": "3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7"
+    },
+    "libm-0.2.16-UPSTREAM-NOTICES.txt": {
+      "bytes": 26205,
+      "sha256": "ecb88d83d30b580db9b4c7f0aa21569105836497375f8d1828edf82a2878e933"
+    }
+  },
+  "schema_version": 1,
+  "status": "SUPPLEMENT_TEXTS_PREPARED_NOT_ACCEPTED",
+  "time": "2026-10-18T22:20:05.187418+00:00"
+}

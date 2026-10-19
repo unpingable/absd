@@ -1,0 +1,1208 @@
+{
+  "schema_version": 1,
+  "disposition": "SOURCE_CONTRACT_FOR_REVIEW_NOT_EXECUTION",
+  "reference_name": "absd-fixture.test",
+  "peer_ipv4": "10.0.2.2",
+  "peer_port": 4443,
+  "guest_ipv4": "10.0.2.15",
+  "guard_port": 4444,
+  "body_pattern": "byte at offset i equals 97 + (i % 26)",
+  "group_count": 32,
+  "groups": [
+    {
+      "id": "P01",
+      "purpose": "Valid TLS1.3 and bounded HTTP",
+      "coverage": "native"
+    },
+    {
+      "id": "P02",
+      "purpose": "Untrusted issuer",
+      "coverage": "native"
+    },
+    {
+      "id": "P02b",
+      "purpose": "Actual signature failure under eligible trusted issuer",
+      "coverage": "native"
+    },
+    {
+      "id": "P03",
+      "purpose": "Wrong DNS reference name",
+      "coverage": "native"
+    },
+    {
+      "id": "P04",
+      "purpose": "Expired certificate at T",
+      "coverage": "native"
+    },
+    {
+      "id": "P05",
+      "purpose": "Not-yet-valid certificate at T",
+      "coverage": "native"
+    },
+    {
+      "id": "P06",
+      "purpose": "Empty/malformed configured root",
+      "coverage": "host"
+    },
+    {
+      "id": "P07",
+      "purpose": "Malformed leaf/chain DER direct verifier",
+      "coverage": "host"
+    },
+    {
+      "id": "P08",
+      "purpose": "TLS1.2-only peer",
+      "coverage": "native"
+    },
+    {
+      "id": "P09",
+      "purpose": "Required ALPN missing or unavailable",
+      "coverage": "native"
+    },
+    {
+      "id": "P10",
+      "purpose": "Missing RDRAND provider",
+      "coverage": "separate-boot"
+    },
+    {
+      "id": "P11",
+      "purpose": "Unavailable typed validation time",
+      "coverage": "native"
+    },
+    {
+      "id": "W01",
+      "purpose": "Malformed record header/type",
+      "coverage": "native"
+    },
+    {
+      "id": "W02",
+      "purpose": "Oversized encrypted record header",
+      "coverage": "native"
+    },
+    {
+      "id": "W03",
+      "purpose": "Broken encrypted handshake tag",
+      "coverage": "native"
+    },
+    {
+      "id": "W04",
+      "purpose": "Broken response record tag",
+      "coverage": "native"
+    },
+    {
+      "id": "W05",
+      "purpose": "FIN mid-record",
+      "coverage": "native"
+    },
+    {
+      "id": "W06",
+      "purpose": "RST mid-record",
+      "coverage": "native"
+    },
+    {
+      "id": "L01",
+      "purpose": "Silent handshake",
+      "coverage": "native"
+    },
+    {
+      "id": "L02",
+      "purpose": "Silent authenticated response",
+      "coverage": "native"
+    },
+    {
+      "id": "L03",
+      "purpose": "Measured receive backpressure",
+      "coverage": "native"
+    },
+    {
+      "id": "L04",
+      "purpose": "Interrupted child",
+      "coverage": "native"
+    },
+    {
+      "id": "L05",
+      "purpose": "Grant-expiry deadline",
+      "coverage": "native"
+    },
+    {
+      "id": "L06",
+      "purpose": "Rewound/overflow/expired clock adapter",
+      "coverage": "host"
+    },
+    {
+      "id": "L07",
+      "purpose": "Unauthorized peer",
+      "coverage": "native"
+    },
+    {
+      "id": "L08",
+      "purpose": "Deterministic short/Again/uncertain WRITE adapter",
+      "coverage": "host"
+    },
+    {
+      "id": "L09",
+      "purpose": "Typed grant-table exhaustion",
+      "coverage": "granting-service"
+    },
+    {
+      "id": "H01",
+      "purpose": "Header/body supported and refused bounds",
+      "coverage": "native"
+    },
+    {
+      "id": "H02",
+      "purpose": "Invalid Content-Length forms",
+      "coverage": "native"
+    },
+    {
+      "id": "H03",
+      "purpose": "Unsupported response forms",
+      "coverage": "native"
+    },
+    {
+      "id": "H04",
+      "purpose": "Incomplete HTTP with clean TLS closure",
+      "coverage": "native"
+    },
+    {
+      "id": "H05",
+      "purpose": "Full body without TLS close_notify",
+      "coverage": "native"
+    }
+  ],
+  "native_occurrences": [
+    {
+      "id": "P01",
+      "group": "P01",
+      "ordinal": 0,
+      "local_port": 7300,
+      "peer_mode": "valid",
+      "expected_class": "Success",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P01/empty",
+      "group": "P01",
+      "ordinal": 1,
+      "local_port": 7301,
+      "peer_mode": "valid",
+      "expected_class": "Success",
+      "expected_body": 0,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P02",
+      "group": "P02",
+      "ordinal": 2,
+      "local_port": 7302,
+      "peer_mode": "untrusted",
+      "expected_class": "CertificateRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P02b",
+      "group": "P02b",
+      "ordinal": 3,
+      "local_port": 7303,
+      "peer_mode": "signature-failure",
+      "expected_class": "CertificateRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P03",
+      "group": "P03",
+      "ordinal": 4,
+      "local_port": 7304,
+      "peer_mode": "wrong-name",
+      "expected_class": "CertificateRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P04",
+      "group": "P04",
+      "ordinal": 5,
+      "local_port": 7305,
+      "peer_mode": "expired",
+      "expected_class": "CertificateRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P05",
+      "group": "P05",
+      "ordinal": 6,
+      "local_port": 7306,
+      "peer_mode": "future",
+      "expected_class": "CertificateRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P08",
+      "group": "P08",
+      "ordinal": 7,
+      "local_port": 7307,
+      "peer_mode": "tls12-only",
+      "expected_class": "TlsRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P09/none",
+      "group": "P09",
+      "ordinal": 8,
+      "local_port": 7308,
+      "peer_mode": "no-alpn",
+      "expected_class": "AlpnRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P09/h2-only",
+      "group": "P09",
+      "ordinal": 9,
+      "local_port": 7309,
+      "peer_mode": "h2-only",
+      "expected_class": "AlpnRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "P11",
+      "group": "P11",
+      "ordinal": 10,
+      "local_port": 7310,
+      "peer_mode": "no-connect",
+      "expected_class": "TimeUnavailable",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 0,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "time_policy": "unavailable",
+      "flags": {
+        "missing_time": true,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "W01",
+      "group": "W01",
+      "ordinal": 11,
+      "local_port": 7311,
+      "peer_mode": "bad-record",
+      "expected_class": "TlsRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "W02",
+      "group": "W02",
+      "ordinal": 12,
+      "local_port": 7312,
+      "peer_mode": "oversize-record",
+      "expected_class": "Deadline",
+      "allowed_native_classes": ["Deadline", "Truncated"],
+      "reference_expected_class": "TlsRejected",
+      "criteria_amendment": "W02-20261016-UPSTREAM-RUSTLS",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "W03",
+      "group": "W03",
+      "ordinal": 13,
+      "local_port": 7313,
+      "peer_mode": "bad-handshake-tag",
+      "expected_class": "TlsRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "W04",
+      "group": "W04",
+      "ordinal": 14,
+      "local_port": 7314,
+      "peer_mode": "bad-response-tag",
+      "expected_class": "TlsRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "W05/header1",
+      "group": "W05",
+      "ordinal": 15,
+      "local_port": 7315,
+      "peer_mode": "eof-header1",
+      "expected_class": "Truncated",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "W05/header4",
+      "group": "W05",
+      "ordinal": 16,
+      "local_port": 7316,
+      "peer_mode": "eof-header4",
+      "expected_class": "Truncated",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "W05/body",
+      "group": "W05",
+      "ordinal": 17,
+      "local_port": 7317,
+      "peer_mode": "eof-body",
+      "expected_class": "Truncated",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "W06",
+      "group": "W06",
+      "ordinal": 18,
+      "local_port": 7318,
+      "peer_mode": "reset-record",
+      "expected_class": "Transport",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "L01",
+      "group": "L01",
+      "ordinal": 19,
+      "local_port": 7319,
+      "peer_mode": "silent-handshake",
+      "expected_class": "Deadline",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "L02",
+      "group": "L02",
+      "ordinal": 20,
+      "local_port": 7320,
+      "peer_mode": "silent-response",
+      "expected_class": "Deadline",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "L03",
+      "group": "L03",
+      "ordinal": 21,
+      "local_port": 7321,
+      "peer_mode": "backpressure",
+      "expected_class": "Success",
+      "expected_body": 16384,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "wire_zero_window_required": true,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 1000,
+        "interrupt_delay_ms": 0
+      },
+      "pause_before_response_ms": 1000
+    },
+    {
+      "id": "L04/handshake",
+      "group": "L04",
+      "ordinal": 22,
+      "local_port": 7322,
+      "peer_mode": "interrupt-handshake",
+      "expected_class": "Interrupted",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "interrupt_after": "TLS CLIENT HANDSHAKE START",
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": "TLS CLIENT HANDSHAKE START",
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "L04/authenticated",
+      "group": "L04",
+      "ordinal": 23,
+      "local_port": 7323,
+      "peer_mode": "interrupt-authenticated",
+      "expected_class": "Interrupted",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": "record-actual",
+      "interrupt_after": "TLS CLIENT AUTHENTICATED",
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": "TLS CLIENT AUTHENTICATED",
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "L04/full-rx",
+      "group": "L04",
+      "ordinal": 24,
+      "local_port": 7324,
+      "peer_mode": "backpressure",
+      "expected_class": "Interrupted",
+      "expected_body": 16384,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "wire_zero_window_required": true,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": "TLS READ PAUSE",
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 2000,
+        "interrupt_delay_ms": 1000
+      },
+      "pause_before_response_ms": 2000,
+      "interrupt_after": "TLS READ PAUSE",
+      "interrupt_delay_ms": 1000,
+      "require_zero_window_before_interrupt": true
+    },
+    {
+      "id": "L05",
+      "group": "L05",
+      "ordinal": 25,
+      "local_port": 7325,
+      "peer_mode": "silent-handshake",
+      "expected_class": "Deadline",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 500,
+      "connect_deadline_ms": 500,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": true,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "L07",
+      "group": "L07",
+      "ordinal": 26,
+      "local_port": 7326,
+      "peer_mode": "guard",
+      "expected_class": "Denied",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 0,
+      "preauth_http_bytes": 0,
+      "guard_port": 4444,
+      "requested_peer_port": 4444,
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4444,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "L09",
+      "group": "L09",
+      "ordinal": 27,
+      "local_port": 7327,
+      "peer_mode": "grant-exhaustion",
+      "expected_class": "Exhausted",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 0,
+      "preauth_http_bytes": 0,
+      "actor": "granting-service",
+      "expect_http": false,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": true,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H01/max",
+      "group": "H01",
+      "ordinal": 28,
+      "local_port": 7328,
+      "peer_mode": "header-max",
+      "expected_class": "Success",
+      "expected_body": 16384,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H01/header-over",
+      "group": "H01",
+      "ordinal": 29,
+      "local_port": 7329,
+      "peer_mode": "header-over",
+      "expected_class": "HttpRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H01/body-over",
+      "group": "H01",
+      "ordinal": 30,
+      "local_port": 7330,
+      "peer_mode": "body-over",
+      "expected_class": "HttpRejected",
+      "expected_body": 16384,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "response_body_length": 16385,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H02/duplicate",
+      "group": "H02",
+      "ordinal": 31,
+      "local_port": 7331,
+      "peer_mode": "length-duplicate",
+      "expected_class": "HttpRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H02/conflicting",
+      "group": "H02",
+      "ordinal": 32,
+      "local_port": 7332,
+      "peer_mode": "length-conflicting",
+      "expected_class": "HttpRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H02/nondecimal",
+      "group": "H02",
+      "ordinal": 33,
+      "local_port": 7333,
+      "peer_mode": "length-nondecimal",
+      "expected_class": "HttpRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H02/overflow",
+      "group": "H02",
+      "ordinal": 34,
+      "local_port": 7334,
+      "peer_mode": "length-overflow",
+      "expected_class": "HttpRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H03/transfer-encoding",
+      "group": "H03",
+      "ordinal": 35,
+      "local_port": 7335,
+      "peer_mode": "transfer-encoding",
+      "expected_class": "HttpRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H03/interim",
+      "group": "H03",
+      "ordinal": 36,
+      "local_port": 7336,
+      "peer_mode": "interim",
+      "expected_class": "HttpRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H03/redirect",
+      "group": "H03",
+      "ordinal": 37,
+      "local_port": 7337,
+      "peer_mode": "redirect",
+      "expected_class": "HttpRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H03/content-encoding",
+      "group": "H03",
+      "ordinal": 38,
+      "local_port": 7338,
+      "peer_mode": "content-encoding",
+      "expected_class": "HttpRejected",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H04",
+      "group": "H04",
+      "ordinal": 39,
+      "local_port": 7339,
+      "peer_mode": "short-http-body",
+      "expected_class": "HttpIncomplete",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    },
+    {
+      "id": "H05",
+      "group": "H05",
+      "ordinal": 40,
+      "local_port": 7340,
+      "peer_mode": "no-close-notify",
+      "expected_class": "CloseIncomplete",
+      "expected_body": 2048,
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "expected_accepts": 1,
+      "preauth_http_bytes": 0,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      }
+    }
+  ],
+  "native_occurrence_count": 41,
+  "child_argv": [
+    "--case",
+    "<native occurrence id>",
+    "--expected-body",
+    "<expected_body>",
+    "--unix-time",
+    "<sealed T>",
+    "--grant-expiry",
+    "<trusted absolute monotonic expiry>"
+  ],
+  "ready_line": "TLS SERVICE CASE READY id=<id> local_port=<local_port>",
+  "child_result_line": "TLS CHILD DONE id=<id> class=<actual derived semantic class>",
+  "expected_classes_status": "Pinned semantic names derived from actual native Outcome and reason: ALPN_UNAVAILABLE is AlpnRejected; W06 is Transport, W05 is Truncated. Expected classes never substitute for observed reports.",
+  "P10": {
+    "case": "P10",
+    "coverage": "separate Haswell,-rdrand boot only if platform can boot; otherwise report NOT_RUN for native missing-CPUID branch. CF/self-test failures source-only.",
+    "expected_class": "EntropyUnavailable",
+    "no_http": true
+  },
+  "timing": "Absolute operation bound min(child start+10000ms, trusted grant expiry); no retry/renewal. Connect bound cannot exceed remaining operation time.",
+  "synchronization": "Fresh boot per selected occurrence. Same child ELF reused; service rebuilt with explicit ABSD_TLS_CASE=<id> and ABSD_TLS_UNIX_SECONDS=<T>. Manifest records exact selected occurrence, expected body, local port and flags; no hidden selection/control protocol. Source port identifies the peer mode.",
+  "limits": [
+    "P06/P07/L06/L08 are initially host-only; no rebuilt invalid-root native ELF.",
+    "L03 requires a captured guest zero TCP receive window, then reopening, or explicit native occupancy evidence; slow I/O is insufficient.",
+    "No unexecuted native case or Linux fixture control may count as ABSD coverage."
+  ],
+  "separate_native_occurrences": [
+    {
+      "id": "P10",
+      "group": "P10",
+      "ordinal": 41,
+      "local_port": 7341,
+      "expected_body": 2048,
+      "peer_mode": "valid",
+      "expected_class": "EntropyUnavailable",
+      "grant_lifetime_ms": 15000,
+      "connect_deadline_ms": 2000,
+      "operation_timeout_ms": 10000,
+      "flags": {
+        "missing_time": false,
+        "short_grant": false,
+        "interrupt_after": null,
+        "requested_peer_port": 4443,
+        "grant_exhaustion": false,
+        "pause_before_response_ms": 0,
+        "interrupt_delay_ms": 0
+      },
+      "qemu_cpu": "Haswell,-rdrand",
+      "coverage": "Only if platform reaches the consumer; otherwise NOT_RUN, not TLS refusal.",
+      "expected_accepts": 0,
+      "preauth_http_bytes": 0,
+      "expect_http": false
+    }
+  ],
+  "backpressure_proof": "L03 requires captured guest zero/reopened TCP window. L04/full-rx additionally requires fixture-local successful outbound ACK observer snapshot on native clock immediately before kill: exact tuple, latest window zero, zero count>0, zero timestamp<=kill request timestamp, child paused/no READ IPC; independent PCAP corroborates zero-window. Otherwise NOT_ESTABLISHED, never inferred numeric occupancy."
+}

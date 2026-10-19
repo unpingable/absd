@@ -1,0 +1,6 @@
+status 0
+--- stdout
+root:x:0:0:root:/root:/bin/sh
+daemon:x:1:1:daemon:/:/bin/false
+operator:x:1000:1000:operator:/home/operator:/bin/absd-sh
+--- stderr

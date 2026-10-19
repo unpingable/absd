@@ -1,0 +1,4 @@
+status 2
+--- stdout
+--- stderr
+usage: /bin/grep [-EFHchilnqsvwx] [-e pattern] [-f file] [pattern] [file ...]

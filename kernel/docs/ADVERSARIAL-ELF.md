@@ -139,13 +139,63 @@ and reverted:
 - Page rounding is protected only by the window check, which comes first. A
   `checked_add` there would be defence in depth; it is unreachable today.
 
+## Partial allocation rollback follow-on (source added 2026-10-11)
+
+`user/src/bin/image_rollback.rs` and `make spawn-image-rollback-test` add a
+separate local VM qualification for the actual `spawn_image` syscall. The
+`spawn-image-rollback-test` kernel feature alone interprets syscall 31's
+normally reserved third word as a one-call frame allowance: a nonzero value
+`N` allows at most `N` new frames (zero leaves the normal unlimited syscall).
+The ordinary kernel still requires this word to be zero. The quota is
+installed after request and transfer validation, covers the complete
+`spawn_image` construction, and is
+removed before syscall publication or refusal returns. The kernel lock
+serializes this bounded quota with other frame allocation.
+
+The valid three-segment image spans three separate 2 MiB page-table regions.
+Its construction needs three address-space frames, three image page tables,
+three image frames, one stack page table, two user stack frames, and eight
+contiguous kernel stack frames (20 total). A 20-frame bounded positive control
+exits 42 and seeds PID continuity. Allowances 1 through 11 then refuse at
+distinct single-frame allocation depths, including page-table and
+user-frame allocation; 12 through 19 refuse the final contiguous stack. For
+each refusal the probe requires `-12`, byte-identical
+`resource_census` and `frame_stats` before and after, an unchanged live cell
+whose handle was offered for copying, and a valid `spawn_image` immediately
+afterward that exits 42, consumes the next PID and reclaims to the same
+census. The host script requires exactly 20 image-child publication lines
+and final global resource counts of zero.
+
+**Qualification status:** source and host/static checks only on this lane;
+the guest result remains unqualified until U1 terminal/resource admission.
+The exact future command from this source revision is:
+
+```sh
+make spawn-image-rollback-test QEMU=qemu-system-x86_64
+```
+
+This command builds a feature-specific external kernel and user probe and
+runs the local VM. Its receipt must identify the qualified source revision,
+QEMU identity, serial log, exit status, exact output match and final resource
+line. No guest outcome is inferred from host checks.
+
+Formalization consideration, decision owner: kernel lane implementer,
+2026-10-11. Source input `d55fbec89ab9607bad0f10a061ac5f677eeb4727`;
+the result identity is the commit containing this section. Proposition: for
+each admitted allowance 1..19, a failed child construction restores the
+parent-visible resource census and does not publish the child; the next
+unlimited spawn succeeds. Scope: the single-CPU external local VM and one
+synthetic ELF with three distinct image page tables. Counterexamples not
+covered: concurrent image mutation, failures after handle insertion, and
+hardware transfer. Practical tests and the existing ownership-tag assertions
+are sufficient for this bounded regression case; a small transition model
+would be useful if the loader's construction order or publication boundary
+changes. This decision does not claim guest qualification before the run.
+
 ## Not proven
 
-- Frame exhaustion part-way through `populate` via `spawn_image` (`-12`
-  rollback) was not driven from this probe: the 128 MiB guest has more free
-  frames than the 60 MiB window can demand. The same `load_process` failure
-  path is exercised for embedded images by the kernel's quota-driven
-  `SPAWN EXHAUSTION` boot check.
+- The original ELF matrix did not drive frame exhaustion through
+  `spawn_image`; the separate follow-on above is pending guest qualification.
 - An image source becoming unreadable mid-load (`ElfError::Unreadable`)
   cannot be produced by a single-threaded caller, since the whole range is
   checked before the slot is claimed; it is untested.

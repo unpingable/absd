@@ -1,0 +1,4 @@
+status 1
+--- stdout
+--- stderr
+/bin/find: invalid type x for -type primary

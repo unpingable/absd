@@ -31,6 +31,8 @@ import tempfile
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
+from served_ram import served_qemu
+from served_kernel import kernel_make
 import absd_fs  # noqa: E402
 
 spec = importlib.util.spec_from_file_location("nightshift_matrix", here / "nightshift-matrix.py")
@@ -156,7 +158,7 @@ def main():
     request_path.write_bytes(request)
     empty = m.work / "empty-input.bin"
     empty.write_bytes(b"")
-    subprocess.run(["make", "--no-print-directory", "-C", str(m.kernel), "durable-iso", "DURABLE_STEP=0",
+    subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(m.kernel), "durable-iso", "DURABLE_STEP=0",
                     f"EXTERNAL_USER_ELF={pathlib.Path(args.writer).resolve()}", f"EXTERNAL_INPUT={empty}",
                     f"EXTERNAL_READER_ELF={m.resolver}", f"EXTERNAL_READER_INPUT={request_path}",
                     f"BROKER_POLICY={policy}", f"OWNER_1_ELF={pathlib.Path(args.nq).resolve()}",
@@ -165,7 +167,7 @@ def main():
     iso = m.kernel / "build" / "durable" / "absd-durable-0.iso"
     log = m.work / "pipeline.serial.log"
     result = subprocess.run([str(m.kernel / "scripts" / "durable-boot.sh"), str(iso), str(image), str(log),
-                             "900", *m.qemu.split()], check=True, capture_output=True, text=True)
+                             "900", *served_qemu(m.qemu)], check=True, capture_output=True, text=True)
     serial = log.read_bytes()
     text = serial.decode(errors="replace")
     captured = nm.dm.Harness.captured(serial)

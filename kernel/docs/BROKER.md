@@ -68,7 +68,12 @@ Roles: 1 stdin, 2 stdout (the console's pipe), 3 stderr, 4 block, 5 step, 6 requ
 order), 11 fs (a read-only view to mount; docs/PROCESS-STARTUP.md), 12 nic
 (the NIC handle of a `net` boot, docs/NETWORK.md; a worker holding it always
 gets a startup record, even without a broker policy, and brokered children
-never get it). stdout is always the console. Every vector entry but the first
+never get it), 13 fs request and 14 fs reply (a file server channel,
+docs/PROCESS-STARTUP.md), 15 machine (a stop-only machine handle for a
+qualification durable worker), 16 and 17 (the platform's session control
+channels, written by sshd, never by init), 18 liveness (a served service's
+heartbeat cell, read and write rights; docs/service-lifecycle-20261008/
+LIVENESS.md). stdout is always the console. Every vector entry but the first
 (the startup pipe) and the last (the console) carries exactly one role;
 request and reply come together, and slots need them.
 

@@ -1,3 +1,17 @@
+// The embedded S1 consumer is x86; ARM returns before reading these images.
+mod arch {
+    pub const ELF_MACHINE: u16 = 62;
+}
+#[allow(dead_code)]
+#[path = "src/elf.rs"]
+mod elf;
+#[allow(dead_code)]
+#[path = "src/frame_geometry.rs"]
+mod frame_geometry;
+#[allow(dead_code)]
+#[path = "abi/src/layout.rs"]
+mod layout;
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -5,6 +19,7 @@ use std::process::Command;
 
 fn main() {
     for cfg in [
+        "absd_mutant_frame_authority",
         "absd_mutant_cell_duplicate_widen",
         "absd_mutant_handle_ignore_tag",
         "absd_mutant_cell_skip_release",
@@ -28,6 +43,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=ABSD_BROKER_POLICY");
     println!("cargo:rerun-if-env-changed=ABSD_FILE_SERVER_ELF");
     println!("cargo:rerun-if-env-changed=ABSD_NET_WAIT_TICKS");
+    println!("cargo:rerun-if-env-changed=ABSD_ENROLL_STREAM");
     for owner in 1..=4 {
         println!("cargo:rerun-if-env-changed=ABSD_OWNER_{owner}_ELF");
     }
@@ -35,7 +51,10 @@ fn main() {
     // The user programs link the ABI crate: layout or number changes there
     // must rebuild them too.
     println!("cargo:rerun-if-changed=abi");
+    println!("cargo:rerun-if-changed=src/elf.rs");
+    println!("cargo:rerun-if-changed=src/frame_geometry.rs");
     println!("cargo:rerun-if-changed=scripts/build-user.sh");
+    println!("cargo:rerun-if-changed=scripts/rust-source-map.sh");
 
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     let supplied = |name: &str| {
@@ -105,9 +124,27 @@ fn main() {
         fs::write(&embedded_input, []).expect("create empty external input");
     }
 
+    let service_budget = |path: &Option<PathBuf>, fallback: usize| {
+        if env::var_os("CARGO_FEATURE_FRAME_ADMISSION_V0").is_none() {
+            return fallback;
+        }
+        path.as_ref().map_or(fallback, |path| {
+            let bytes = fs::read(path).expect("read served image");
+            let image = elf::parse(&bytes).expect("valid served ELF");
+            frame_geometry::service_frames(&image).expect("served image fits frame geometry")
+        })
+    };
+    let fsd_frames = service_budget(&file_server, 9333);
+    let sshd_frames = service_budget(&external_user, 9434);
+    println!(
+        "cargo:rustc-env=ABSD_SERVED_TOTAL_FRAMES={}",
+        16427 + fsd_frames + sshd_frames
+    );
     let status = Command::new("sh")
         .arg("scripts/build-user.sh")
         .arg(&out)
+        .env("ABSD_SERVED_FSD_FRAMES", fsd_frames.to_string())
+        .env("ABSD_SERVED_SSHD_FRAMES", sshd_frames.to_string())
         .env("ABSD_EXTERNAL_INPUT_EMBED", &embedded_input)
         .env("ABSD_EXTERNAL_READER_INPUT_EMBED", &reader_input)
         .env("ABSD_BROKER_POLICY_EMBED", &policy)

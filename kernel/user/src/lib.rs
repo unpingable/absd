@@ -31,13 +31,13 @@ pub use absd_abi::syscall::{
     STOP_CODE_MAX, STOP_CODE_MIN,
 };
 use absd_abi::syscall::{
-    ERROR_AGAIN, ERROR_BAD_HANDLE, ERROR_FAULT, ERROR_INVALID, ERROR_NO_CHILD, ERROR_NO_MEMORY,
-    ERROR_NOT_FOUND, ERROR_NOT_IMPLEMENTED, ERROR_PID_EXHAUSTED, ERROR_PIPE, ERROR_RIGHTS,
-    ERROR_STALE, ERROR_TIMEOUT, ERROR_TOO_MANY_HANDLES, RESOURCE_CENSUS_BYTES, SYS_CELL_CREATE,
-    SYS_CELL_READ, SYS_CELL_TRANSITION, SYS_CELL_WAIT, SYS_CLOSE, SYS_DUPLICATE, SYS_EXIT,
-    SYS_GETPID, SYS_INFO, SYS_KILL, SYS_MAP, SYS_PIPE_CREATE, SYS_READ, SYS_RESOURCE_CENSUS,
-    SYS_SLEEP, SYS_SPAWN, SYS_SPAWN_MANY_COPY, SYS_TIME, SYS_TRANSFER, SYS_UNMAP, SYS_WAIT,
-    SYS_WRITE, SYS_YIELD, TRANSFER_READ, TRANSFER_WRITE,
+    ERROR_AGAIN, ERROR_BAD_HANDLE, ERROR_FAULT, ERROR_INVALID, ERROR_NO_CARRIER, ERROR_NO_CHILD,
+    ERROR_NO_MEMORY, ERROR_NOT_FOUND, ERROR_NOT_IMPLEMENTED, ERROR_PID_EXHAUSTED, ERROR_PIPE,
+    ERROR_RIGHTS, ERROR_STALE, ERROR_TIMEOUT, ERROR_TOO_MANY_HANDLES, RESOURCE_CENSUS_BYTES,
+    SYS_CELL_CREATE, SYS_CELL_READ, SYS_CELL_TRANSITION, SYS_CELL_WAIT, SYS_CLOSE, SYS_DUPLICATE,
+    SYS_EXIT, SYS_GETPID, SYS_INFO, SYS_KILL, SYS_MAP, SYS_PIPE_CREATE, SYS_READ,
+    SYS_RESOURCE_CENSUS, SYS_SLEEP, SYS_SPAWN, SYS_SPAWN_MANY_COPY, SYS_TIME, SYS_TRANSFER,
+    SYS_UNMAP, SYS_WAIT, SYS_WRITE, SYS_YIELD, TRANSFER_READ, TRANSFER_WRITE,
 };
 pub use absd_abi::syscall::{
     INFO_STATE_LIVE, INFO_STATE_TERMINAL, INFO_STATE_WAITING, ProcessInfo, SPAWN_CONSOLE,
@@ -128,6 +128,9 @@ pub enum Error {
     BrokenPipe,
     /// A timed wait ended before the awaited event.
     Timeout,
+    /// `nic_send` only: no carrier, the frame was not reported done; the
+    /// NIC is not disabled (docs/NETWORK.md).
+    NoCarrier,
     /// `spawn_image` refused the image: not a static ELF64 the loader takes.
     NotExecutable,
     Unknown(i64),
@@ -152,6 +155,7 @@ impl Error {
             Self::Stale => ERROR_STALE,
             Self::BrokenPipe => ERROR_PIPE,
             Self::Timeout => ERROR_TIMEOUT,
+            Self::NoCarrier => ERROR_NO_CARRIER,
             Self::NotExecutable => ERROR_NOT_EXECUTABLE,
             Self::Unknown(code) => code,
         }
@@ -173,11 +177,17 @@ impl Error {
             ERROR_STALE => Self::Stale,
             ERROR_PIPE => Self::BrokenPipe,
             ERROR_TIMEOUT => Self::Timeout,
+            ERROR_NO_CARRIER => Self::NoCarrier,
             ERROR_NOT_EXECUTABLE => Self::NotExecutable,
             other => Self::Unknown(other),
         }
     }
 }
+
+const _: () = assert!(
+    matches!(Error::from_code(ERROR_NO_CARRIER), Error::NoCarrier)
+        && Error::NoCarrier.code() == ERROR_NO_CARRIER
+);
 
 fn result(raw: i64) -> Result<u64, Error> {
     if raw < 0 {

@@ -71,6 +71,19 @@ regular build-time placeholder used by `EXTERNAL_INPUT`.
 the host stream must complete, the selected child must fail, and init must
 still prove a zero-resource baseline before the boot reports failure.
 
+One shipped image uses the same stream: the **enrollment build**
+(`make ENROLL_STREAM=1 durable-iso`, configuration decision recorded internally
+on 2026-10-16). The choice is made when the image is built, so no boot option or kernel
+ABI selects it, and an ordinary image never reads its durable worker's input
+from the serial line. In an enrollment image, init runs only a plain durable
+boot, with exactly one worker generation and the absd-stream-v1 input. It
+refuses to start if the image also carries embedded input, a broker policy, a
+reader or a file server, or if it was granted a NIC. An aborted worker ends
+the boot instead of being replaced. The worker that image carries is the
+platform's enroll-only key writer. The serial line is trusted only inside the
+user's own local QEMU or bootstrap environment. It is not a remote or
+unattended enrollment service.
+
 Captured bytes never mix raw with kernel diagnostics. Init emits one complete
 line per serial write: an `EXTERNAL OUTPUT BEGIN encoding=hex` boundary,
 contiguous `EXTERNAL OUTPUT CHUNK offset=<16 hex digits> data=<hex bytes>`
@@ -138,7 +151,7 @@ Syscalls use `int 0x80`:
 | 25 | `block_read` | block handle with read right, sector number (LBA), pointer to 512 bytes | zero after the sector is copied out; `-22` past the end of the device, `-5` device error or timeout |
 | 26 | `block_write` | block handle with write right, sector number, pointer to 512 bytes | zero once the device reports the write complete; same errors as `block_read` |
 | 27 | `block_flush` | block handle with write right | zero once the device's cache flush completes |
-| 28 | `stop` | code (16–63) | durable boots only (`-1` otherwise, `-22` for a code outside the range): ends the whole machine at once (QEMU exit status `4 * code + 3`); does not return |
+| 28 | `stop` | retired | `-38`; `machine_stop` (37) replaced it |
 | 29 | `boot_id` | pointer to 16 bytes | zero after this boot's identity is written: drawn once from RDRAND, the same for every process of one boot; `-38` without RDRAND |
 | 30 | `wall_clock` | none | seconds since the Unix epoch from the CMOS RTC (whole seconds, read as UTC); `-5` when no stable valid reading can be taken |
 | 31 | `spawn_image` | pointer to a 32-byte `{image, image_bytes, handles, handle_count}` record, flags (`SPAWN_NO_SPAWN` only), 0 | as `spawn_many_copy`, but the program is a static ELF64 image of at most 32 MiB in the caller's memory, loaded by the same loader; `-8` for an image it refuses. `absd_user::spawn_image` wraps it; docs/PROCESS-STARTUP.md has the whole contract |
@@ -160,7 +173,12 @@ program, `-8` an image `spawn_image` refuses, `-9` invalid handle (unknown, stal
 `-10` no such child, `-11` no free process slot, `-12` out of frames, heap
 window, or object table, `-14` invalid user memory, `-22` invalid argument
 or range, `-24` handle table full, `-32` pipe without a reader, `-38`
-unknown syscall, `-75` exhausted non-reused PID space, `-110` timed out, and
+unknown syscall, `-75` exhausted non-reused PID space, `-100` no carrier (`nic_send` only:
+the frame was not reported done and the NIC stays enabled; later sends are
+refused with `-100` at once until the held descriptor's done bit is seen or
+carrier returns, after which it gets one fresh bound and an expiry with
+carrier present is a device outcome that disables the NIC, docs/NETWORK.md),
+`-110` timed out, and
 `-116` stale transition, and `-5` block device error (or no device). `write` accepts
 1–256 bytes. User ranges are validated through the current process page
 tables on every byte; supervisor, unmapped, and overflowing ranges fail
@@ -188,8 +206,9 @@ Every process has a table of at most 64 handles. A handle is an opaque
 that issue of the slot, so a closed or reaped handle never resolves, and a
 value copied from another process can at most name one of the caller's own
 objects, never the other process's. The kernel checks the object kind and
-the handle's rights on every use. Today there are five object kinds: console,
-child process, versioned cell, pipe, and the one block device. Handles are
+the handle's rights on every use. Today there are seven object kinds: console,
+child process, versioned cell, pipe, the one block device, the network
+interface, and the machine. Handles are
 unforgeable per-process references with rights; there is no general
 capability system beyond that. The kernel grants init a read/write
 console; a child's default console is derived from the console rights held by
@@ -241,7 +260,7 @@ once the pipe is empty and no writer remains (the child's exit is enough),
 and `write` fails with `-32` once no reader remains. Both block otherwise,
 and the kernel completes the blocked transfer itself when the pipe
 changes. Transfers are at most 256 bytes per call and writes may be
-partial; `absd_user::Pipe::write_all` loops. The kernel keeps at most 16
+partial; `absd_user::Pipe::write_all` loops. The kernel keeps at most 48
 pipes.
 
 The default suite composes existing objects without a new type: a child gets

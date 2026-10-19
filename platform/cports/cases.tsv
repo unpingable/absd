@@ -1,0 +1,94 @@
+# Stage-2 cases (docs/c-ecosystem-20261010/posix/CPORTS-HARNESS.md 4.1), run by
+# scripts/cports-matrix.py. One case per line,
+# tab-separated: NAME ROUTE CWD STDIN ENV PROGRAM ARG...
+# CWD is under /home/operator/cports/ on ABSD (writable; the program is started with
+# it as its working directory, because sessions start in read-only / and temporary
+# names are relative to the working directory, SPEC A12) and a temporary directory
+# with the same contents on Linux. STDIN is - or a file of CWD. ENV must be - on the
+# shell route: the session environment is empty and absd-sh cannot set variables
+# (C-INTERFACE.md 6); the Linux side runs with an empty environment plus TZ=UTC.
+# "# outputs NAME: path..." lines name files compared byte for byte after the case;
+# "# expect NAME: ..." lines state the observation a scenario must show;
+# "# retained NAME: path..." and "# removed NAME: path..." name files the case keeps
+# or deletes on purpose (exempt from the resource census, removed ones checked gone);
+# "# timeout NAME: seconds" overrides the 600 s default.
+# ROUTE is shell (one SSH exec session, compared with Linux), probe (run on ABSD only,
+# recorded, never compared: it supplies the Linux runner's inputs) or scenario (a
+# multi-session or cut scenario the harness drives by name, CPORTS-HARNESS.md 5.4;
+# PROGRAM names the scenario and ARG... its parameters).
+probe.env	probe	probe	-	-	/bin/printenv
+# posix.*: the adapter's guest probe (c/posix/tests/guest/posixprobe.c). `agree` must equal
+# Linux; the others are listed divergences pinned in cports/absd-expected/.
+posix.agree	shell	posix	-	-	/bin/posixprobe	agree
+posix.modes	shell	posix	-	-	/bin/posixprobe	modes
+posix.dirwrite	shell	posix	-	-	/bin/posixprobe	dirwrite
+posix.lock	shell	posix	-	-	/bin/posixprobe	lock
+posix.refusals	shell	posix	-	-	/bin/posixprobe	refusals
+posix.lock-contention	scenario	posix	-	-	lock-contention	l
+# expect posix.lock-contention: (SPEC A17's three proofs for the native lock, without SQLite) A runs "/bin/posixprobe hold l" in a held session and prints HELD; B runs "/bin/posixprobe try l" and prints "try shared: -1 EAGAIN" and "try exclusive: -1 EAGAIN" at once (no wait); A's session is killed; B runs again and prints "try shared: 0 0" and "try exclusive: 0 0"; the Linux twin (A and B as host processes) prints the same four lines in the same order. Guest evidence only
+# retained posix.lock-contention: l
+lua.all	shell	lua-tests	-	-	/bin/lua	-e	_port=true; _soft=true	all.lua
+# limit-prefix lua.all: CPA-060 locals.lua "not enough memory"
+# timeout lua.all: 300
+# expect lua.all: NATIVE LIMIT (candidate 2, after R14 and R15): the suite runs past literals.lua and stops in locals.lua's stack-overflow test, whose live heap (~48 MB on glibc; f(300000) ~29.7 MB) exceeds the 32 MiB window (kit contract 2, 3; CPA-060), with "/bin/lua: not enough memory" and status 1; every earlier file's output equals Linux's through the last progress line (judged by limit-prefix; the stop line varies with GC timing, so no byte pin); constructs.lua, cstack.lua and every later file never run. Linux with the empty environment runs on to files.lua:8 (os.getenv "PATH") and stops there.
+lua.recursion	shell	lua-tests	-	-	/bin/lua	-e	local function f(n) if n == 0 then return 0 end return 1 + f(n - 1) end print(pcall(f, 50000))
+# expect lua.recursion: (R15 reproducer) deep recursion grows the Lua stack by realloc doubling and frees alternate CallInfo blocks; before the R15 repair the allocator's free-list coalescing made this quadratic and the session did not finish in 900 s under TCG; now it prints "true\t50000" promptly and equals Linux.
+zlib.example	shell	zlib-example	-	-	/bin/example
+# outputs zlib.example: foo.gz
+zlib.gzip-1m	shell	zlib	-	-	/bin/minigzip	one.bin
+# outputs zlib.gzip-1m: one.bin.gz
+# removed zlib.gzip-1m: one.bin
+zlib.gunzip-1m	shell	zlib	-	-	/bin/minigzip	-d	one.bin.gz
+# outputs zlib.gunzip-1m: one.bin
+# removed zlib.gunzip-1m: one.bin.gz
+zlib.gzip-8m	shell	zlib	-	-	/bin/minigzip	eight.bin
+# outputs zlib.gzip-8m: eight.bin.gz
+# removed zlib.gzip-8m: eight.bin
+zlib.gunzip-8m	shell	zlib	-	-	/bin/minigzip	-d	eight.bin.gz
+# outputs zlib.gunzip-8m: eight.bin
+# removed zlib.gunzip-8m: eight.bin.gz
+zlib.pipe-gzip	shell	zlib	one.bin	-	/bin/minigzip
+# Every sqlite3 case but sqlite.home names an empty init file, last on the command line (argument
+# positions unchanged): the shell then reads no ~/.sqliterc, whose lookup differs (sqlite.home).
+sqlite.home	shell	sqlite	-	-	/bin/sqlite3	-batch	:memory:	SELECT 1;
+# expect sqlite.home: ABSD prints "-- warning: cannot find home directory; cannot read ~/.sqliterc" on stderr and then 1, status 0 (getpwuid NULL: no user database, SPEC A8; no HOME: SPEC A20); Linux prints 1 (its passwd database names a home). The Linux twin (the reference, not the guest; A20 is about the guest) runs with HOME set to an empty directory under the work directory, and the harness checks that the running user's passwd home holds no ~/.sqliterc or ~/.config/sqlite3/sqliterc (the Linux shell asks getpwuid before HOME). Listed divergence (CPA-013, CPA-037)
+sqlite.create-insert	shell	sqlite	-	-	/bin/sqlite3	-batch	-vfs	unix-excl	t.db	.read create-insert.sql	-init	empty.sqliterc
+# retained sqlite.create-insert: t.db t.db-journal
+sqlite.index	shell	sqlite	-	-	/bin/sqlite3	-batch	-vfs	unix-excl	t.db	.read index.sql	-init	empty.sqliterc
+# retained sqlite.index: t.db t.db-journal
+sqlite.rollback	shell	sqlite	-	-	/bin/sqlite3	-batch	-vfs	unix-excl	t.db	.read rollback.sql	-init	empty.sqliterc
+# retained sqlite.rollback: t.db t.db-journal
+sqlite.vacuum	shell	sqlite	-	-	/bin/sqlite3	-batch	-vfs	unix-excl	t.db	.read vacuum.sql	-init	empty.sqliterc
+# outputs sqlite.vacuum: t.db
+# retained sqlite.vacuum: t.db-journal
+sqlite.system	shell	sqlite	-	-	/bin/sqlite3	-batch	:memory:	.system echo x	-init	empty.sqliterc
+sqlite.temp-nomem	shell	sqlite-nomem	-	-	/bin/sqlite3	-batch	-vfs	unix-excl	n.db	.read temp-nomem.sql	-init	empty.sqliterc
+# expect sqlite.temp-nomem: (SPEC A18) ABSD: the sort past the 32 MiB heap window is SQLITE_NOMEM ("Error near line 10 of temp-nomem.sql: out of memory") and the shell continues: "still running|1"; Linux (the same SQLITE_TEMP_STORE=3, an unbounded heap) prints 40000, "still running|1" and "ok", status 0. Then a fresh session's "PRAGMA integrity_check; SELECT count(*) FROM t;" prints ok and 1 on both sides (the database intact). Pinned as a DEFECT (R16) until candidate 2; since R16 the in-process PRAGMA integrity_check after the NOMEM prints ok, and the case is a NATIVE LIMIT divergence (divergences.txt; CPA-049, CPA-060) pinned byte for byte. A process death (status 128 or 134, nothing after) would be a DEFECT of A18 itself
+# retained sqlite.temp-nomem: n.db n.db-journal
+sqlite.speedtest1-5	shell	speedtest	-	-	/bin/speedtest1	--verify	--size	5	--vfs	unix-excl	s5.db
+# expect sqlite.speedtest1-5: "Verification Hash: 1235255 446bc256109febab75a5efc5558b33506464d18cabd8d34d" byte-equal to Linux (two Linux runs agree); timing column normalized; then "PRAGMA integrity_check;" on s5.db prints ok on both sides (an extra session)
+# retained sqlite.speedtest1-5: s5.db s5.db-journal
+# timeout sqlite.speedtest1-5: 900
+sqlite.speedtest1-20	shell	speedtest	-	-	/bin/speedtest1	--verify	--size	20	--vfs	unix-excl	st.db
+# expect sqlite.speedtest1-20: "Verification Hash: 5880858 64697ec42e3016229262057e97f0ff64024eb03dc0dafc2d" byte-equal to Linux; timing column normalized; then "PRAGMA integrity_check;" on st.db prints ok on both sides. Past the timeout it is CPORTS LIMIT with the measured partial time, and --size 5 stands as the verified rung
+# retained sqlite.speedtest1-20: st.db st.db-journal
+# timeout sqlite.speedtest1-20: 1800
+sqlite.excl-setup	shell	excl	-	-	/bin/sqlite3	-batch	-vfs	unix-excl	x.db	CREATE TABLE t(k INTEGER PRIMARY KEY, v TEXT); INSERT INTO t VALUES(1,'one'),(2,'two');	-init	empty.sqliterc
+# retained sqlite.excl-setup: x.db x.db-journal
+sqlite.readonly	shell	excl	-	-	/bin/sqlite3	-batch	-readonly	-vfs	unix-excl	x.db	SELECT count(*) FROM t;	-init	empty.sqliterc
+# expect sqlite.readonly: ABSD prints a disk I/O error (SQLITE_IOERR_LOCK: a read-only connection's first lock is a byte range, refused EINVAL under SPEC A10) and exits 1; Linux prints 2. Listed divergence (CPA-009). Runs after sqlite.excl-setup
+sqlite.excl-busy	scenario	excl	-	-	excl-contention	deny	x.db
+# expect sqlite.excl-busy: (SPEC A7 step 1, A17 lifetime) holder A in an open session sends "BEGIN; INSERT INTO t VALUES(3,'three');" then ".print HELD"; after HELD arrives on A's SSH stream, B's "sqlite3 -batch -vfs unix-excl x.db 'SELECT count(*) FROM t;'" prints "Parse error in 5th command line argument: database is locked (5)" on stderr, exits 1, and returns in under 5 s (the native lock never waits); after A's COMMIT B is still denied (unix-excl keeps the lock for the connection's life); after A's .quit and normal session end B prints 3 and exits 0. The Linux twin (host processes) prints the same
+# retained sqlite.excl-busy: x.db x.db-journal
+sqlite.excl-release	scenario	excl	-	-	excl-contention	kill-holder	x.db
+# expect sqlite.excl-release: (SPEC A7 step 2) A holds "BEGIN; INSERT INTO t VALUES(4,'four');", B is denied; A's session is killed while it holds the lock; the file server releases A's channel (drop_opens, fsd/src/server.rs:437-449) and with it the native lock; B's same query then prints "3" and exits 0 (A's uncommitted row absent); the directory's file list is compared with Linux's after the same steps (on the reference an x.db-journal without a synced header remains: it is not hot, so B neither rolls it back nor deletes it); a difference is a CPORTS SCENARIO NOTE
+# retained sqlite.excl-release: x.db x.db-journal
+sqlite.excl-concurrency-loss	scenario	excl	-	-	excl-concurrency-loss	x.db
+# expect sqlite.excl-concurrency-loss: (SPEC A10; SQLITE-VFS.md 10) Linux with -vfs unix: holder A in "BEGIN; INSERT INTO t VALUES(9,'nine');", reader B prints 3 and exits 0; Linux with -vfs unix-excl and ABSD with -vfs unix-excl: B prints "Parse error in 5th command line argument: database is locked (5)" and exits 1; then A quits on each side (rollback by exit) and the count stays 3. Passes when ABSD equals Linux unix-excl and Linux unix shows the reader succeeding; the difference is the declared loss
+# retained sqlite.excl-concurrency-loss: x.db x.db-journal
+sqlite.excl-crash	scenario	excl	-	-	excl-contention	crash-recover	x.db
+# expect sqlite.excl-crash: (SPEC A7 step 3) A runs "PRAGMA cache_size=10; BEGIN;" and 2,000 inserts, prints SPILLED; QEMU is stopped on SPILLED and the image copied; next boot B runs "PRAGMA integrity_check; SELECT count(*) FROM t;" and prints "ok" then 3; x.db-journal absent afterwards; the host's sqlite3 module on x.db plus x.db-journal from the copy, and on x.db after B, prints the same. The Linux twin kills A with SIGKILL instead and prints the same. Evidence is this guest scenario only; the host mock's lock (R8) is never evidence
+# retained sqlite.excl-crash: x.db x.db-journal
+sqlite.power-cut	scenario	sqlite-hot	-	-	power-cut	cut.db	2000	500
+# expect sqlite.power-cut: SQLITE-VFS.md 8 form (a): after the cut at UNCOMMITTED-WRITTEN (read from the SSH stream after the shell's fflush), next boot "PRAGMA integrity_check; SELECT count(*), sum(k) FROM t;" prints "ok" and "2000|2001000"; cut.db-journal absent afterwards; the host's sqlite3 module on cut.db copied after the recovery boot, and on cut.db plus cut.db-journal copied from the image taken before it, prints the same. Not a Linux comparison
+# retained sqlite.power-cut: cut.db cut.db-journal

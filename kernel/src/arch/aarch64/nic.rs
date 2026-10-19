@@ -12,6 +12,13 @@ pub enum SendError {
     Length,
     Copy,
     Disabled,
+    /// Never produced here: virtio-net makes no carrier distinction, so a
+    /// failed send is `Disabled`. The variant exists so the shared
+    /// `nic_send` match (src/syscalls/nic.rs) compiles for this target;
+    /// whether virtio-net should report a link outcome is an owner
+    /// question (D-05 ruling ii), recorded, not acted on.
+    #[allow(dead_code)]
+    NoCarrier,
 }
 pub enum ReceiveError {
     Disabled,

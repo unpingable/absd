@@ -78,7 +78,10 @@ owner_projects = ["ag-*", "pulse-*", "nq-*", "nightshift*", "absd-*"]
 [scan]
 # Directories whose binary files the project generates itself (fixtures,
 # recorded outputs, test data). New binaries elsewhere need a declaration.
-binary_ok = ["fixtures/*", "fs/testdata/*", "compat/data/*", "docs/*"]
+# c/tests/kit/inputs/bytes.bin is first-party random input for the C kit's
+# shell-route stdio case; c/vectors/startup/*.bin are the broker's emitted
+# startup vectors (see provenance.toml).
+binary_ok = ["fixtures/native-quic/pki/*.der", "fixtures/native-tls/pki/*.der", "fixtures/*", "fs/testdata/*", "compat/data/*", "docs/*", "c/tests/kit/inputs/*", "c/vectors/startup/*", "userland/tar-vectors/basic.ustar", "ssh/enroll-cases/*"]
 # Build manifests known to name absolute development paths (obligation
 # PORT-ABSOLUTE-PATHS tracks them; new ones elsewhere fail the check).
 path_ok = ["Cargo.toml", ".cargo/config.toml"]
@@ -113,12 +116,27 @@ name = "operator-image"
   evidence = "../absd-std-staged-compat/target-ports/x86_64-unknown-absd/release/deps"
   evidence_exact = true
 
+  # /bin ports in C: the base userland's sbase utilities (userland/README.md),
+  # one row each in userland/PORTS.tsv, built from the tarball userland/PIN
+  # pins (sha256) with the declared patches (provenance.toml) and statically
+  # linked with the C kit. Each is listed as <upstream>-<name>, under the
+  # upstream's licence; the notice is the upstream LICENSE kept verbatim.
+  # Their names are skipped by the crate ports unit above.
+  [[artifact.unit]]
+  name = "userland-ports"
+  c_ports = "userland/PORTS.tsv"
+  pin = "userland/PIN"
+  notice_files = ["userland/sbase.LICENSE", "userland/diff/LICENSE", "userland/hexdump/LICENSE"]
+
   # sshd and the file server, embedded in the boot ISO.
   [[artifact.unit]]
   name = "sshd"
   lock = "ssh/Cargo.lock"
   package = "absd-sshd"
-  manifest_dir = "ssh"
+  # ssh/ names the tree's crates through ssh/tree/ links that
+  # scripts/stage-ssh.sh makes; the tree's own workspace finds them where the
+  # links are not made yet.
+  manifest_dir = ["ssh", "."]
   evidence = "ssh/target/x86_64-unknown-absd/release/deps"
   evidence_exact = true
 
@@ -186,11 +204,46 @@ inventoried = false
   # The extended integration programs (integration/): test programs that run
   # Pulse and AG code on ABSD. Never installed on an operator image; like
   # the rest of this artifact, not inventoried crate by crate.
+  # The C kit's runtime staticlib (c/absd-c: absd-runtime with the c-entry
+  # feature, built by scripts/build-c-kit.sh into libabs.a). Linked only into
+  # programs a developer builds with absd-cc; no distributed artifact contains
+  # it. Its registry crates are the root package's runtime dependencies,
+  # inventoried for the operator image.
+  [[artifact.unit]]
+  name = "health-observation-host-tests"
+  lock = "tests/Cargo.lock"
+  listed = false
+  note = "Host-only conformance harness for the health JSON projection; no binary or library from this standalone test workspace ships. Native health uses the root package's already inventoried serde_json, FSD and release dependencies."
+
+  [[artifact.unit]]
+  name = "c-kit-runtime"
+  lock = "c/absd-c/Cargo.lock"
+  listed = false
+  note = "the kit runtime ships in no artifact; developers link it into their own programs with absd-cc, and its crates are the root package's runtime dependencies already inventoried under operator-image"
+
   [[artifact.unit]]
   name = "integration-programs"
   lock = "integration/Cargo.lock"
   listed = false
   note = "resolving it needs the Pulse and AG sources, which a checkout of this repository alone does not have; the programs are test programs and are never distributed"
+
+  [[artifact.unit]]
+  name = "native-markdown-probe"
+  lock = "pins/native-app/pulldown-cmark-0.13.4.Cargo.lock"
+  listed = false
+  note = "opt-in unchanged-source application fixture only; neither the application nor this lock is installed in an operator image or distributed artifact; distribution would require a separate dependency inventory and review"
+
+  [[artifact.unit]]
+  name = "native-tls-fixture"
+  lock = "tls/Cargo.lock"
+  listed = false
+  note = "Private source-admitted native HTTPS fixture, excluded from operator_image.py:NATIVE. This non-inventoried workload unit does not licence-check its closure; the separately reviewed resolved checksum, target, feature and licence manifest is required before build. Generated public DER inputs are sealed separately from tracked source."
+
+  [[artifact.unit]]
+  name = "native-quic-fixture"
+  lock = "quic/Cargo.lock"
+  listed = false
+  note = "Private source-admitted QUICv1 client and granting fixture, excluded from the operator image. A separately inspected actual-target package, feature, checksum, notice and entropy closure is required before build; no execution acceptance follows from this workload declaration. Reuses only the unchanged admitted TLS ring adaptation."
 
   [[artifact.component]]
   name = "Pulse (constellation-monitor)"

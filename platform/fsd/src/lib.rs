@@ -1,5 +1,4 @@
-//! ABSD file server (`absd-fsd`): one process holds the only read-write
-//! block handle of the session-visible filesystem and serves every other
+//! ABSD file server (`absd-fsd`): the active filesystem writer serves every other
 //! process over pre-minted pipe channels (kernel `docs/PROCESS-STARTUP.md`,
 //! "File server"). This crate is the part the host can test: the wire
 //! protocol, mount-list resolution, and the request dispatcher over
@@ -34,6 +33,7 @@ extern crate std;
 pub mod civil;
 pub mod inbox;
 pub mod log;
+pub mod net_status;
 pub mod proto;
 pub mod recovery;
 pub mod release;

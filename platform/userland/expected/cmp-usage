@@ -1,0 +1,4 @@
+status 2
+--- stdout
+--- stderr
+usage: /bin/cmp [-l | -s] file1 file2

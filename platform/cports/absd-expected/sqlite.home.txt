@@ -1,0 +1,5 @@
+1
+--
+-- warning: cannot find home directory; cannot read ~/.sqliterc
+--
+status=0

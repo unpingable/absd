@@ -1,5 +1,5 @@
 .\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
-.Dd September 27, 2026
+.Dd October 13, 2026
 .Dt E1000 4
 .Os ABSD
 .Sh NAME
@@ -40,8 +40,22 @@ A received frame is delivered only if its descriptor is complete, holds the
 whole frame, reports no error, and has a length in range; anything else is
 counted as refused and dropped.
 If the device moves a ring pointer outside its ring, or a send does not
-complete in time, the driver disables the controller: receiving and sending
-stop, and every later request fails.
+complete in time while the link is up, the driver disables the
+controller: receiving and sending stop, and every later request fails.
+A send that does not complete in time while the link is down, or with a
+loss of carrier seen during its wait, is a link outcome, not a failure:
+the request returns the no-carrier error
+.Pq Li -100 ,
+the controller stays enabled, and the descriptor stays the device's;
+later sends are refused at once until it completes or carrier returns.
+With carrier back and the descriptor still not complete, the next send
+waits for it once more; if that wait runs out with carrier present
+throughout, the driver disables the controller.
+A device that fails across a loss of carrier is therefore reported as
+the link outcome first, and as a failure only at the next send whose wait
+runs with carrier present throughout, or never if nothing more is sent.
+A loss shorter than the driver's poll interval can be missed, and the send
+then disables the controller as above.
 .Sh DIAGNOSTICS
 On the serial console:
 .Bl -tag -width Ds
@@ -57,6 +71,14 @@ no usable controller; nothing is given out and a
 boot fails.
 .It Ql NIC DISABLED reason= Ns Ar reason
 the driver stopped the controller (fail closed).
+In a served boot sshd then ends with
+.Ql SERVED SERVICE FAULT component=sshd reason=nic_disabled
+and the machine is reset under the recovery budget; the next boot's probe
+re-admits the controller or refuses it before readiness.
+.It Ql NIC TX HOLD FIXTURE ARMED mode=release|stuck kind=tctl
+qualification boots only: the kernel holds a transmit descriptor posted
+without carrier, standing in for a device that does; refused in the
+physical profile, never in an operator boot.
 .It Ql NIC STATS rx_frames=... rx_refused=... rx_missed=... tx_frames=...
 counters at the end of the boot.
 .El
@@ -64,7 +86,12 @@ counters at the end of the boot.
 QEMU-qualified on the 82540EM model
 .Pq Ql -device e1000
 by the platform's network, SSH, and file server matrices.
-Physical hardware qualification: none.
+QEMU's device completes a send with the link down, so the no-carrier rule
+is shown on QEMU only through the kernel's transmit-hold qualification
+fixture, which demonstrates the driver's rule, not the device's.
+Physical hardware qualification: none; no physical controller is
+qualified for the no-carrier rule until it is observed on the named
+machine.
 The Ethernet controllers in current laptops (Intel I219, I225) are
 different devices and are not supported.
 .Sh SEE ALSO

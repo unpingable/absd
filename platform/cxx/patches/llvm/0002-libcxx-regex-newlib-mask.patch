@@ -1,0 +1,91 @@
+libc++: regex character classes with Newlib/Picolibc's char ctype mask
+
+Failure: libc++ with localization (the LLVM profile needs <sstream>, which
+some 25 LLVM and Clang files use) does not compile src/regex.cpp against
+Picolibc: `constant expression evaluates to -128 which cannot be narrowed to
+type 'regex_traits<char>::char_class_type' (aka 'unsigned short')`
+(regex.cpp:311 blank, :317 print). For _NEWLIB_VERSION libc++'s
+ctype_base::mask is a plain char (signed on x86-64) and _B is 0x80, while
+regex_traits<char>::char_class_type is uint16_t with __regex_word = 0x100:
+converted directly, a negative mask also sign-extends into 0x100, so even
+with the narrowing error silenced "[[:blank:]]" and "[[:print:]]" would
+match '_' as a word character.
+Change: under _NEWLIB_VERSION, the ClassNames table and __get_classname's
+combinations take each ctype_base mask through unsigned char before
+widening (_LIBCPP_REGEX_CLASS).
+Behaviour preserved: on every other C library the macro is the identity.
+On Newlib/Picolibc, ctype_base::is() still receives the same eight bits
+(char_class_type narrows back to char), and __regex_word is set only for
+"w".
+Upstreamability: high; this is a libc++ bug for every Newlib/Picolibc
+target with signed char.
+
+--- a/libcxx/src/regex.cpp
++++ b/libcxx/src/regex.cpp
+@@ -300,27 +300,38 @@
+     {"zero", 0x30}};
+ #endif
+ 
++// Newlib's (and Picolibc's) ctype_base::mask is a plain char, signed on
++// x86-64, so print and blank (bit 0x80) are negative: converted to the
++// 16-bit char_class_type directly they sign-extend into __regex_word
++// (0x100) and the table does not compile (C++11 narrowing). Take the mask's
++// eight bits unsigned.
++#if defined(_NEWLIB_VERSION)
++#  define _LIBCPP_REGEX_CLASS(m) static_cast<regex_traits<char>::char_class_type>(static_cast<unsigned char>(m))
++#else
++#  define _LIBCPP_REGEX_CLASS(m) m
++#endif
++
+ struct classnames {
+   const char* elem_;
+   regex_traits<char>::char_class_type mask_;
+ };
+ 
+ const classnames ClassNames[] = {
+-    {"alnum", ctype_base::alnum},
+-    {"alpha", ctype_base::alpha},
+-    {"blank", ctype_base::blank},
+-    {"cntrl", ctype_base::cntrl},
+-    {"d", ctype_base::digit},
+-    {"digit", ctype_base::digit},
+-    {"graph", ctype_base::graph},
+-    {"lower", ctype_base::lower},
+-    {"print", ctype_base::print},
+-    {"punct", ctype_base::punct},
+-    {"s", ctype_base::space},
+-    {"space", ctype_base::space},
+-    {"upper", ctype_base::upper},
++    {"alnum", _LIBCPP_REGEX_CLASS(ctype_base::alnum)},
++    {"alpha", _LIBCPP_REGEX_CLASS(ctype_base::alpha)},
++    {"blank", _LIBCPP_REGEX_CLASS(ctype_base::blank)},
++    {"cntrl", _LIBCPP_REGEX_CLASS(ctype_base::cntrl)},
++    {"d", _LIBCPP_REGEX_CLASS(ctype_base::digit)},
++    {"digit", _LIBCPP_REGEX_CLASS(ctype_base::digit)},
++    {"graph", _LIBCPP_REGEX_CLASS(ctype_base::graph)},
++    {"lower", _LIBCPP_REGEX_CLASS(ctype_base::lower)},
++    {"print", _LIBCPP_REGEX_CLASS(ctype_base::print)},
++    {"punct", _LIBCPP_REGEX_CLASS(ctype_base::punct)},
++    {"s", _LIBCPP_REGEX_CLASS(ctype_base::space)},
++    {"space", _LIBCPP_REGEX_CLASS(ctype_base::space)},
++    {"upper", _LIBCPP_REGEX_CLASS(ctype_base::upper)},
+     {"w", regex_traits<char>::__regex_word},
+-    {"xdigit", ctype_base::xdigit}};
++    {"xdigit", _LIBCPP_REGEX_CLASS(ctype_base::xdigit)}};
+ 
+ struct use_strcmp {
+   bool operator()(const collationnames& x, const char* y) { return strcmp(x.elem_, y) < 0; }
+@@ -343,10 +354,10 @@
+   if (i != end(ClassNames) && strcmp(s, i->elem_) == 0) {
+     r = i->mask_;
+     if (r == regex_traits<char>::__regex_word)
+-      r |= ctype_base::alnum | ctype_base::upper | ctype_base::lower;
++      r |= _LIBCPP_REGEX_CLASS(ctype_base::alnum | ctype_base::upper | ctype_base::lower);
+     else if (__icase) {
+-      if (r & (ctype_base::lower | ctype_base::upper))
+-        r |= ctype_base::alpha;
++      if (r & _LIBCPP_REGEX_CLASS(ctype_base::lower | ctype_base::upper))
++        r |= _LIBCPP_REGEX_CLASS(ctype_base::alpha);
+     }
+   }
+   return r;

@@ -1,0 +1,4 @@
+hello
+--
+--
+status=0

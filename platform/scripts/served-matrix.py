@@ -78,6 +78,8 @@ import time
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
+from served_kernel import kernel_make
+from served_ram import served_qemu
 import ssh_absd  # noqa: E402
 
 spec = importlib.util.spec_from_file_location("ssh_matrix", here / "ssh-matrix.py")
@@ -115,7 +117,7 @@ class ServedTarget(ssh_absd.AbsdTarget):
     def iso(self, step, worker, input_bytes=b"", options="", server=""):
         input_path = self.work / f"input-{hashlib.sha256(input_bytes).hexdigest()}.bin"
         input_path.write_bytes(input_bytes)
-        subprocess.run(["make", "--no-print-directory", "-C", str(self.kernel), "durable-iso",
+        subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(self.kernel), "durable-iso",
                         f"DURABLE_STEP={step}", f"EXTERNAL_USER_ELF={worker}", f"EXTERNAL_INPUT={input_path}",
                         "EXTERNAL_READER_ELF=", "EXTERNAL_READER_INPUT=", f"DURABLE_OPTIONS={options}",
                         f"FILE_SERVER_ELF={server}", f"NET_WAIT_TICKS={DEADLINE_TICKS}"],
@@ -214,6 +216,7 @@ class ServedMatrix(sm.Matrix):
     def run(self):
         t = self.t
         t.setup(self.work, (self.op.with_suffix(".pub")).read_text())
+        self.ram_below_minimum_boot()
 
         # -- SERVED BOOT ---------------------------------------------------
         first = self.start(served=True)
@@ -418,6 +421,38 @@ class ServedMatrix(sm.Matrix):
         # -- LINK DOWN BOOT ------------------------------------------------
         self.link_down_boot()
 
+    def ram_below_minimum_boot(self):
+        """Deliberate gate-only bypass: prove the kernel refuses 128M.
+
+        Normal launchers cannot request this size through served_qemu.
+        Keep the bypass local to this negative case, never a runner option.
+        """
+        t = self.t
+        t.served = True
+        iso = t.sshd_iso()
+        log = t.work / "ram-below-minimum.serial.log"
+        # served_qemu normalizes -m to the final two words. Replace it only
+        # here so an inherited larger -m/env cannot mask the refusal probe.
+        qemu = [*served_qemu(t.qemu)[:-2], "-m", "128M"]
+        result = subprocess.run(
+            [str(t.kernel / "scripts/durable-boot.sh"), str(iso), str(t.image), str(log),
+             "120", *qemu, "-nic", "none"],
+            check=True, capture_output=True, text=True, timeout=180,
+            env=dict(os.environ, ABSD_QEMU_REBOOT="allow"))
+        serial = log.read_text(errors="replace")
+        matches = re.findall(r"(?m)^SERVED FRAME BOOT REFUSED reason=ram_below_minimum "
+                             r"usable_bytes=(\d+) minimum_bytes=(\d+)$", serial)
+        self.check("128M served boot is refused for insufficient RAM with measured bytes",
+                   result.stdout.strip() == "7" and len(matches) == 1
+                   and 0 < int(matches[0][0]) < int(matches[0][1]),
+                   f"status={result.stdout!r} {serial[-2000:]}")
+        self.check("128M refusal has one boot, no readiness, service launch or reset",
+                   serial.count("ABSD KERNEL BOOT\n") == 1
+                   and all(marker not in serial for marker in
+                           ("FILE SERVER START", "SERVED READY", "MACHINE RECOVER RESET"))
+                   and "SSH LISTENING" not in ssh_absd.captured(log.read_bytes()), serial[-2000:])
+        self.mark("SERVED RAM 128M REFUSED reason=ram_below_minimum")
+
     def link_down_boot(self):
         """A served boot with the NIC's link down from power-on. The kernel
         grants the NIC anyway, sshd listens, nothing is reachable until the
@@ -484,7 +519,7 @@ class ServedMatrix(sm.Matrix):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", required=True)
-    ap.add_argument("--only", choices=["link-down"])
+    ap.add_argument("--only", choices=["link-down", "ram-below-minimum"])
     args, rest = ap.parse_known_args()
     work = pathlib.Path(args.work)
     work.mkdir(parents=True, exist_ok=True)
@@ -493,9 +528,12 @@ def main():
     target.__dict__.update(base.__dict__)
     matrix = ServedMatrix(target, work)
     try:
-        if args.only == "link-down":
+        if args.only:
             target.setup(work, (matrix.op.with_suffix(".pub")).read_text())
-            matrix.link_down_boot()
+            if args.only == "link-down":
+                matrix.link_down_boot()
+            else:
+                matrix.ram_below_minimum_boot()
         else:
             matrix.run()
     except (sm.Failed, ssh_absd.Failed) as e:

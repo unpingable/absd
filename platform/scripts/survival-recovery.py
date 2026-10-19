@@ -15,6 +15,31 @@ streak carries), clears it with an orderly `reboot`, and halts;
 predates the budget (the bounded negative control: it only shows the
 resets kept coming). The controls are absent from the installed sshd
 image and use no guest console input.
+
+`--fault` picks the kind of service fault:
+- `exit` (the default): a voluntary exit with status 7
+  (`qualification-sshd-fault`, or `qualification-fsd-exit` with the ISO
+  option `served-fsd-exit-test`); init names the exit.
+- `hang`: the service stops making progress while still running, spinning
+  in user mode (`qualification-sshd-hang`, or `qualification-fsd-hang` with
+  the ISO option `served-fsd-hang-test`, after which sshd also blocks in its
+  exchange with the file server).
+- `block` (sshd only): sshd sleeps in the kernel forever
+  (`qualification-sshd-block`).
+For `hang` and `block` the control never replies (a 20 s SSH timeout is the
+expected outcome) and init's liveness judgment must print
+`SERVED LIVENESS STALE component=<c> idle_ticks>=60000 ...` before a
+`SERVED RECOVERY BEGIN reason=... unresponsive ...` line and the same
+reset or budget stop as an exit fault. Every boot checked as healthy must
+have no `SERVED LIVENESS STALE` line (`SERVED LIVENESS GAP` is allowed).
+The post-fault wait allows 600 s for the 60000-tick bound under TCG.
+
+`--expect silent` is the baseline negative control for an init without the
+liveness judgment: one `hang` or `block` fault, then `--silent-seconds` of
+host time in which QEMU keeps running, no reset and no `SERVED RECOVERY` or
+`SERVED LIVENESS` line appears, and an SSH probe does not succeed. It ends
+by stopping QEMU (the guest is hung) and prints
+`SERVED LIVENESS SILENT OUTAGE CONFIRMED`.
 """
 
 import argparse
@@ -26,10 +51,12 @@ import subprocess
 import sys
 import time
 
+
 here = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("served_matrix", here / "served-matrix.py")
 served = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(served)
+from e1000_rx import wait_rx_setup
 
 BUDGET = 3
 BUDGET_STOP_STATUS = "83"
@@ -37,13 +64,138 @@ UNREAPED_STOP_STATUS = "71"
 # Whether the build under test names the failed component and charges the
 # ledger (set from --no-recovery-lines for the baseline negative control).
 NAMED = True
+LIVENESS_BOUND = 60000
+CONTROL_TIMEOUT = 20
+
+# component -> fault kind -> what the host sends, the ISO option the file
+# server needs, the service's own line (and the stream it is on), and the
+# reason init must name.
+FAULTS = {
+    "sshd": {
+        "exit": {
+            "command": "qualification-sshd-fault",
+            "iso_option": "",
+            "stream": "worker",
+            "service": r"SERVED SERVICE FAULT component=sshd reason=qualification",
+            # The file server sees sshd's channel close and may already have
+            # been reaped when init names the fault: status 0 then, else running.
+            "begin": r"SERVED RECOVERY BEGIN reason=served worker fault file_server_status=(running|0)",
+        },
+        "hang": {
+            "command": "qualification-sshd-hang",
+            "iso_option": "",
+            "stream": "worker",
+            "service": r"SERVED SERVICE HANG component=sshd kind=spin reason=qualification",
+            "begin": r"SERVED RECOVERY BEGIN reason=served worker unresponsive file_server_status=running",
+        },
+        "block": {
+            "command": "qualification-sshd-block",
+            "iso_option": "",
+            "stream": "worker",
+            "service": r"SERVED SERVICE HANG component=sshd kind=block reason=qualification",
+            "begin": r"SERVED RECOVERY BEGIN reason=served worker unresponsive file_server_status=running",
+        },
+    },
+    "fsd": {
+        "exit": {
+            "command": "qualification-fsd-exit",
+            "iso_option": "served-fsd-exit-test",
+            "stream": "serial",
+            "service": r"FSD QUALIFICATION EXIT status=7",
+            "begin": r"SERVED RECOVERY BEGIN reason=file server ended while the worker ran file_server_status=7",
+        },
+        "hang": {
+            "command": "qualification-fsd-hang",
+            "iso_option": "served-fsd-hang-test",
+            "stream": "serial",
+            "service": r"FSD QUALIFICATION HANG kind=spin",
+            "begin": r"SERVED RECOVERY BEGIN reason=file server unresponsive file_server_status=running",
+        },
+    },
+}
+
+STALE_RE = re.compile(
+    r"(?m)^SERVED LIVENESS STALE component=(\w+) idle_ticks=(\d+) bound=(\d+) "
+    r"sshd_idle_ticks=(\d+) fsd_idle_ticks=(\d+)$")
+
+
+def fault_plan(component, fault):
+    """The control plan for one component and fault kind, or ValueError."""
+    try:
+        return FAULTS[component][fault]
+    except KeyError:
+        raise ValueError(f"no qualification control for component={component} fault={fault}") from None
+
+
+def is_liveness_fault(fault):
+    return fault in ("hang", "block")
+
+
+def liveness_record(serial, component, begin):
+    """Checks a stalled boot's liveness judgment: exactly one STALE line,
+    naming `component`, at or past the bound, consistent with that
+    component's own idle count, and before the first line matching `begin`
+    (a regex for the SERVED RECOVERY BEGIN line; None checks only that some
+    BEGIN line follows). Returns the parsed STALE fields."""
+    stale = list(STALE_RE.finditer(serial))
+    loose = re.findall(r"(?m)^SERVED LIVENESS STALE .*$", serial)
+    if len(loose) != len(stale):
+        raise RuntimeError(f"malformed SERVED LIVENESS STALE line: {loose}")
+    if len(stale) != 1:
+        raise RuntimeError(f"expected one SERVED LIVENESS STALE line, found {len(stale)}: {loose}")
+    match = stale[0]
+    named, idle, bound, sshd_idle, fsd_idle = match.group(1), *map(int, match.groups()[1:])
+    if named != component:
+        raise RuntimeError(f"liveness named component={named}, expected {component}: {match.group(0)}")
+    if bound != LIVENESS_BOUND:
+        raise RuntimeError(f"liveness bound={bound}, expected {LIVENESS_BOUND}")
+    if idle < LIVENESS_BOUND:
+        raise RuntimeError(f"liveness judged component={named} at idle_ticks={idle} < {LIVENESS_BOUND}")
+    own = sshd_idle if component == "sshd" else fsd_idle
+    if own != idle:
+        raise RuntimeError(f"idle_ticks={idle} differs from {component}_idle_ticks={own}")
+    begin_re = begin if begin is not None else r"SERVED RECOVERY BEGIN .*"
+    first_begin = re.search(rf"(?m)^{begin_re}$", serial)
+    if not first_begin:
+        raise RuntimeError(f"no recovery line matching {begin_re!r} after the liveness judgment")
+    if match.start() > first_begin.start():
+        raise RuntimeError("SERVED RECOVERY BEGIN precedes SERVED LIVENESS STALE")
+    any_begin = re.search(r"(?m)^SERVED RECOVERY BEGIN ", serial)
+    if any_begin.start() < match.start():
+        raise RuntimeError("a SERVED RECOVERY BEGIN line precedes SERVED LIVENESS STALE")
+    return {"component": named, "idle_ticks": idle, "bound": bound,
+            "sshd_idle_ticks": sshd_idle, "fsd_idle_ticks": fsd_idle}
+
+
+def no_stale(serial, what):
+    """A healthy boot never judges a service stale."""
+    stale = re.findall(r"(?m)^SERVED LIVENESS STALE .*$", serial)
+    if stale:
+        raise RuntimeError(f"{what} has a liveness judgment: {stale}")
+    gaps = re.findall(r"(?m)^SERVED LIVENESS GAP ticks=(\d+)$", serial)
+    return [int(gap) for gap in gaps]
+
+
+def control_without_reply(client, key, command):
+    """Sends a control that never replies. A timeout or a failed command is
+    expected; a successful reply is a failure."""
+    try:
+        sent = ssh(client, key, command, timeout=CONTROL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    if sent.returncode == 0:
+        raise RuntimeError(f"{command} returned a successful SSH command")
+    return f"returncode={sent.returncode}"
 
 
 class RecoveryTarget(served.ServedTarget):
     def sshd_iso(self, regenerate=False):
         options = "net fsd served"
-        if self.component == "fsd":
-            options += " served-fsd-exit-test"
+        # survival-pre-ready.py subclasses this target without a fault: the
+        # exit plan is the default there, as for --fault.
+        extra = fault_plan(self.component, getattr(self, "fault", "exit"))["iso_option"]
+        if extra:
+            options += " " + extra
         return self.iso(0, self.sshd_elf, options=options, server=self.fsd_elf)
 
 
@@ -83,6 +235,10 @@ def ready(target, index, runner_pid, timeout=300):
                     and fsd_id and ssh_id):
                 if fsd_id.group(1) != ssh_id.group(1):
                     raise RuntimeError("FSD/SSH boot identities differ")
+                wait_rx_setup(target.serial, lambda: target.proc.poll() is None, deadline)
+                current = boot_parts(target)
+                if len(current) != index + 1:
+                    raise RuntimeError("guest changed generation during receive setup")
                 return fsd_id.group(1), serial, worker
         time.sleep(0.2)
     raise RuntimeError(f"served boot {index + 1} did not reach a complete ready record")
@@ -143,18 +299,19 @@ def recover_record(target, index, session_pid, expect_stop):
             raise RuntimeError(f"boot {index + 1} has {marker} where it must not: {serial[-1500:]}")
     if "SERVED RECOVERY REFUSED" in serial:
         raise RuntimeError(f"recovery was refused: {serial[-1500:]}")
-    if target.component == "fsd":
-        if NAMED and "SERVED RECOVERY BEGIN reason=file server ended while the worker ran file_server_status=7" not in serial:
-            raise RuntimeError(f"the file server exit is not named: {serial[-1500:]}")
-        if not re.search(r"(?m)^FSD QUALIFICATION EXIT status=7$", serial):
-            raise RuntimeError("the file server qualification exit is absent")
+    plan = fault_plan(target.component, target.fault)
+    if NAMED and not re.search(rf"(?m)^{plan['begin']}$", serial):
+        raise RuntimeError(f"the {target.component} {target.fault} fault is not named: {serial[-1500:]}")
+    stream = serial if plan["stream"] == "serial" else worker
+    if not re.search(rf"(?m)^{plan['service']}$", stream):
+        raise RuntimeError(f"the {target.component} qualification {target.fault} line is absent")
+    if is_liveness_fault(target.fault):
+        stale = liveness_record(serial, target.component, plan["begin"] if NAMED else None)
+        print(f"RECOVERY LIVENESS component={target.component} fault={target.fault} boot={index + 1} "
+              f"idle_ticks={stale['idle_ticks']} sshd_idle_ticks={stale['sshd_idle_ticks']} "
+              f"fsd_idle_ticks={stale['fsd_idle_ticks']}", flush=True)
     else:
-        # The file server sees sshd's channel close and may already have
-        # been reaped when init names the fault: status 0 then, else running.
-        if NAMED and not re.search(r"(?m)^SERVED RECOVERY BEGIN reason=served worker fault file_server_status=(running|0)$", serial):
-            raise RuntimeError(f"the worker fault is not named: {serial[-1500:]}")
-        if not re.search(r"(?m)^SERVED SERVICE FAULT component=sshd reason=qualification$", worker):
-            raise RuntimeError("the SSH service qualification fault is absent")
+        no_stale(serial, f"boot {index + 1} (exit fault)")
     if not expect_stop:
         records = re.findall(
             r"(?m)^SERVED RECOVERY PROCESS pid=(\d+) parent=(\d+) state=(\w+) handles=(\d+) cpu=(\w+)$",
@@ -208,6 +365,7 @@ def serve_and_check(target, client, key, index, runner_pid, marker, args, streak
     """Boot `index` is ready: check its ledger lines, serve an authenticated
     command, write and read back the synced marker, and check the disk."""
     boot_id, serial, worker = ready(target, index, runner_pid)
+    no_stale(serial, f"healthy boot {index + 1}")
     if args.recovery_lines:
         recovery_lines(serial, worker, streak, previous)
     current_boot(target, index, runner_pid)
@@ -253,6 +411,9 @@ def serve_and_check(target, client, key, index, runner_pid, marker, args, streak
             raise RuntimeError("the charged streak is not in /var/log/fsd")
         if f"SSH RECOVERY streak={streak}" not in sshd_log:
             raise RuntimeError("the advertised streak is not in /var/log/sshd")
+    gaps = no_stale(current_boot(target, index, runner_pid)[0], f"healthy boot {index + 1}")
+    if gaps:
+        print(f"RECOVERY LIVENESS GAP boot={index + 1} ticks={gaps}", flush=True)
     return boot_id
 
 
@@ -267,6 +428,7 @@ def one_case(args, component, key):
     target.boot_seconds = 3600
     target.proc, target.boots, target.port = None, 0, None
     target.component = component
+    target.fault = args.fault
     target.sshd_elf = pathlib.Path(args.sshd_controls).resolve()
     target.fsd_elf = target.root / "absd-fsd.elf"
     public = key.with_suffix(".pub").read_text()
@@ -283,8 +445,16 @@ def one_case(args, component, key):
     marker = bytes(i % 251 for i in range(32))
     expect_stop = args.expect == "stop"
     faults = args.faults
-    command = "qualification-sshd-fault" if component == "sshd" else "qualification-fsd-exit"
+    fault = args.fault
+    hangs = is_liveness_fault(fault)
+    command = fault_plan(component, fault)["command"]
+    # A hang is judged only after the 60000-tick bound, then reset and boot
+    # under TCG on a loaded host.
+    after_fault = 600 if hangs else 300
     try:
+        if args.expect == "silent":
+            silent_case(args, target, client, key, runner_pid, marker, component, fault, command)
+            return
         for index in range(faults + 1):
             previous = "none" if index == 0 else "failed"
             boot_id = serve_and_check(target, client, key, index, runner_pid, marker, args, index, previous)
@@ -296,11 +466,16 @@ def one_case(args, component, key):
             last = index == faults - 1
             active, session_pid = active_session(client, key, target, index, runner_pid)
             try:
-                triggered = ssh(client, key, command)
-                if triggered.returncode == 0:
-                    raise RuntimeError("fault control returned a successful SSH command")
+                if hangs:
+                    outcome = control_without_reply(client, key, command)
+                    print(f"RECOVERY FAULT SENT component={component} fault={fault} boot={index + 1} "
+                          f"control={outcome}", flush=True)
+                else:
+                    triggered = ssh(client, key, command)
+                    if triggered.returncode == 0:
+                        raise RuntimeError("fault control returned a successful SSH command")
                 if last and expect_stop:
-                    status = target.status(300)
+                    status = target.status(after_fault)
                     if status != BUDGET_STOP_STATUS:
                         raise RuntimeError(f"the fault past the budget did not stop the machine: status {status}")
                     parts = boot_parts(target)
@@ -309,7 +484,7 @@ def one_case(args, component, key):
                     recover_record(target, index, session_pid, True)
                     print(f"RECOVERY BUDGET STOP OK component={component} boot={index + 1} status={status}", flush=True)
                     break
-                ready(target, index + 1, runner_pid)
+                ready(target, index + 1, runner_pid, timeout=after_fault)
                 recover_record(target, index, session_pid, False)
             finally:
                 end_session(active)
@@ -326,8 +501,9 @@ def one_case(args, component, key):
             status = target.status(300)
             if status != "3":
                 raise RuntimeError(f"last boot did not halt cleanly: {status}")
+            no_stale(boot_parts(target)[faults][0], f"last boot {faults + 1}")
             resets = faults
-        print(f"SERVED RECOVERY CASE OK component={component} faults={faults} resets={resets} "
+        print(f"SERVED RECOVERY CASE OK component={component} fault={fault} faults={faults} resets={resets} "
               f"expect={args.expect} boots={','.join(boot_ids)} runner_pid={runner_pid} synced_marker=32", flush=True)
         if args.then_clear:
             clear_case(args, target, client, key, marker, faults if expect_stop else 0)
@@ -339,6 +515,49 @@ def one_case(args, component, key):
             fault_at_end_case(args, target, client, key, marker)
     finally:
         target.stop()
+
+
+def silent_case(args, target, client, key, runner_pid, marker, component, fault, command):
+    """Baseline negative control for an init without the liveness judgment:
+    after one hang the guest stays up, unreset and unserved for
+    `--silent-seconds` of host time. QEMU is then stopped (the guest is
+    hung and cannot be halted from inside)."""
+    plan = fault_plan(component, fault)
+    serve_and_check(target, client, key, 0, runner_pid, marker, args, 0, "none")
+    outcome = control_without_reply(client, key, command)
+    print(f"RECOVERY FAULT SENT component={component} fault={fault} boot=1 control={outcome}", flush=True)
+    started = time.monotonic()
+    deadline = started + args.silent_seconds
+    service_seen = False
+    while True:
+        # current_boot fails if QEMU ended, was relaunched, or reset.
+        serial, worker = current_boot(target, 0, runner_pid)
+        for line in ("SERVED RECOVERY", "SERVED LIVENESS"):
+            found = re.findall(rf"(?m)^{line}.*$", serial)
+            if found:
+                raise RuntimeError(f"the baseline init reacted to the hang: {found}")
+        stream = serial if plan["stream"] == "serial" else worker
+        service_seen = service_seen or bool(re.search(rf"(?m)^{plan['service']}$", stream))
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(1)
+    if not service_seen:
+        raise RuntimeError(f"the {component} qualification {fault} line is absent")
+    try:
+        probe = ssh(client, key, "/bin/pwd", timeout=CONTROL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        probe_outcome = "timeout"
+    else:
+        if probe.returncode == 0:
+            raise RuntimeError(f"the hung guest still served a command: {probe.stdout!r}")
+        probe_outcome = f"returncode={probe.returncode}"
+    serial, _ = current_boot(target, 0, runner_pid)
+    if re.search(r"(?m)^SERVED (RECOVERY|LIVENESS)", serial):
+        raise RuntimeError("the baseline init reacted to the hang during the probe")
+    seconds = int(time.monotonic() - started)
+    print(f"SERVED LIVENESS SILENT OUTAGE CONFIRMED component={component} fault={fault} "
+          f"seconds={seconds} probe={probe_outcome} runner_pid={runner_pid}", flush=True)
+    target.stop()
 
 
 def restart(target):
@@ -530,8 +749,13 @@ def main():
     parser.add_argument("--component", choices=("sshd", "fsd", "both"), default="both")
     parser.add_argument("--faults", type=int, default=2,
                         help="faults injected in one QEMU process (default 2)")
-    parser.add_argument("--expect", choices=("reset", "stop"), default="reset",
-                        help="what the last fault does: a further reset, or the budget's named stop")
+    parser.add_argument("--expect", choices=("reset", "stop", "silent"), default="reset",
+                        help="what the last fault does: a further reset, the budget's named stop, "
+                             "or (baseline init without liveness) nothing at all")
+    parser.add_argument("--fault", choices=("exit", "hang", "block"), default="exit",
+                        help="service fault kind: voluntary exit 7, user-mode spin, or kernel sleep (sshd only)")
+    parser.add_argument("--silent-seconds", type=int, default=240,
+                        help="host seconds the --expect silent control watches the hung guest (default 240)")
     parser.add_argument("--no-recovery-lines", dest="recovery_lines", action="store_false",
                         help="do not require the ledger lines (a build before the recovery budget)")
     parser.add_argument("--then-clear", action="store_true",
@@ -545,6 +769,19 @@ def main():
     args = parser.parse_args()
     global NAMED
     NAMED = args.recovery_lines
+    if args.fault == "block" and args.component != "sshd":
+        parser.error("--fault block exists only for --component sshd (the file server has no block control)")
+    if args.expect == "silent":
+        if not is_liveness_fault(args.fault):
+            parser.error("--expect silent needs --fault hang or block")
+        if args.component != "sshd":
+            parser.error("--expect silent runs against a baseline init that has no served-fsd-hang-test "
+                         "option: only --component sshd can be hung there")
+        if args.then_clear or args.then_exit0 or args.then_escalated_reboot or args.then_fault_at_end:
+            parser.error("--expect silent ends by stopping the hung guest; no follow-on cases")
+        if args.silent_seconds < 1:
+            parser.error("--silent-seconds must be at least 1")
+        args.faults = 1
     if args.faults < 1:
         parser.error("--faults must be at least 1")
     if args.expect == "stop" and args.faults != BUDGET + 1:

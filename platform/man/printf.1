@@ -1,0 +1,46 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd October 12, 2026
+.Dt PRINTF 1
+.Os ABSD
+.Sh NAME
+.Nm printf
+.Nd format and print arguments (sbase)
+.Sh SYNOPSIS
+.Nm
+.Ar format
+.Op Ar arg ...
+.Sh DESCRIPTION
+.Nm
+is sbase 0.1's
+.Nm printf ,
+built unpatched for ABSD with the C kit; see
+.Xr sbase 7 .
+It writes
+.Ar format
+to standard output, with the backslash escapes and the
+.Ql %
+conversions
+.Pq Ql d i o u x X c s b e E f g G
+filled from the arguments in turn; the format is reused while arguments
+remain.
+It is a program under
+.Pa /bin ,
+not a shell builtin.
+.Sh UNSUPPORTED ON ABSD
+Nothing is refused.
+Messages begin with the name the program was run as, and their
+.Ql strerror
+texts are Picolibc's.
+Behaviour on ABSD is predicted until the guest qualification
+.Pq Xr sbase 7 .
+.Sh EXIT STATUS
+0 on success; 1 when an argument could not be converted (the output is
+still written), or on a usage or write error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+absd$ printf '%s=%d\en' size 42
+size=42
+.Ed
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr sbase 7

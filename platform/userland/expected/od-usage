@@ -1,0 +1,4 @@
+status 1
+--- stdout
+--- stderr
+usage: /bin/od [-bdosvx] [-A addressformat] [-E | -e] [-j skip] [-t outputformat] [file ...]

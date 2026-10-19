@@ -1,0 +1,31 @@
+.Dd October 13, 2026
+.Dt DIFF 1
+.Os ABSD
+.Sh NAME
+.Nm diff
+.Nd compare two bounded regular files
+.Sh SYNOPSIS
+.Nm
+.Op Fl u
+.Op Fl Fl
+.Ar file1 file2
+.Sh DESCRIPTION
+This adaptation of Toybox 0.8.15 emits unified differences with three context
+lines, quoted pathname labels and no timestamps.
+Status 0 means equal captured bytes, 1 means different, and 2 means error
+or refusal. Partial output on error is not a valid comparison result.
+NUL bytes select binary reporting.
+.Xr toybox 7
+records origin and license.
+.Sh LIMITS
+Each input is limited to 65536 bytes and 1024 lines. Candidate and traversal
+work and cumulative allocation are bounded; difficult inputs may refuse
+within those limits. Inputs must be stable during lookup, opening and capture;
+this is not an atomic snapshot of concurrent writes.
+Standard input, directories, recursion, custom formats, ignore options and
+nonregular inputs are refused. Only the displayed syntax is supported.
+External process termination is separate from ordinary error status.
+.Sh SEE ALSO
+.Xr cmp 1 ,
+.Xr hexdump 1 ,
+.Xr toybox 7

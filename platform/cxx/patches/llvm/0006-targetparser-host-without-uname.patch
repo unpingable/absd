@@ -1,0 +1,61 @@
+TargetParser: the default target triple without uname
+
+Failure: lib/TargetParser/Unix/Host.inc does not compile for the C kit:
+`'sys/utsname.h' file not found` (Host.inc:22); it calls uname() to add the
+OS release to a Darwin triple and the AIX version to an AIX one.
+Change: under LLVM_ABSD_KIT the header is not included, getOSVersion()
+returns "" and the AIX branch is left out.
+Behaviour preserved: the ABSD build's host and default triple is
+x86_64-unknown-none-elf, which carries no OS version and is neither Darwin
+nor AIX, so the result is the triple unchanged, as before. Other platforms
+are unchanged.
+Upstreamability: needs an ABSD OS in LLVM; as an "OS without uname" switch
+it would be acceptable.
+
+--- a/llvm/lib/TargetParser/Unix/Host.inc
++++ b/llvm/lib/TargetParser/Unix/Host.inc
+@@ -19,7 +19,9 @@
+ #include "llvm/Config/config.h"
+ #include <cctype>
+ #include <string>
++#if !defined(LLVM_ABSD_KIT)
+ #include <sys/utsname.h>
++#endif
+ 
+ #ifdef HAVE_UNISTD_H
+ #include <unistd.h>
+@@ -28,12 +30,18 @@
+ using namespace llvm;
+ 
+ static std::string getOSVersion() {
++#if defined(LLVM_ABSD_KIT)
++  // The kit has no uname; ABSD's triple (x86_64-unknown-none-elf) carries
++  // no OS version, so there is none to add.
++  return "";
++#else
+   struct utsname info;
+ 
+   if (uname(&info))
+     return "";
+ 
+   return info.release;
++#endif
+ }
+ 
+ static std::string updateTripleOSVersion(std::string TargetTripleString) {
+@@ -54,6 +62,7 @@
+   }
+   // On AIX, the AIX version and release should be that of the current host
+   // unless if the version has already been specified.
++#if !defined(LLVM_ABSD_KIT)
+   if (Triple(LLVM_HOST_TRIPLE).getOS() == Triple::AIX) {
+     Triple TT(TargetTripleString);
+     if (TT.getOS() == Triple::AIX && !TT.getOSMajorVersion()) {
+@@ -69,6 +78,7 @@
+       }
+     }
+   }
++#endif
+   return TargetTripleString;
+ }
+ 

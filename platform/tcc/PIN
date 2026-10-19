@@ -1,0 +1,11 @@
+# tcc mob, pinned by commit id (content-addressed). archive_sha256 and
+# archive_bytes describe `git archive --format=tar --prefix=tcc/ <commit>` as
+# produced by the clone on first staging (printed by stage-tcc.sh when the pin
+# says RECORD_ON_FIRST_STAGING) and enforced after.
+commit 43c7708b85681a2fd4451c8a541af4494a8919b2
+archive_sha256 4ace8a8a7cd6d8fb2643903074eccd8b78053b129bda12ce9b80f04fb98feb03
+archive_bytes 5007360
+mirrors https://repo.or.cz/tinycc.git https://github.com/TinyCC/tinycc.git
+# Clone origins, tried in order. repo.or.cz timed out on clone on 2026-10-12
+# (connect to :443 after 133 s), so GitHub is first.
+origin https://github.com/TinyCC/tinycc.git https://repo.or.cz/tinycc.git

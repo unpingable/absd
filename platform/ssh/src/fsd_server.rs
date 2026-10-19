@@ -117,7 +117,19 @@ fn state(io: &Io) -> Option<PipeState> {
 /// others are looked at (each idle one costs at most a tick).
 const HOT_TICKS: u64 = 10;
 
-fn report(server: &mut Server<RegionDevice>, log: &mut Log, events: Vec<Event>, qualification_exit_on_notice: bool) {
+/// Local VM controls a qualification boot sets on the command line; a
+/// normal boot sets neither, and neither adds a protocol operation.
+#[derive(Clone, Copy)]
+struct QualificationControls {
+    /// `--qualification-exit-on-notice`: exit on the NOTICE
+    /// `FSD QUALIFICATION EXIT`.
+    exit_on_notice: bool,
+    /// `--qualification-hang-on-notice`: spin on the NOTICE
+    /// `FSD QUALIFICATION HANG`.
+    hang_on_notice: bool,
+}
+
+fn report(server: &mut Server<RegionDevice>, log: &mut Log, events: Vec<Event>, qualification: QualificationControls) {
     let list = |mounts: &[Mount]| {
         mounts
             .iter()
@@ -152,12 +164,25 @@ fn report(server: &mut Server<RegionDevice>, log: &mut Log, events: Vec<Event>, 
             // sshd's line for the console: sshd has none of its own, and
             // logs the line itself (/var/log/sshd).
             Event::Notice(text) => {
-                if qualification_exit_on_notice && text.as_slice() == b"FSD QUALIFICATION EXIT" {
+                if qualification.exit_on_notice && text.as_slice() == b"FSD QUALIFICATION EXIT" {
                     // Local VM control: retire the file server while sshd is
                     // waiting for the NOTICE reply. Normal boots never set
                     // the flag, and no protocol operation is added.
                     println!("FSD QUALIFICATION EXIT status=7");
                     std::process::exit(7);
+                }
+                if qualification.hang_on_notice && text.as_slice() == b"FSD QUALIFICATION HANG" {
+                    // Local VM control: stop making progress while sshd is
+                    // waiting for the NOTICE reply. The spin is in user
+                    // mode, so the process stays live and runnable and
+                    // never beats its liveness cell again: init's liveness
+                    // judgment, not a process exit, has to end it (kernel
+                    // docs/service-lifecycle-20261008/LIVENESS.md). Normal
+                    // boots never set the flag.
+                    println!("FSD QUALIFICATION HANG kind=spin");
+                    loop {
+                        std::hint::spin_loop();
+                    }
                 }
                 println!("{}", String::from_utf8_lossy(&text));
                 continue;
@@ -181,8 +206,10 @@ fn report_capacity(server: &Server<RegionDevice>, boot: &str) {
         }
     }
     let (bound, opens, draining) = server.capacity();
+    let heap_free_pages = absd_runtime::heap_free_pooled_pages();
+    // Sample outside println: never log while holding the allocator guard.
     println!(
-        "FSD CAPACITY boot={boot} settled_releases={settled_releases} fs_objects={} rotated_logs={rotated_logs} bound={bound} opens={opens} draining={draining} heap_pages_peak={}",
+        "FSD CAPACITY boot={boot} settled_releases={settled_releases} fs_objects={} rotated_logs={rotated_logs} bound={bound} opens={opens} draining={draining} heap_pages_peak={} heap_free_pages={heap_free_pages}",
         server.fs.object_count(),
         absd_runtime::heap_mapped_pages(),
     );
@@ -252,7 +279,10 @@ fn main() {
         finalize();
     }
     let regenerate = std::env::args().any(|arg| arg == "--regenerate-host-key");
-    let qualification_exit_on_notice = std::env::args().any(|arg| arg == "--qualification-exit-on-notice");
+    let qualification = QualificationControls {
+        exit_on_notice: std::env::args().any(|arg| arg == "--qualification-exit-on-notice"),
+        hang_on_notice: std::env::args().any(|arg| arg == "--qualification-hang-on-notice"),
+    };
     let ends = absd_runtime::server::channels();
     if ends.len() < 2 || !absd_runtime::has_block_device() {
         fatal("needs the block handle and at least the control channel and one slot");
@@ -326,6 +356,9 @@ fn main() {
         }
         std::process::exit(3);
     });
+    if let Err(error) = recovery::publish_projection(&mut server.fs, &ledger) {
+        log.say(&mut server, &format!("RECOVERY PROJECTION UNAVAILABLE reason=storage error={error:?}"));
+    }
     log.say(
         &mut server,
         &format!("FSD RECOVERY seq={} streak={} previous={}", ledger.seq, ledger.streak, previous.name()),
@@ -352,6 +385,15 @@ fn main() {
     // The channel served back to back, and since which tick.
     let mut hot: Option<(usize, u64)> = None;
     loop {
+        // One liveness beat per pass, and one more for every transfer
+        // that moves bytes for a client below: a beat says the server made
+        // progress. An idle pass costs at most a tick per channel plus one
+        // idle commit; a pass with work costs one dispatch; a client that
+        // trickles a frame or drains a reply a few bytes at a time keeps
+        // the server in the transfer loops, and those beat on progress, so
+        // a beat missing for init's bound means the server stopped moving
+        // (kernel docs/service-lifecycle-20261008/LIVENESS.md).
+        absd_runtime::liveness_beat();
         let mut progress = false;
         // Round robin over the channels served now, starting after the one
         // last served. Each look blocks at most one tick on an idle
@@ -373,6 +415,7 @@ fn main() {
                     Ok(count) if count > 0 => {
                         this.sent += count;
                         progress = true;
+                        absd_runtime::liveness_beat();
                     }
                     Ok(_) | Err(ERROR_TIMEOUT) => break,
                     // No reader left: the client is gone with its reply.
@@ -422,6 +465,7 @@ fn main() {
                     Ok(count) => {
                         this.inbox.push(&chunk[..count]);
                         progress = true;
+                        absd_runtime::liveness_beat();
                     }
                     Err(ERROR_TIMEOUT) => {
                         quiet = true;
@@ -470,7 +514,7 @@ fn main() {
                     io[channel].output = reply;
                     io[channel].sent = 0;
                     let events = std::mem::take(&mut server.events);
-                    report(&mut server, &mut log, events, qualification_exit_on_notice);
+                    report(&mut server, &mut log, events, qualification);
                     if server.fs.poisoned() {
                         fatal("filesystem poisoned by a device failure");
                     }

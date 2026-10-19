@@ -1,0 +1,10 @@
+missing: -1 ENOENT
+create in /bin: -1 EROFS
+write-open /etc: -1 EROFS
+excl first: 1
+excl again: -1 EEXIST
+close stale: -1 EBADF
+lseek stdin: -1 ESPIPE
+--
+--
+status=0

@@ -1,0 +1,47 @@
+# The agent execution case file (scripts/agent-exec.py; docs/agent-exec-20261012/CONTRACT.md).
+# Columns, tab-separated: id declared timeout_s stdin expect text
+#   id        case id (C1..C12), a trailing letter for a case's sub-calls, run in order
+#   declared  session | ro | nofs: the authority the call asks for; the driver refuses a text that
+#             does not ask the shell for exactly that (see CONTRACT.md "What the driver refuses")
+#   timeout_s the host kills the ssh client after this many seconds
+#   stdin     - (none) or @FILE relative to this directory, sent as the call's input
+#   expect    space-separated: rc=N rc!=N stdout~RE stderr~RE stdout=stdin:ID refused=host-policy
+#             cancelled exited=Code(N) scratch_differs=ID host_absent=PATH guest-refusal
+#             concurrent=N accepted=N conn_refused=N
+#   text      the exec text, exactly as an agent sends it
+# Every call that runs is also checked for one exec line, one SSH SESSION CHILD line of the
+# predicted route (argv: argv0=/bin/WORD spawn_right=false spares=[] control=false; shell:
+# argv0=/bin/absd-sh spawn_right=true control=true), the release of that child's slot, and a
+# new quiescent SERVED CAPACITY line compared with the baseline.
+
+# C1 argv route: no spawn right, no control channel.
+C1	session	60	-	rc=0 exited=Code(0) stdout~^ABSD	uname
+# C2 a read of /share (read-only in every session).
+C2	session	60	-	rc=0 stdout~(?m)^whatis$	ls /share/man
+# C3 upload into /home/operator, then read it back under per-call read-only narrowing.
+C3a	session	60	-	rc=0	mkdir /home/operator/agent
+C3b	session	60	@inputs/in.txt	rc=0	cat > "/home/operator/agent/in.txt"
+C3c	ro	60	-	rc=0 stdout=stdin:C3b	ro cat "/home/operator/agent/in.txt"
+# C4 the narrowing is enforced, not advisory: the guest refuses, and the host reader finds nothing.
+C4	ro	60	-	rc!=0 guest-refusal host_absent=/home/operator/agent/x	ro mkdir "/home/operator/agent/x"
+# C5 no filesystem at all.
+C5	nofs	60	-	rc!=0 guest-refusal	nofs cat "/share/man/whatis"
+# C6 the session's own ceiling: /bin is read-only.
+C6	session	60	-	rc!=0 guest-refusal	mkdir /bin/x
+# C7 per-call scratch: each call sees only its own /tmp/session-<id>.
+C7a	session	60	-	rc=0 stdout~^session-\d+/\n$	ls /tmp
+C7b	session	60	-	rc=0 scratch_differs=C7a	ls /tmp
+# C8 cancellation by client drop: the host kills ssh at 5 s; sshd kills the child.
+C8	session	5	-	cancelled	/bin/sshtest sleep 60000
+# C9 status transport.
+C9	session	60	-	rc=3 exited=Code(3)	/bin/sshtest exit 3
+# C10 a machine request: refused by the driver (host policy), no connection is made.
+C10	session	5	-	refused=host-policy	reboot
+# C11 the connection ceiling (the only overlapped case): four sessions run, the fifth is refused.
+C11	session	300	-	concurrent=5 accepted=4 conn_refused=1 rc=0 stdout~^slept\n$	/bin/sshtest sleep 90000
+
+# C12 a guest-built tool run as a session command (/bin/tcc and the tcc fixture image).
+# requires candidate 2
+C12a	session	60	@inputs/t.c	rc=0	cat > "/home/operator/agent/t.c"
+C12b	session	600	-	rc=0 stdout~^agent-exec\x20tcc\x20ok\n$	"/bin/tcc" /home/operator/agent/t.c -o /home/operator/agent/t; /home/operator/agent/t
+C12c	session	60	-	rc=0 stdout~(?m)^t$	ls /home/operator/agent

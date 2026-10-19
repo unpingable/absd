@@ -1,0 +1,4 @@
+status 2
+--- stdout
+--- stderr
+/bin/grep: fopen missing.txt: No such file or directory

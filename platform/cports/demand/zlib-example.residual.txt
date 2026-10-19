@@ -1,0 +1,10 @@
+_exit	exit.c:51
+calloc	example.c
+close	gzread.c
+fcntl	gzlib.c
+free	zutil.c
+lseek	gzlib.c
+malloc	zutil.c
+open	gzlib.c
+read	gzread.c
+write	posixiob_stdout.c

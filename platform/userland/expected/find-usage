@@ -1,0 +1,4 @@
+status 1
+--- stdout
+--- stderr
+usage: /bin/find [-H | -L] path ... [expression ...]

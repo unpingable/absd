@@ -1,0 +1,4 @@
+--
+Parse error in 6th command line argument: disk I/O error (10)
+--
+status=1

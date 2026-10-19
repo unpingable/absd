@@ -13,3 +13,8 @@ absd-broker = { path = "../broker" }
 absd-fs = { path = "../fs" }
 absd-fsd = { path = "../fsd" }
 absd-release = { path = "../release" }
+
+[features]
+# The C kit's entry: route `main` through a C-defined `__absd_program_main`
+# with a NULL-terminated envp. Off for every Rust executable.
+c-entry = []
