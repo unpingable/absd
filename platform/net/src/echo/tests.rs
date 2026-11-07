@@ -674,3 +674,9 @@ fn bounded_four_operation_schedules_preserve_one_submission_and_terminal_fencing
         }
     }
 }
+
+#[path = "boundary_tests.rs"]
+mod boundary_tests;
+
+#[path = "wire_tests.rs"]
+mod wire_tests;

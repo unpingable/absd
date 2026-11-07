@@ -8,19 +8,22 @@
 # the source tree (commit, whether it had changes, path), the toolchain and
 # the hashes of the kit's archives; scripts/run-c-kit.sh checks it.
 set -eu
+case ${ABSD_NATIVE_PCM_EXPERIMENT:-0} in
+    0) set -- ;;
+    1) set -- --features native-pcm-experiment ;;
+    *) echo "ABSD_NATIVE_PCM_EXPERIMENT must be 0 or 1" >&2; exit 2 ;;
+esac
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 camp=$(dirname "$root")
 toolchain=${ABSD_RUST_TOOLCHAIN:-$HOME/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu}
 sysroot=$root/.staged-sysroot
 out=${ABSD_CKIT_BUILD:-$camp/ckit-build}
 mkdir -p "$out"
-# The source tree's identity, taken before anything is built.
-if commit=$(git -C "$root" rev-parse HEAD 2>/dev/null); then
-    dirty=no; dirty_paths=$(git -C "$root" status --porcelain | head -n 8 | tr '\n' ' ')
-    [ -z "$dirty_paths" ] || dirty=yes
-else
-    commit=none dirty=unknown dirty_paths=
-fi
+# Read an own-checkout identity strictly; a broken .git is not a snapshot.
+python3 -I "$root/scripts/c_kit_source.py" source "$root" > "$out/SOURCE-IDENTITY.json"
+commit=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' "$out/SOURCE-IDENTITY.json")
+dirty=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dirty"])' "$out/SOURCE-IDENTITY.json")
+dirty_paths=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dirty_paths"])' "$out/SOURCE-IDENTITY.json")
 if ! [ -d "$sysroot/lib/rustlib/src/rust/library" ]; then
     "$root/scripts/stage-library.sh"
 fi
@@ -49,7 +52,7 @@ RUSTC_BOOTSTRAP=1 \
 RUST_TARGET_PATH=$root/targets \
 CARGO_TARGET_DIR=$out/absd-c \
 cargo +1.95.0 build -Z build-std=core,alloc,panic_abort \
-    --target x86_64-unknown-absd --release --offline ${ABSD_CARGO_LOCKED---locked})
+    --target x86_64-unknown-absd --release --offline "$@" ${ABSD_CARGO_LOCKED---locked})
 test -f "$out/absd-c/x86_64-unknown-absd/release/libabsd_c.a"
 printf '%s\n' "ABSD C KIT libabsd_c.a $(sha256sum "$out/absd-c/x86_64-unknown-absd/release/libabsd_c.a" | cut -d' ' -f1)"
 pico=${ABSD_PICOLIBC_PREFIX:-$camp/picolibc}/install
@@ -119,6 +122,8 @@ digest() { sha256sum "$1" | cut -d' ' -f1; }
     printf 'dirty %s\n' "$dirty"
     # N13: name what made the tree dirty, so a stamp taken mid-gate explains itself.
     [ -z "$dirty_paths" ] || printf 'dirty-paths %s\n' "$dirty_paths"
+    # Only the opt-in kit carries this line; the default receipt is unchanged.
+    [ "${ABSD_NATIVE_PCM_EXPERIMENT:-0}" = 0 ] || printf 'native-pcm-experiment 1\n'
     printf 'source %s\n' "$root"     # the one path-dependent line; nothing in lib/ carries it
     printf 'rustc %s\n' "$("$toolchain/bin/rustc" --version)"
     printf 'cargo %s\n' "$(cargo +1.95.0 --version)"

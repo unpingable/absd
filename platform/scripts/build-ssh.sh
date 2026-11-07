@@ -10,10 +10,11 @@
 # start supplies them:
 #   sshd.elf                  the server
 #   absd-fsd.elf              the file server of its `fsd` boot
-#   absd-fsd-regenerate.elf   the same file server started with
-#                             --regenerate-host-key
+#   absd-fsd-regenerate.elf   a dedicated regenerate-host-key feature build;
+#                             its mode survives a parent's explicit argv
 #   sshtest.elf               the matrix's session helper
 #   absd-enroll.elf           the enrollment image's key writer
+#   absd-sftp.elf             the restricted stdio SFTP worker
 # Requires scripts/stage-library.sh to have staged the sysroot.
 # Source paths are remapped (scripts/inputs.sh, absd_rust_remap), so the
 # programs do not depend on the checkout path (N3).
@@ -31,10 +32,10 @@ test -d "$sysroot/lib/rustlib/src/rust/library"
 # ABSD output.
 rm -rf "$root/ssh/target/x86_64-unknown-absd"
 
-# build ARGS BIN:ELF...: one build with ARGS fixed, copying each BIN.
+# build FEATURES ARGS BIN:ELF...: copy only the named outputs.
 build() {
-args=$1
-shift
+features=$1 args=$2
+shift 2
 (cd "$root/ssh" && env -u CARGO_ENCODED_RUSTFLAGS -u RUSTFLAGS -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER \
 ABSD_REAL_RUSTC=$toolchain/bin/rustc \
 ABSD_STAGED_SYSROOT=$sysroot \
@@ -43,7 +44,8 @@ RUSTC_BOOTSTRAP=1 \
 RUST_TARGET_PATH=$root/targets \
 ABSD_PROGRAM_ARGS="$args" \
 cargo +1.95.0 --config "$ABSD_RUST_REMAP" build -Z build-std=core,alloc,std,panic_abort \
-    --target x86_64-unknown-absd --release --offline ${ABSD_CARGO_LOCKED---locked} --bin sshd --bin sshtest --bin absd-fsd --bin absd-enroll)
+    --target x86_64-unknown-absd --release --offline ${ABSD_CARGO_LOCKED---locked} \
+    --no-default-features --features "$features" --bin sshd --bin sshtest --bin absd-fsd --bin absd-enroll --bin absd-sftp)
 for pair in "$@"; do
     bin=${pair%%:*} elf=${pair#*:}
     cp "$root/ssh/target/x86_64-unknown-absd/release/$bin" "$root/$elf"
@@ -51,9 +53,14 @@ for pair in "$@"; do
 done
 }
 
-build "" sshd:sshd.elf absd-fsd:absd-fsd.elf absd-enroll:absd-enroll.elf sshtest:sshtest.unstripped
+build "" "" sshd:sshd.elf absd-fsd:absd-fsd.elf absd-enroll:absd-enroll.elf absd-sftp:absd-sftp.elf sshtest:sshtest.unstripped
+# Refuse a worker without its runtime entry before packaging it.
+python3 "$root/scripts/check-abi-elf.py" "$root/absd-sftp.elf"
 # The matrix's session helper, installed as /bin/sshtest (symbols stripped:
 # it travels through the importer).
 llvm-strip-18 -o "$root/sshtest.elf" "$root/sshtest.unstripped"
 rm -f "$root/sshtest.unstripped"
-build "--regenerate-host-key" absd-fsd:absd-fsd-regenerate.elf
+# The stock subsystem runs as a normal restricted session program.
+mkdir -p "$root/commands"
+llvm-strip-18 -o "$root/commands/absd-sftp" "$root/absd-sftp.elf"
+build "regenerate-host-key" "" absd-fsd:absd-fsd-regenerate.elf

@@ -1,0 +1,102 @@
+--- a/src/channel.rs
++++ b/src/channel.rs
+@@ -979,6 +979,9 @@
+             ChannelReqType::Pty(_) => {
+                 Ok(DispatchEvent::ServEvent(ServEventId::SessionPty { num }))
+             }
++            ChannelReqType::WinChange(_) => {
++                Ok(DispatchEvent::ServEvent(ServEventId::SessionWindow { num }))
++            }
+             ChannelReqType::Environment(_) => {
+                 Ok(DispatchEvent::ServEvent(ServEventId::Environment { num }))
+             }
+--- a/src/event.rs
++++ b/src/event.rs
+@@ -297,6 +297,8 @@
+     ///
+     /// TODO details
+     SessionPty(ServPtyRequest<'g, 'a>),
++    /// Client reported a changed window size.
++    SessionWindow(ServPtyRequest<'g, 'a>),
+     /// Server has received one environment variable.
+     /// Note: input strings are not sanitised.
+     SessionEnv(ServEnvironmentRequest<'g, 'a>),
+@@ -325,6 +327,7 @@
+             Self::SessionExec(_) => "SessionExec",
+             Self::SessionSubsystem(_) => "SessionSubsystem",
+             Self::SessionPty(_) => "SessionPty",
++            Self::SessionWindow(_) => "SessionWindow",
+             Self::SessionEnv(_) => "Environment",
+             Self::Defunct => "Defunct",
+             Self::PollAgain => "PollAgain",
+@@ -810,7 +813,28 @@
+         Self { runner, num, done: false }
+     }
+ 
+-    // TODO return PTY information to the caller
++    /// Client-reported TERM; absent for window-change.
++    pub fn terminal(&self) -> Result<Option<&str>> {
++        match self.runner.packet()? {
++            Some(Packet::ChannelRequest(p)) => match p.req {
++                packets::ChannelReqType::Pty(p) => Ok(Some(p.term.to_str()?)),
++                packets::ChannelReqType::WinChange(_) => Ok(None),
++                _ => Err(crate::error::SSHProto.build()),
++            },
++            _ => Err(crate::error::SSHProto.build()),
++        }
++    }
++    /// Character dimensions, without substituting defaults for unknown zeros.
++    pub fn dimensions(&self) -> Result<(u32, u32)> {
++        match self.runner.packet()? {
++            Some(Packet::ChannelRequest(p)) => match p.req {
++                packets::ChannelReqType::Pty(p) => Ok((p.cols, p.rows)),
++                packets::ChannelReqType::WinChange(p) => Ok((p.cols, p.rows)),
++                _ => Err(crate::error::SSHProto.build()),
++            },
++            _ => Err(crate::error::SSHProto.build()),
++        }
++    }
+ 
+     /// Indicate that the request succeeded.
+     ///
+@@ -942,6 +966,9 @@
+     SessionPty {
+         num: ChanNum,
+     },
++    SessionWindow {
++        num: ChanNum,
++    },
+     Environment {
+         num: ChanNum,
+     },
+@@ -1002,6 +1029,10 @@
+                 debug_assert!(matches!(p, Some(Packet::ChannelRequest(_))));
+                 Ok(ServEvent::SessionPty(ServPtyRequest::new(runner, num)))
+             }
++            Self::SessionWindow { num } => {
++                debug_assert!(matches!(p, Some(Packet::ChannelRequest(_))));
++                Ok(ServEvent::SessionWindow(ServPtyRequest::new(runner, num)))
++            }
+             Self::Environment { num } => {
+                 debug_assert!(matches!(p, Some(Packet::ChannelRequest(_))));
+                 Ok(ServEvent::SessionEnv(ServEnvironmentRequest::new(runner, num)))
+@@ -1024,7 +1055,8 @@
+             | Self::SessionExec { .. }
+             | Self::SessionSubsystem { .. }
+             | Self::Environment { .. }
+-            | Self::SessionPty { .. } => true,
++            | Self::SessionPty { .. }
++            | Self::SessionWindow { .. } => true,
+         }
+     }
+ }
+--- a/src/runner.rs
++++ b/src/runner.rs
+@@ -864,6 +864,7 @@
+                 | DispatchEvent::ServEvent(ServEventId::SessionExec { .. })
+                 | DispatchEvent::ServEvent(ServEventId::SessionSubsystem { .. })
+                 | DispatchEvent::ServEvent(ServEventId::SessionPty { .. })
++                | DispatchEvent::ServEvent(ServEventId::SessionWindow { .. })
+                 | DispatchEvent::ServEvent(ServEventId::Environment { .. })
+         ));
+     }

@@ -12,7 +12,7 @@ use crate::memory::PAGE_SIZE;
 use crate::object::{CellId, PipeId};
 use crate::syscall::Outcome;
 
-pub const MAX_PROCESSES: usize = 16;
+pub const MAX_PROCESSES: usize = absd_abi::syscall::MAX_PROCESS_SLOTS;
 pub const SAVED_FRAME_WORDS: usize = 20;
 /// Page tables per user address space (2 MiB of address space each). This
 /// bounds what a process can touch at once, not its windows (the image, the
@@ -144,6 +144,8 @@ pub struct Process {
     pub wait_cell: Option<(CellId, u64)>,
     /// While `Waiting` on a pipe: which pipe.
     pub wait_pipe: Option<PipeId>,
+    /// Transient bounded read-readiness set; owns no object references.
+    pub wait_readable: Option<crate::readable_wait::ReadWait>,
     /// While `Waiting` on a pipe or the console: the transfer the kernel
     /// completes, against this process's memory, when it can proceed.
     pub wait_transfer: Option<TransferWait>,
@@ -173,6 +175,7 @@ pub enum WaitKind {
     Cell,
     Pipe,
     Console,
+    Readable,
     Sleep,
     /// Kernel-owned periodic release / budget suspension, preserves registers.
     RtRelease,
@@ -209,6 +212,7 @@ impl Process {
         wait_record: 0,
         wait_cell: None,
         wait_pipe: None,
+        wait_readable: None,
         wait_transfer: None,
         wait_kind: WaitKind::None,
         wake_at: None,
@@ -306,6 +310,7 @@ impl Process {
         self.wait_record = 0;
         self.wait_cell = None;
         self.wait_pipe = None;
+        self.wait_readable = None;
         self.wait_transfer = None;
         self.wait_kind = WaitKind::None;
         self.wake_at = None;
@@ -517,6 +522,7 @@ mod tests {
             WaitKind::Cell,
             WaitKind::Pipe,
             WaitKind::Console,
+            WaitKind::Readable,
             WaitKind::Sleep,
             WaitKind::RtRelease,
             WaitKind::Nic,
@@ -889,5 +895,38 @@ mod fault_policy_tests {
             fault.from_user = false;
             assert_eq!(user_fault_disposition(fault), None);
         }
+    }
+}
+
+#[cfg(test)]
+mod mixed_capacity_tests {
+    use super::*;
+    #[test]
+    fn six_shells_three_foreground_children_each_fit_and_upper_slots_reuse() {
+        std::println!(
+            "LAYOUT Handle={} HandleTable={} Process={} ProcessTable={} Queues={} FrameAllocator={} processes={} kernel_stack={}",
+            core::mem::size_of::<crate::handle::Handle>(),
+            core::mem::size_of::<crate::handle::HandleTable>(),
+            core::mem::size_of::<Process>(),
+            core::mem::size_of::<ProcessTable>(),
+            core::mem::size_of::<crate::run_queue::Queues>(),
+            core::mem::size_of::<crate::memory::FrameAllocator>(),
+            MAX_PROCESSES,
+            crate::layout::KERNEL_STACK_PAGES * 4096
+        );
+        let mut table = ProcessTable::new();
+        // init, fsd, sshd, logd; two local and four remote shells; 18 children.
+        for _ in 0..28 {
+            assert!(table.claim(0, 0).is_some());
+        }
+        for _ in 28..MAX_PROCESSES {
+            assert!(table.claim(0, 0).is_some());
+        }
+        assert!(table.claim(0, 0).is_none());
+        let old = table.entries.get(23).unwrap().pid;
+        table.release(23);
+        let slot = table.claim(0, 0).unwrap();
+        assert_eq!(slot, 23);
+        assert_ne!(table.entries[slot].pid, old);
     }
 }

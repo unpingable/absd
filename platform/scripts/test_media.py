@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Host tests of scripts/media.py: no compiler, no image tools, no QEMU.
 
-Against S4's retained candidate (/nonexistent/absd-s4-candidate,
+Against S4's retained candidate (archived-occurrence,
 skipped when absent), the generalised z2-usb profile must regenerate every
 file S4 put on the ESP, byte for byte, apart from the GRUB loader (built on
 the media host): PAIR.JSON, GRUB.CFG, README.TXT, the notices, the runtime
@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
@@ -31,7 +32,7 @@ import media  # noqa: E402
 import media_operator  # noqa: E402
 import media_test_copy  # noqa: E402
 
-S4 = pathlib.Path(os.environ.get("ABSD_S4_CANDIDATE", "/nonexistent/absd-s4-candidate"))
+S4 = pathlib.Path(os.environ["ABSD_S4_CANDIDATE"]) if os.environ.get("ABSD_S4_CANDIDATE") else None
 PLATFORM_REPO = pathlib.Path(os.environ.get("ABSD_PLATFORM_REPO", here.parent))
 KERNEL = "f8184cae7dd6a097f47331fb763c2f5fdae770cc"
 PLATFORM = "bf8c7583b830ccab0982cf36b336086912a0a900"
@@ -42,7 +43,39 @@ def sha(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
-@unittest.skipUnless((S4 / "inputs/COMPONENTS.json").is_file(), "S4 candidate not present")
+@unittest.skipUnless(os.environ.get("ABSD_MEDIA_E2E") == "1", "set ABSD_MEDIA_E2E=1 for real ISO tools")
+class IsoClockReproducibility(unittest.TestCase):
+    def test_constructor_delay_does_not_change_iso(self):
+        # Run the real constructor and image tools. Delay *inside* faketime,
+        # so an advancing clock crosses a timestamp boundary deterministically.
+        run = subprocess.run
+        faketime = media.tool("faketime")
+        grub = media.tool("grub-mkrescue")
+        with tempfile.TemporaryDirectory(prefix="media-iso-clock-") as temp:
+            root = pathlib.Path(temp)
+            tree = root / "tree"
+            (tree / "boot/grub").mkdir(parents=True)
+            (tree / "boot/grub/grub.cfg").write_text("set timeout=0\n")
+            (tree / "boot/absd-kernel").write_bytes(b"ISO fixture; never booted\n")
+            profile = media.load_profile("vm-operator")
+            outputs = []
+            for delay in (0, 3):
+                def delayed(command, *args, **kwargs):
+                    if command[0] == faketime:
+                        split = command.index(grub)
+                        command = command[:split] + ["/bin/sh", "-c",
+                                   f'/bin/sleep {delay}; exec "$@"', "iso-clock-test"] + command[split:]
+                        kwargs["timeout"] = 30
+                    return run(command, *args, **kwargs)
+                image = root / f"delay-{delay}.iso"
+                with mock.patch.object(media_operator.subprocess, "run", side_effect=delayed):
+                    media_operator.build_iso(tree, image, 1793215078, profile,
+                                             KERNEL, PLATFORM, root)
+                outputs.append(sha(image))
+            self.assertEqual(outputs[0], outputs[1], "constructor elapsed time changed ISO bytes")
+
+
+@unittest.skipUnless(S4 is not None and (S4 / "inputs/COMPONENTS.json").is_file(), "S4 candidate not present")
 class S4Equivalence(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="test-media-"))
@@ -369,7 +402,7 @@ class Confinement(unittest.TestCase):
 E2E = os.environ.get("ABSD_MEDIA_E2E") == "1"
 
 
-@unittest.skipUnless(E2E and (S4 / "inputs/COMPONENTS.json").is_file(),
+@unittest.skipUnless(E2E and S4 is not None and (S4 / "inputs/COMPONENTS.json").is_file(),
                      "end-to-end media refusals need ABSD_MEDIA_E2E=1, the S4 candidate and the pinned image tools")
 class EndToEnd(unittest.TestCase):
     """Real image/validate/boot refusals on two WORKs: A with S4's kernel
@@ -472,13 +505,15 @@ class EndToEnd(unittest.TestCase):
         self.refuses(media.validate, self.args("a", out), "layout_mismatch")
 
 
-U1B = pathlib.Path(os.environ.get("ABSD_U1B_IMAGE", "/nonexistent/absd-u1b-image"))
+# Opt-in only: a reference image directory named explicitly, never a default path
+# and never a protected endurance guest's image.
+U1B = pathlib.Path(os.environ["ABSD_U1B_IMAGE"]) if os.environ.get("ABSD_U1B_IMAGE") else None
 
 
 class OperatorDisk(unittest.TestCase):
     """The vm-operator recipe's own transformations."""
 
-    @unittest.skipUnless((U1B / "absd-operator.img").is_file(), "U1-b reference image not present")
+    @unittest.skipUnless(U1B is not None and (U1B / "absd-operator.img").is_file(), "ABSD_U1B_IMAGE not set to a reference image")
     def test_fs_id_is_read_and_substituted_with_every_digest(self):
         data = (U1B / "absd-operator.img").read_bytes()
         original = media_operator.fs_id_of(U1B / "absd-operator.img")

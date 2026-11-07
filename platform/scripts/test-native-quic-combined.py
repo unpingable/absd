@@ -75,6 +75,34 @@ class CloseOriginControls(unittest.TestCase):
 
 
 class CompositionControls(unittest.TestCase):
+    def test_selected_grant_tuple_is_required_for_complete_refusal_and_denied_cases(self):
+        proofs = [('ipv4', identity, evidence) for identity, evidence in
+                  [('Q01', BASE.proof()), ('Q03', BASE.initial_loss_proof()),
+                   ('Q19', BASE.queue_proof()), ('Q08', BASE.wrong_root_proof())]]
+        proofs += [('ipv4', case['id'], BASE.auth_proof(case)) for case in BASE.AUTH_CASES]
+        proofs += [('ipv6', identity, IPV6.proof(identity)) for identity in ('Q01', 'Q08', 'Q17')]
+        for family, identity, (output, fixture, wire) in proofs:
+            MATRIX.verify_native(CASES[identity], output, fixture, wire, MANIFEST, family)
+            for field, wrong in [('peer_port', '4444'), ('local_port', '1')]:
+                rows = output.splitlines()
+                index = next(i for i, row in enumerate(rows) if row.startswith('QUIC SERVICE GRANT '))
+                original = rows[index]
+                values = MATRIX.fields(original)
+                rows[index] = original.replace(field + '=' + values[field], field + '=' + wrong)
+                self.assertNotEqual(rows[index], original)
+                with self.subTest(family=family, case=identity, field=field), self.assertRaisesRegex(RuntimeError, 'selected grant tuple differs'):
+                    MATRIX.verify_native(CASES[identity], '\n'.join(rows), fixture, wire, MANIFEST, family)
+
+    def test_selected_grant_peer_port_cannot_be_missing_or_malformed(self):
+        for identity in ('Q08', 'Q17'):
+            output, fixture, wire = IPV6.proof(identity)
+            for value in ('', 'unknown', '-1', '4443x'):
+                rows = output.splitlines()
+                index = next(i for i, row in enumerate(rows) if row.startswith('QUIC SERVICE GRANT '))
+                rows[index] = rows[index].replace('peer_port=4443', 'peer_port=' + value)
+                with self.subTest(case=identity, value=value), self.assertRaises(RuntimeError):
+                    MATRIX.verify_native(CASES[identity], '\n'.join(rows), fixture, wire, MANIFEST, 'ipv6')
+
     def test_both_families_select_q08_fence_and_standard_q01(self):
         peer = BASE.PEER_MODULE
         for family in ('ipv4', 'ipv6'):
@@ -109,8 +137,9 @@ class CompositionControls(unittest.TestCase):
     def test_denied_ipv6_profile_never_selects_authentication_fixture(self):
         self.assertEqual(BASE.PEER_MODULE.response_policy(CASES['Q17'], 'ipv6'), 'standard')
         self.assertEqual(MATRIX.development_profile(CASES['Q17'], 'ipv6'), 'q17-ipv6-development')
-        with self.assertRaises(RuntimeError):
-            BASE.PEER_MODULE.response_policy(CASES['Q17'], 'ipv4')
+        self.assertEqual(BASE.PEER_MODULE.response_policy(CASES['Q17'], 'ipv4'), 'standard')
+        self.assertEqual(MATRIX.development_profile(CASES['Q17'], 'ipv4'),
+                         'q17-denied-destination-development')
 
 
 if __name__ == '__main__':

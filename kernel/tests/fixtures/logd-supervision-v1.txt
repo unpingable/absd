@@ -1,0 +1,6 @@
+LOGD COLLECTED boot=0123456789abcdef0123456789abcdef written=42 flushed=42
+Logging is retrying. consecutive_unproductive=17 crash_restarts=1 retry_ticks=60000
+Logging collected and synced new records. consecutive_unproductive=0 crash_restarts=1 retry_ticks=0
+Logging stopped after four crash replacements. Volatile diagnostics remain available.
+Logger child is quarantined. Replacement and raw-handle actions are stopped; cleanup remains unconfirmed.
+Logger child identity is unconfirmed. Automatic replacement is stopped.

@@ -1,0 +1,34 @@
+[package]
+name = "readable-native-probe"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+absd-user = { path = "../../../user" }
+absd-abi = { path = "../../../abi" }
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+codegen-units = 1
+
+[[bin]]
+name = "parent"
+test = false
+bench = false
+
+[[bin]]
+name = "child"
+test = false
+bench = false
+
+[lib]
+test = false
+doctest = false
+
+[[bin]]
+name = "boot_liveness"
+test = false
+bench = false

@@ -57,6 +57,8 @@ def check(log, mode):
     assert not re.search(rb'PANIC|KERNEL FAULT|EXTERNAL WORKLOAD FAILED',raw)
     for marker in [b'SLOT PRESSURE OK occupied=16', b'B EXHAUSTED', b'B REEXHAUSTED', b'refusal=-12 retries=3',b'exact_return=true']:
         assert marker in output, (marker,output)
+    admission = re.findall(rb'^B EXHAUSTED pages=[0-9]+ refusal=-12 retries=3 competing_admit=(-?[0-9]+)$', output, re.M)
+    assert admission == [b'-12' if mode == 'protected' else b'-38'], ('B admission result', admission)
     if mode=='protected':
         assert b'FRAME RESERVATION TERMINAL idle=0' in raw
         for marker in [b'MODE protected=true',b'INITIALIZATION REFUSALS OK',b'LIFECYCLE OK cycles=64',

@@ -1,0 +1,158 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd November 5, 2026
+.Dt LOCAL-CONSOLE 7
+.Os ABSD
+.Sh NAME
+.Nm local-console
+.Nd managed local login, retained text sessions, and kernel maintenance
+.Sh DESCRIPTION
+The final served operator image is built with
+.Ev ABSD_LOCAL_CONSOLE=1
+by default and
+provides two local text sessions without requiring a network interface or MWM.
+Startup evidence appears before the login view. Input before the prompt is
+discarded, except that Ctrl-] k can select read-only kernel maintenance.
+Local presentation does not establish a network listener.
+After handoff, ordinary service output remains available through
+.Xr logs 1 ;
+the raw serial worker capture is an incomplete startup prefix, without a
+complete-stream END record. Non-local boots retain full serial framing.
+.Pp
+At
+.Ql operator token:
+type the enrolled 32-character token and Enter.
+Input is not echoed.
+Missing or malformed enrollment disables shell login; there is no default secret.
+The local identity has the same filesystem and session-control rights as the SSH operator.
+The verifier and SSH keys under
+.Pa /ssh
+are excluded from session mounts.
+.Pp
+Press and release Ctrl-], then one ordinary key:
+.Bl -tag -width "1 or 2"
+.It 1 or 2
+Switch to the selected retained session, logging in independently if necessary.
+.It l
+Ask to log out of the selected session.
+Press Enter to confirm; any other key cancels.
+Confirmation clears its input and retained transcript.
+.It k
+Select read-only kernel maintenance, handled directly by init.
+Repeat to start another kernel snapshot.
+.It r
+Return to the selected login or shell and replay its retained transcript.
+.El
+.Pp
+For an authenticated shell, an unrecognized selector is passed to ordinary
+cooked input as literal Ctrl-] followed by that byte. If a logout request is
+cancelled by an ordinary byte, the literal prefix, l, and that byte are
+restored together. A second Ctrl-] during logout confirmation is also
+restored literally; it does not start another console prefix.
+At the login prompt, restoration does not apply: the pending prefix is
+dropped and only the current byte is processed as token input.
+.Pp
+Valid selectors still consume their byte even after a prefix received in an
+earlier input batch. For example, Ctrl-] followed by read consumes r to
+redraw and leaves ead as shell input. Use the prefix only when selecting a
+console action.
+Ctrl-C cancels a pending prefix or logout request and interrupts normally.
+.Pp
+Only the selected session receives input.
+Each retains 16 KiB of output; gaps are reported.
+Backspace and DEL erase a character; Ctrl-U erases the input line.
+Ctrl-C discards the input line, complete lines still queued by the local
+producer, and the remaining input in that batch. Previously delivered bytes
+are not retracted. It interrupts the current foreground command
+through the shell's existing session-control channel.
+Ctrl-D submits partial text, or closes stdin when the input line is empty.
+A shell exit or fault ends that session and requires fresh authentication.
+Failed authentication and resource refusal apply bounded delays, up to 30 seconds.
+There is no automatic shell respawn.
+.Pp
+The local producer supports plain pause and discard recovery, without a
+staged paste record protocol.
+Pasted bursts use ordinary cooked lines, including when bracketed-paste
+delimiters are present; each newline can submit a command.
+There is no staged paste approval.
+The pending input queue is bounded to 8192 bytes; a full queue reports a
+dropped line. A line longer than 65536 bytes or invalid UTF-8 refuses input.
+The refused command and its pending suffix are discarded until an explicit
+Ctrl-C. The session survives; enter a separate command after its fresh prompt.
+While input is refused, newlines, paste delimiters and Ctrl-] do not release it.
+The shell drains inherited input only while the producer has acknowledged a
+pause, and the producer rearms only after its pending input has been discarded.
+.Pp
+The local text terminal uses
+.Ev TERM=dumb .
+Dimensions come from an actual renderer or serial-client observation;
+unknown dimensions remain unknown. A fixed framebuffer can report 80 by 25,
+but no such size is invented for an unmeasured serial terminal.
+Use
+.Xr terminal-size 1
+to inspect the current size. COLUMNS and LINES are snapshots refreshed at
+shell prompts and native command startup when dimensions are known.
+There is no raw mode, process-group job control or detached-job support.
+Commands cannot change terminal modes; shell end resets the line discipline.
+.Sh RECOVERY
+The kernel view requires no file server, logger, NIC, SSH listener or compositor.
+Physical Console possession grants only diagnostic reading, not a shell or reboot.
+Essential service failure triggers bounded cleanup. After readiness, the
+advertised recovery budget may permit a visible whole-machine reset.
+Before readiness, on unknown or exhausted budget, or if reset is refused,
+a local-enabled image holds read-only maintenance.
+An external operator reboot is required to leave that held state;
+a dirty writable image may also require offline recovery.
+Neither reset nor maintenance is an in-place service repair.
+The headless image retains its bounded recovery-reset and stop policy.
+.Sh ENROLLMENT
+Fresh operator and release builds create enrollment automatically.
+The secret is stored on the build host at
+.Pa OUT.local-console-token
+and its reusable descriptor at
+.Pa OUT.local-console-token.verifier ,
+both mode 0600 and outside the artifact output directory.
+Neither file is printed or copied into the artifact directory.
+Only the descriptor bytes are imported as
+.Pa /ssh/local-login .
+Keep the token under operator custody and transfer it separately from images.
+Use
+.Fl -local-token-file Ar path
+to choose a different external destination, or
+.Fl -local-login-verifier Ar file
+to reuse an enrollment when rebuilding.
+An existing enrollment is never overwritten; token destinations inside the
+artifact directory and raw tokens supplied as descriptors are refused.
+Importer kernels explicitly use
+.Ev ABSD_LOCAL_CONSOLE=0 ;
+only the final served kernel enables local input and maintenance.
+.Pp
+For manual enrollment on the build host use
+.Pa scripts/local-console-enroll.py
+with
+.Fl -verifier Ar file
+and
+.Fl -token-file Ar file .
+It creates a random 128-bit token and SHA-256 verifier in separate mode-0600 files.
+Install only the verifier at
+.Pa /ssh/local-login
+using the existing image import/defaults path.
+Keep the token outside the image under operator custody.
+.Pp
+The console service emits its readiness record on supervised standard
+output. For an enrolled console, init uses that bound stream to retire
+bootstrap frame admission.
+.Sh LIMITATIONS
+Unterminated local input that accumulates past 1 MiB refuses the unfinished
+command and discards pending input until Ctrl-C, then offers a fresh prompt.
+SSH without a PTY still ends the shell session at that source limit.
+.Pp
+A forced session END can leave adopted processes whose filesystem binding
+has been revoked; this is not a process-tree termination guarantee.
+Physical hardware_fixture input and display operation require a separate observed hardware run.
+Serial QEMU tests do not establish physical usability.
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr dmesg 1 ,
+.Xr ps 1 ,
+.Xr terminal-size 1 ,
+.Xr process 7

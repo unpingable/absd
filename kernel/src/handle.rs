@@ -8,9 +8,10 @@
 
 use crate::object::{CellId, PipeId};
 
-pub const MAX_HANDLES: usize = 64;
+pub const MAX_HANDLES: usize = absd_abi::syscall::MAX_PROCESS_HANDLES;
 const INDEX_BITS: u32 = 8;
 const INDEX_MASK: u64 = (1 << INDEX_BITS) - 1;
+const _: () = assert!(MAX_HANDLES <= 1 << INDEX_BITS);
 
 pub const RIGHT_WRITE: u8 = crate::syscall::RIGHT_WRITE as u8;
 pub const RIGHT_WAIT: u8 = crate::syscall::RIGHT_WAIT as u8;
@@ -24,6 +25,10 @@ pub enum Object {
     None,
     /// The process-local serial output endpoint.
     Console,
+    /// Experimental read-only kernel diagnostics, independent of terminal I/O.
+    Diagnostics,
+    /// Boot-local civil clock adjustment; granted only to the trusted time owner.
+    Clock,
     /// A child process, by PID.
     Process(u64),
     /// A versioned cell in the kernel object table.
@@ -37,6 +42,10 @@ pub enum Object {
     /// The machine itself: the authority to end or restart it. The kernel
     /// issues one handle to init at boot and none to anything else.
     Machine,
+    #[cfg(feature = "native-pcm-experiment")]
+    Playback,
+    #[cfg(feature = "mwm-experiment")]
+    Display(u64),
 }
 
 impl Object {
@@ -45,6 +54,12 @@ impl Object {
     pub const fn valid_rights(self) -> u8 {
         match self {
             Self::None => 0,
+            Self::Diagnostics => RIGHT_READ,
+            Self::Clock => RIGHT_WRITE,
+            #[cfg(feature = "native-pcm-experiment")]
+            Self::Playback => RIGHT_READ | RIGHT_WRITE,
+            #[cfg(feature = "mwm-experiment")]
+            Self::Display(_) => RIGHT_READ | RIGHT_WRITE,
             Self::Console | Self::Cell(_) | Self::Pipe(_) | Self::Block | Self::Nic => {
                 RIGHT_READ | RIGHT_WRITE
             }
@@ -206,6 +221,25 @@ impl HandleTable {
             .filter(|handle| handle.object == Object::Console)
             .fold(0, |rights, handle| rights | handle.rights)
     }
+    /// Only already-held read-only diagnostic authority; no display/input grant.
+    pub fn diagnostics_readable(&self) -> bool {
+        self.slots
+            .iter()
+            .any(|h| h.object == Object::Diagnostics && h.rights & RIGHT_READ != 0)
+    }
+    /// Real spawn transfer installation. A pipe console retires the default
+    /// Console, while explicitly copied Diagnostics remains an independent role.
+    pub fn install_spawn_transfers(
+        &mut self,
+        default_console: Option<u64>,
+        requested: &[(Object, u8)],
+        issued: &mut [u64],
+    ) -> Result<(), HandleError> {
+        if let Some(handle) = default_console {
+            let _ = self.close(handle);
+        }
+        self.insert_batch(requested, issued)
+    }
     /// Resolves a handle that must refer to a pipe with `rights`.
     pub fn pipe(&self, value: u64, rights: u8) -> Result<PipeId, HandleError> {
         let handle = self.lookup(value)?;
@@ -284,6 +318,22 @@ impl HandleTable {
         }
         closed
     }
+    /// Authority whose kernel implementation remains BSP-owned.
+    pub fn has_bsp_authority(&self) -> bool {
+        self.slots.iter().any(|h| match h.object {
+            Object::Console | Object::Block | Object::Nic | Object::Machine => true,
+            #[cfg(feature = "native-pcm-experiment")]
+            Object::Playback => true,
+            #[cfg(feature = "mwm-experiment")]
+            Object::Display(_) => true,
+            Object::None
+            | Object::Diagnostics
+            | Object::Clock
+            | Object::Process(_)
+            | Object::Cell(_)
+            | Object::Pipe(_) => false,
+        })
+    }
     /// Read-only qualification predicate for a Created child whose handle
     /// must be rolled back before its spawner can be reclaimed.
     pub fn has_process(&self, pid: u64) -> bool {
@@ -293,12 +343,30 @@ impl HandleTable {
     }
 }
 
+#[cfg(all(test, feature = "native-pcm-experiment"))]
+mod pcm_tests {
+    use super::*;
+    #[test]
+    fn playback_authority_has_only_read_and_write_rights() {
+        let mut table = HandleTable::new(42);
+        assert_eq!(
+            table.insert(Object::Playback, RIGHT_KILL),
+            Err(HandleError::Rights)
+        );
+        let h = table.insert(Object::Playback, RIGHT_READ).unwrap();
+        assert_eq!(
+            table.lookup(h).unwrap().require(RIGHT_WRITE),
+            Err(HandleError::Rights)
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn w1_seven_live_kinds_require_review_before_eighth() {
+    fn w1_live_kinds_are_accounted_for() {
         // This exhaustive match is a review tripwire: adding an Object
         // variant must account for its kind here and in the W1 disposition.
         fn kind(object: Object) -> Option<usize> {
@@ -311,6 +379,14 @@ mod tests {
                 Object::Block => Some(4),
                 Object::Nic => Some(5),
                 Object::Machine => Some(6),
+                Object::Diagnostics => Some(7),
+                Object::Clock => Some(8),
+                #[cfg(feature = "native-pcm-experiment")]
+                Object::Playback => Some(9),
+                #[cfg(all(feature = "native-pcm-experiment", feature = "mwm-experiment"))]
+                Object::Display(_) => Some(10),
+                #[cfg(all(not(feature = "native-pcm-experiment"), feature = "mwm-experiment"))]
+                Object::Display(_) => Some(9),
             }
         }
 
@@ -322,18 +398,27 @@ mod tests {
             Object::Block,
             Object::Nic,
             Object::Machine,
+            Object::Diagnostics,
+            Object::Clock,
+            #[cfg(feature = "native-pcm-experiment")]
+            Object::Playback,
+            #[cfg(feature = "mwm-experiment")]
+            Object::Display(1),
         ];
-        assert_eq!(witnesses.len(), 7);
+        let kinds = 9
+            + usize::from(cfg!(feature = "native-pcm-experiment"))
+            + usize::from(cfg!(feature = "mwm-experiment"));
+        assert_eq!(witnesses.len(), kinds);
         assert_eq!(kind(Object::None), None);
-        let mut seen = 0u8;
+        let mut seen = 0u16;
         for object in witnesses {
             let index = kind(object).expect("live kind");
-            assert!(index < 7);
-            let bit = 1u8 << index;
+            assert!(index < kinds);
+            let bit = 1u16 << index;
             assert_eq!(seen & bit, 0, "duplicate kind index");
             seen |= bit;
         }
-        assert_eq!(seen, 0x7f);
+        assert_eq!(seen, (1u16 << kinds) - 1);
     }
 
     #[test]
@@ -545,5 +630,34 @@ mod tests {
         );
         assert_eq!(table.live_count(), before);
         assert_eq!(table.lookup(issued[0]), Err(HandleError::Invalid));
+    }
+}
+
+#[cfg(test)]
+mod mixed_capacity_tests {
+    use super::*;
+    #[test]
+    fn upper_half_handles_have_distinct_tags_and_exact_exhaustion_reuse() {
+        let mut table = HandleTable::new(9);
+        let mut handles = [0u64; 128];
+        for handle in &mut handles {
+            *handle = table.insert(Object::Console, RIGHT_WRITE).unwrap();
+        }
+        assert_eq!(
+            table.insert(Object::Console, RIGHT_WRITE),
+            Err(HandleError::Full)
+        );
+        assert_eq!(table.live_count(), 128);
+        for &handle in &handles {
+            assert_eq!(table.lookup(handle).unwrap().object, Object::Console);
+        }
+        let old = handles[100];
+        table.close(old).unwrap();
+        let replacement = table.insert(Object::Console, RIGHT_WRITE).unwrap();
+        assert_ne!(old, replacement);
+        assert_eq!(old & INDEX_MASK, replacement & INDEX_MASK);
+        assert!(table.lookup(old).is_err());
+        assert_eq!(table.live_count(), 128);
+        assert_eq!(absd_abi::syscall::MAX_SPAWN_HANDLES, 64);
     }
 }

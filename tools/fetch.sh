@@ -13,6 +13,7 @@ set -eu
 
 top=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 platform=$top/platform
+ssh_stage=${ABSD_SSH_STAGE:-$platform/.staged-ssh}
 cache=${CARGO_HOME:-$HOME/.cargo}/registry/cache/index.crates.io-1949cf8c6b5b557f
 mkdir -p "$cache"
 
@@ -49,47 +50,24 @@ print(f"fetch.sh: {len(wanted)} archives verified, {got} downloaded")
 PY
 }
 
-# First the archives the staging scripts unpack (the ported programs and
-# the two crates the platform patches, which those scripts verify
-# themselves), then staging, then the staged trees' own lock files.
+# The component owns staging locations and the exact core build-std fetch
+# closure. Do not duplicate that contract with guessed sibling directories.
 archives "$platform"
-grep -ho '1949cf8c6b5b557f/[A-Za-z0-9_.-]*\.crate' "$platform"/scripts/stage-*.sh | sort -u |
-    sed 's|.*/||; s|\.crate$||; s|^\(.*\)-\([0-9][^-]*\)$|\1 \2|' | while read -r crate version; do
-    test -f "$cache/$crate-$version.crate" ||
-        curl -fsSL -o "$cache/$crate-$version.crate" "https://static.crates.io/crates/$crate/$crate-$version.crate"
-done
+ABSD_PROFILE=core "$platform/scripts/fetch-crates.sh"
 
-"$platform/scripts/stage-library.sh"
-for stage in ssh compat; do
-    "$platform/scripts/stage-$stage.sh"
-done
-archives "$platform" "$top"/absd-std-staged-*
-
-# cargo's index entries for every workspace with a lock file, the staged
-# ones included. A lock file that is not its own workspace root (a crate
-# unpacked inside a staged workspace) is covered by that workspace's lock.
-skipped=0
-fetch() {
-    test "$(cd "$1" && cargo $2 locate-project --workspace --message-format plain 2>/dev/null)" = "$1/Cargo.toml" ||
-        return 0
-    # Not fatal: the staged workloads carry tools of their own that nothing
-    # here builds, some with stale lock files. A crate that is really
-    # missing stops the offline build with its name.
-    (cd "$1" && cargo $2 fetch --locked) >/dev/null 2>&1 || { echo "fetch.sh: NOT FETCHED $1"; skipped=$((skipped + 1)); }
-}
+# Kernel workspaces use their own pinned toolchain and configuration. A
+# member lock belonging to its enclosing workspace is covered at that root.
+# Preserve actual Cargo errors; a required fetch failure is fatal here.
 for lock in $(find "$top/kernel" -name Cargo.lock -not -path '*/target/*' -not -path '*/build/*' | sort); do
-    fetch "$(dirname "$lock")" ""
-done
-# The platform's manifests name its custom target and unstable options, so
-# cargo needs the build scripts' compiler settings even to resolve them.
-toolchain=${ABSD_RUST_TOOLCHAIN:-$HOME/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu}
-export RUSTC_BOOTSTRAP=1 RUST_TARGET_PATH="$platform/targets" \
-    ABSD_REAL_RUSTC="$toolchain/bin/rustc" ABSD_STAGED_SYSROOT="$platform/.staged-sysroot" \
-    RUSTC="$platform/scripts/rustc-staged.sh"
-for lock in $(find "$platform" "$top"/absd-std-staged-* -name Cargo.lock \
-    -not -path '*/target/*' -not -path '*/pins/*' -not -path '*/vendor/*' | sort); do
-    if [ -f "$(dirname "$lock")/Cargo.toml" ]; then
-        fetch "$(dirname "$lock")" +1.95.0
+    directory=$(dirname "$lock")
+    test -f "$directory/Cargo.toml" || continue
+    workspace=$(cd -- "$directory" && cargo locate-project --workspace --message-format plain)
+    if [ "$workspace" = "$directory/Cargo.toml" ]; then
+        (cd -- "$directory" && cargo fetch --locked)
     fi
 done
-echo "FETCH DONE not_fetched=$skipped"
+# Validate the archives against all declared lock inputs after the owning
+# scripts stage them. Compat's existing sibling root is shared with its
+# builders and provenance collector; SSH uses its already supported override.
+archives "$top/kernel" "$platform" "$ssh_stage" "${platform}.staged-compat"
+echo 'FETCH DONE core=FETCHED kernel=FETCHED archives=VERIFIED'

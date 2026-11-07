@@ -14,6 +14,8 @@ camp=$(dirname "$root")
 out=${ABSD_CPORTS_BUILD:-$camp/cports-build}
 kit=${ABSD_CKIT_BUILD:-$camp/ckit-build}/kit
 up=${ABSD_CPORTS_UPSTREAM:-$camp/upstream}
+# The shared kit must be this checkout's, built cleanly (scripts/c_kit_source.py).
+python3 -I "$root/scripts/c_kit_source.py" kit "$root" "$kit"
 test -f "$out/stage.txt" || sh "$root/scripts/stage-cports.sh"
 products=$(grep -h '^PRODUCTS +=' "$root"/cports/build/*.mk | awk '{print $3}')
 mk() { make --no-print-directory -f "$root/cports/build/Makefile" ROOT="$root" CAMP="$camp" UP="$up" OUT="$out" CC_ABSD="$kit/bin/absd-cc" SIDE="$1" all; }

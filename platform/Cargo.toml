@@ -19,7 +19,20 @@ native-ipv6-routed-tcp-probe = ["dep:absd-broker"]
 native-dhcpv4-probe = ["dep:absd-broker", "absd-net/dhcpv4"]
 native-sntp-probe = ["dep:absd-broker"]
 native-tcp-server-probe = ["dep:absd-broker"]
+native-ipv6-tcp-server-probe = ["dep:absd-broker"]
 native-echo-probe = ["dep:absd-broker"]
+native-echo-boundary-probe = ["native-echo-probe"]
+native-echo-wire-probe = ["native-echo-probe"]
+native-tcp-mtu-probe = []
+native-tcp-mtu-boundary-probe = []
+native-tcp-mtu-delegated-probe = ["dep:absd-broker"]
+# The region-sizing measurement worker (docs/storage-sizing-20261102).
+fs-sizing = []
+
+[[bin]]
+name = "fs_sizing"
+path = "src/bin/fs_sizing.rs"
+required-features = ["fs-sizing"]
 
 [[bin]]
 name = "net-status"
@@ -126,6 +139,16 @@ path = "src/bin/sntp_service_probe.rs"
 required-features = ["native-sntp-probe"]
 
 [[bin]]
+name = "ipv6_tcp_server_echo"
+path = "src/bin/ipv6_tcp_server_echo.rs"
+required-features = ["native-ipv6-tcp-server-probe"]
+
+[[bin]]
+name = "ipv6_tcp_server_service_probe"
+path = "src/bin/ipv6_tcp_server_service_probe.rs"
+required-features = ["native-ipv6-tcp-server-probe"]
+
+[[bin]]
 name = "tcp_server_echo"
 path = "src/bin/tcp_server_echo.rs"
 required-features = ["native-tcp-server-probe"]
@@ -144,6 +167,41 @@ required-features = ["native-echo-probe"]
 name = "echo_service_probe"
 path = "src/bin/echo_service_probe.rs"
 required-features = ["native-echo-probe"]
+
+[[bin]]
+name = "echo_boundary_client"
+path = "src/bin/echo_boundary_client.rs"
+required-features = ["native-echo-boundary-probe"]
+
+[[bin]]
+name = "echo_boundary_service_probe"
+path = "src/bin/echo_boundary_service_probe.rs"
+required-features = ["native-echo-boundary-probe"]
+
+[[bin]]
+name = "echo_wire_service_probe"
+path = "src/bin/echo_wire_service_probe.rs"
+required-features = ["native-echo-wire-probe"]
+
+[[bin]]
+name = "tcp_mtu_service_probe"
+path = "src/bin/tcp_mtu_service_probe.rs"
+required-features = ["native-tcp-mtu-probe"]
+
+[[bin]]
+name = "tcp_mtu_boundary_service_probe"
+path = "src/bin/tcp_mtu_boundary_service_probe.rs"
+required-features = ["native-tcp-mtu-boundary-probe"]
+
+[[bin]]
+name = "tcp_mtu_delegated_client"
+path = "src/bin/tcp_mtu_delegated_client.rs"
+required-features = ["native-tcp-mtu-delegated-probe"]
+
+[[bin]]
+name = "tcp_mtu_delegated_service_probe"
+path = "src/bin/tcp_mtu_delegated_service_probe.rs"
+required-features = ["native-tcp-mtu-delegated-probe"]
 
 [[bin]]
 name = "icmp_service_probe"
@@ -181,6 +239,8 @@ path = "src/bin/tcp_service_probe.rs"
 required-features = ["native-tcp-probe"]
 
 [dependencies]
+conch-parser = { path = "vendor/conch-parser" }
+glob = { path = "vendor/shell-glob" }
 absd-broker = { path = "broker", optional = true }
 absd-runtime = { path = "runtime" }
 absd-net = { path = "net" }
@@ -207,7 +267,7 @@ members = ["runtime", "fs", "fsd", "sqlite", "broker", "net", "release"]
 # projects' code on ABSD (README, "Profiles and inputs"), and
 # `durable`, whose AG image module needs AG's crates, belongs to it. Nothing
 # in this workspace depends on either.
-exclude = ["durable", "integration"]
+exclude = ["durable", "integration", "sh", "vendor/conch-parser", "vendor/shell-glob"]
 
 [profile.dev]
 panic = "abort"
@@ -216,3 +276,7 @@ panic = "abort"
 panic = "abort"
 lto = true
 codegen-units = 1
+
+[[bin]]
+name = "terminal-size"
+path = "src/bin/terminal_size.rs"

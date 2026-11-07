@@ -4,10 +4,10 @@ split front end start on ABSD) and CL2/CL3 (the split pipeline cc1-fe-o0 ->
 llc -> lld compiles, links and runs hello.c inside one absd-sh session).
 docs/native-clang-20261012/GUEST-RUN.md is the steward's page.
 
-Modelled on the Stage 3 harness (the tcc lane's scripts/tcc-matrix.py at
-e4a2cca0: held absd-sh sessions fed a line at a time, cut by marks; the
-import route; the session environment; the kernel-exact gate on the host
-reader's copy; the inherited census rules of scripts/cports-matrix.py).
+The harness holds absd-sh sessions fed a line at a time, cut by marks; it
+has the import route, the session environment, the kernel-exact gate on the
+host reader's copy, and the inherited census rules of
+scripts/cports-matrix.py.
 
 One `net fsd` boot (scripts/ssh_absd.py) on a fixture of IMAGE_BYTES (the
 filesystem is the device's second half, absd_image.parse_layout v3). The
@@ -144,9 +144,9 @@ LINK = (["-flavor", "ld.lld", "-static", "-no-pie", "--gc-sections", "-T", f"{SH
         + ["--end-group"])
 ARTIFACTS = (("hello.bc", "bc"), ("hello.o", "o"), ("a.out", "elf"), ("a.out.map", "map"))
 # The fixture: the smallest multiple of 64 MiB whose filesystem (the second
-# half) holds the payload plus FS_HEADROOM (logs, state, outputs), computed
+# half) holds the peak import allocation plus FS_HEADROOM (logs, state, outputs), computed
 # from the file list (--list) for the reference platform tree; a run whose
-# payload does not fit refuses before the first import boot.
+# peak does not fit refuses before the first import boot.
 IMAGE_BYTES = 256 * 1024 * 1024
 FIXTURE_STEP = 64 * 1024 * 1024
 FS_HEADROOM = 16 * 1024 * 1024
@@ -186,7 +186,7 @@ def exit_mark(mark):
 
 
 def split_step(out, opos, err, epos, mark):
-    """tcc-matrix.split_step: one fed command's (stdout, status, stderr,
+    """One fed command's (stdout, status, stderr,
     next stdout position, next stderr position), or None while its marks
     have not both arrived."""
     seg, tail = out[opos:], PROMPT + PROMPT + mark.encode() + b"\n"
@@ -256,7 +256,7 @@ def payload_bytes(files):
 
 
 def smallest_fixture(files):
-    need = payload_bytes(files) + FS_HEADROOM
+    need = em.import_peak_bytes(files) + FS_HEADROOM
     size = FIXTURE_STEP
     while fs_capacity(size) < need:
         size += FIXTURE_STEP
@@ -363,7 +363,7 @@ class Step:
 
 
 class Held:
-    """One interactive absd-sh session fed a line at a time (tcc-matrix.Held)."""
+    """One interactive absd-sh session fed a line at a time."""
 
     def __init__(self, m):
         self.m, t = m, m.t
@@ -672,12 +672,13 @@ class ClangMatrix(cm.CportsMatrix):
     def fixture_line(self):
         files = self.installed()
         payload = payload_bytes(files)
+        peak = em.import_peak_bytes(files)
         capacity = fs_capacity(IMAGE_BYTES)
         boots = len(em.import_plan(files))
         smallest = smallest_fixture(files)
         line = (f"CLANG GUEST FIXTURE image_bytes={IMAGE_BYTES} fs_capacity={capacity} payload={payload} "
-                f"headroom={FS_HEADROOM} files={len(files)} import_boots={boots} smallest={smallest}")
-        return line, payload + FS_HEADROOM <= capacity
+                f"peak={peak} headroom={FS_HEADROOM} files={len(files)} import_boots={boots} smallest={smallest}")
+        return line, peak + FS_HEADROOM <= capacity
 
     # -- the census rules ------------------------------------------------------------
 

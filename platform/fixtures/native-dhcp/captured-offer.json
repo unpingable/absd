@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "dnsmasq Linux positive46771e55 accepted bysteward191418",
-  "capture": "native-dhcp.pcap (development capture not included)",
+  "capture": "archived-occurrence",
   "capture_sha256": "fc2c88865999ee230df09a026dc3405670f3fdc1d9d164f1a726fd76aefd5fc0",
   "zero_based_frame_index": 1,
   "frame_bytes": 342,

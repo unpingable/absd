@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import patch
@@ -63,32 +64,54 @@ class Tests(unittest.TestCase):
         self.assertEqual(events, [("sysinfo",)])
         self.assertNotIn("quiescent", census)
 
-    def test_restart_resets_debt_before_first_new_boot_census(self):
-        matrix = cm.CportsMatrix.__new__(cm.CportsMatrix)
-        matrix.connections = 73
-        matrix.restart_round = 1
-        matrix.work = Path("/tmp/not-created-cports-quiescence")
-        matrix.host_key = "fixture-key"
-        events = []
-        def start(**kwargs):
-            events.append(("start", matrix.connections))
-            return {"generated": False, "public": matrix.host_key}
-        matrix.t = types.SimpleNamespace(stop=lambda: events.append(("stop",)),
-                                         start=start, image="fixture-image", log=Path("old.log"))
-        process = types.SimpleNamespace(kill=lambda: None, wait=lambda: None)
-        matrix.close_pipes = lambda p: None
-        matrix.check = lambda label, okay, *args: self.assertTrue(okay, label)
-        class AtCensus(Exception):
-            pass
-        def rest(label):
-            events.append(("census", matrix.connections))
-            raise AtCensus()
-        matrix.take_rest = rest
-        with patch.object(cm.shutil, "copy"), patch.object(Path, "stat", return_value=types.SimpleNamespace(st_size=512)):
-            with self.assertRaises(AtCensus):
+    def test_fenced_cut_never_restarts(self):
+        # Under the owner's storage fence (coordination record #63 (b)) the cut's
+        # image is refused, never reopened writable: no start, no census.
+        with tempfile.TemporaryDirectory() as directory:
+            matrix = cm.CportsMatrix.__new__(cm.CportsMatrix)
+            matrix.connections = 73
+            matrix.restart_round = 1
+            matrix.work = Path(directory)
+            image = Path(directory) / "ssh.img"
+            image.write_bytes(b"fixture image")
+            events = []
+            def start(**kwargs):
+                raise AssertionError("cut() reopened the fenced image writable")
+            matrix.t = types.SimpleNamespace(stop=lambda: events.append(("stop",)), start=start, image=image,
+                                             log=Path("old.log"), tree=lambda: {"/x": b"1"})
+            process = types.SimpleNamespace(kill=lambda: None, wait=lambda: None)
+            matrix.close_pipes = lambda p: None
+            matrix.check = lambda label, okay, *args: self.assertTrue(okay, label)
+            matrix.take_rest = lambda label: self.fail("census on a fenced image")
+            refusal = {"status": "7", "refusal": "RECOVERY WRITABLE REFUSED", "log": "refused.serial.log"}
+            with patch.object(cm.fence_guest, "refused_cold_boot", return_value=refusal) as refused:
                 matrix.cut(types.SimpleNamespace(name="sqlite.excl-crash"), process, "fixture")
-        self.assertEqual(events, [("stop",), ("start", 73), ("census", 0)])
+            refused.assert_called_once_with(matrix.t, "ata", "fixture-refused", served=False)
+        self.assertEqual(events, [("stop",)])
+        self.assertEqual((matrix.fenced, matrix.connections), ("sqlite.excl-crash", 73))
 
+    def test_fresh_image_resets_debt_before_first_new_boot_census(self):
+        with tempfile.TemporaryDirectory() as directory:
+            matrix = cm.CportsMatrix.__new__(cm.CportsMatrix)
+            matrix.connections = 73
+            matrix.work = Path(directory)
+            matrix.fenced = "sqlite.excl-crash"
+            events = []
+            def start(**kwargs):
+                events.append(("start", matrix.connections, kwargs))
+                return {"generated": True, "public": "fresh-key"}
+            matrix.t = types.SimpleNamespace(setup=lambda work, authorized: events.append(("setup", work.name)),
+                                             start=start, port=1, boots=2, image="fresh-image")
+            class AtCensus(Exception):
+                pass
+            def rest(label):
+                events.append(("census", matrix.connections))
+                raise AtCensus()
+            matrix.take_rest = rest
+            with patch.object(cm.sm, "Client"), self.assertRaises(AtCensus):
+                matrix.fresh_image("authorized", types.SimpleNamespace(name="sqlite.power-cut"))
+        self.assertEqual(events, [("setup", "fresh-sqlite.power-cut"), ("start", 73, {"fresh": True}), ("census", 0)])
+        self.assertEqual((matrix.fenced, matrix.host_key), (None, "fresh-key"))
 
 if __name__ == "__main__":
     unittest.main()

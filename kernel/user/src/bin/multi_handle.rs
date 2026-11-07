@@ -51,6 +51,28 @@ fn main(start: MultiStart<'_>) -> i32 {
                 _ => 85,
             }
         }
+        // Full legal wire vector: all imports are distinct handles to the same
+        // read-only cell. The default console is additional table occupancy.
+        handles if handles.len() == absd_abi::syscall::MAX_SPAWN_HANDLES => {
+            let Ok(expected) = Cell::from_raw(handles[0]).read() else {
+                return 88;
+            };
+            for (index, &handle) in handles.iter().enumerate() {
+                let cell = Cell::from_raw(handle);
+                if handle == start.console.raw()
+                    || handles[..index].contains(&handle)
+                    || cell.read() != Ok(expected)
+                    || cell.transition(expected.0, expected.1) != Err(Error::Rights)
+                    || duplicate(handle, RIGHT_READ | RIGHT_WRITE) != Err(Error::Rights)
+                {
+                    return 88;
+                }
+            }
+            let _ = start
+                .console
+                .write_str("user-multi-handle: full 64-entry read-only vector verified\n");
+            0
+        }
         // Fuzz-only path invariant: every generation receives read-only cell
         // copies, narrows again locally, and passes fewer copies to the next
         // process. No edge in the duplicate/spawn-copy chain may strengthen

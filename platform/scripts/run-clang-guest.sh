@@ -16,7 +16,7 @@
 # A run of some cases (ABSD_CLANG_ONLY) prints ABSD CLANG GUEST PARTIAL and
 # copies nothing.
 # Environment: ABSD_KERNEL_RUN (required; a disposable kernel clone, never
-# the protected kernel source); ABSD_CLANG_PLATFORM (required; a built platform
+# archived-occurrence); ABSD_CLANG_PLATFORM (required; a built platform
 # tree at candidate 2: sshd.elf absd-fsd.elf fixture-import.elf sshtest.elf
 # fsd-probe.elf, commands/ and manpages/); ABSD_CLANG_LLVM (default
 # <campaign>/llvm-build); ABSD_CLANG_KIT (default: the kit named in
@@ -29,15 +29,13 @@
 # a full run refuses a working tree with any change or untracked file.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/inputs.sh"
 camp=$(dirname "$root")
 out=$camp/guest-run
 receipts=$root/docs/native-clang-20261012/receipts
 kernel=${ABSD_KERNEL_RUN:?set ABSD_KERNEL_RUN to a disposable kernel clone}
 [ -d "$kernel" ] || { echo "run-clang-guest: ABSD_KERNEL_RUN $kernel is not a directory" >&2; exit 1; }
-forbidden=/data/git/absd-kernel
-[ -d "$forbidden" ] && forbidden=$(CDPATH= cd -- "$forbidden" && pwd -P)
-[ "$(CDPATH= cd -- "$kernel" && pwd -P)" != "$forbidden" ] ||
-    { echo "run-clang-guest: ABSD_KERNEL_RUN must not be /data/git/absd-kernel" >&2; exit 1; }
+absd_not_kernel_source "$kernel"
 platform=${ABSD_CLANG_PLATFORM:?set ABSD_CLANG_PLATFORM to a built platform tree}
 llvm=${ABSD_CLANG_LLVM:-$camp/llvm-build}
 kit=${ABSD_CLANG_KIT:-$(sed -n 's/^kit \(\/[^ ]*\) .*/\1/p' "$llvm/kit/BUILT-FROM")}
@@ -71,7 +69,7 @@ fi
 # scripts/inputs.sh or whoever made the copy), else its own HEAD only when it
 # is a checkout. A copy with neither is `unknown`: `git -C` on a directory
 # without .git walks up to an enclosing repository and prints that one's HEAD
-# (the first guest run stamped the protected kernel source HEAD this way; GUEST-RESULT.md).
+# (the first guest run stamped archived-occurrence's HEAD this way; GUEST-RESULT.md).
 # BEGIN kernel_stamp
 kernel_stamp() {
     if [ -f "$1/.absd-identity" ]; then

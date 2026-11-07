@@ -97,7 +97,7 @@ srv = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(srv)
 sm = srv.sm
 
-PROMPT = b"absd$ "
+PROMPT = b"\x1b[?2004habsd$ "
 SHUTDOWN_SECONDS = 240
 IDLE_SECONDS = 10
 LONG = "600000"

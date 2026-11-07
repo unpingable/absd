@@ -1,48 +1,75 @@
-.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
-.Dd September 27, 2026
+.Dd November 5, 2026
 .Dt DATE 1
 .Os ABSD
 .Sh NAME
 .Nm date
-.Nd print the date and time
+.Nd print software civil time and its source quality
 .Sh SYNOPSIS
 .Nm
 .Op Fl u
 .Op Cm +%s
+.Op Fl -status
 .Sh DESCRIPTION
 .Nm
-prints the time now, as the kernel reads it from the machine's real-time
-clock, in the form
-.Bd -literal -offset indent
-Sun Sep 27 05:34:12 UTC 2026
-.Ed
-.Pp
-The time is always UTC and always whole seconds: ABSD declares the
-real-time clock to hold UTC, has no time zones, and the clock has no
-finer resolution.
+prints the boot-local software civil clock in UTC, to whole seconds.
 .Fl u
-is accepted and changes nothing.
+is accepted and changes nothing; time zones and other formats are not provided.
 .Cm +%s
-prints the seconds since 1970-01-01 00:00:00 UTC instead.
+prints Unix seconds instead.
+.Fl -status
+prints source, whether a value is known, staleness, successful-sample age in
+monotonic ticks, correction generation, last attempt source/error and the last
+successful transport RTT and successful sample tick. It also shows the raw
+RTC reading and signed civil-minus-RTC nanoseconds from adjacent samples. The
+RTC has whole-second resolution and the reads are not simultaneous; divergence
+is observable, not a measurement of UTC accuracy. Absolute uncertainty remains
+unknown. RTC and operator assertions are explicitly unsynchronized; an expired
+network estimate is stale. A current unauthenticated estimate is labeled as
+such, without an accuracy claim.
 .Pp
-Nothing on ABSD sets or corrects the clock.
-Under QEMU it starts from the host's UTC time
-.Pq Ql -rtc base=utc ,
-the default.
-A physical machine's clock may hold local time, or drift;
-.Nm
-cannot tell.
+The clock starts from an RTC reading between the fixed 2026 build floor and
+2099, or unknown. Status names a before-build-floor refusal; raw RTC reads
+remain unchanged. An explicit operator assertion can still select 1970..2099.
+Its initial eligible RTC source is
+rtc-unverified: the RTC is assumed UTC, not authenticated or measured accurate.
+An authenticated SSH or enrolled local operator can use
+.Xr clock 1
+to assert time, or explicitly configure
+.Xr time.conf 5
+for unauthenticated SNTP estimates. The first network sample can replace an
+eligible RTC anchor without the step bound; later network corrections relative
+to a prior network value or operator assertion obey the per-correction bound.
+An explicit operator assertion itself is not step-bounded.
+There is no cumulative correction limit across intervals. Such an estimate
+is not trusted UTC.
+Failed synchronization retains the prior successful source and separately
+reports the failure; an expired network estimate is labeled stale.
 .Pp
-The same clock stamps the lines of the logs under
-.Pa /var/log
-.Pq Xr afterboot 8 .
-The same clock supplies file modification times; unknown times remain
-unknown, and no command sets them. See
-.Xr filesystem 7 .
+Corrections affect only the software civil anchor, including ordinary file
+modification times and log collection. Monotonic deadlines, uptime, RT budgets,
+watchdogs and network timeouts do not change. A correction generation invalidates the FSD clock cache before its next
+operation; ordinary time passage retains the bounded refresh budget. File times may
+go backwards after an intentional backward step.
+.Pp
+Changes last only this boot and do not write the RTC. A reboot initializes from
+RTC again. Old prebuilt applications using syscall30 continue reading raw RTC;
+the new paired runtime uses software civil time. On an older kernel without the
+new call, ordinary time can fall back to unverified raw RTC without quality or
+cross-process correction claims; malformed new records never cause fallback.
+TLS consumers with an explicit hardware-RTC/anchor policy retain that policy.
+.Pp
+When civil time is unavailable, only Rust
+.Ql SystemTime::now
+returns Unix epoch plus its monotonic uptime coordinate so the program can
+continue. This bootstrap coordinate is not civil time.
+.Nm ,
+C wall-clock calls and FSD timestamps retain unknown/refused behavior; a file
+changed in that window gets mtime 0 (unknown), never the bootstrap date.
 .Sh EXIT STATUS
-0 on success, 1 when the kernel refuses a reading (the clock gave no
-stable, valid value: no time is made up), 2 for any other argument.
-Setting the clock and other formats are not supported.
+0 on success, 1 when time/status is unavailable, 2 on invalid arguments.
+Unknown time is never replaced by an invented date.
 .Sh SEE ALSO
+.Xr clock 1 ,
+.Xr time.conf 5 ,
 .Xr uptime 1 ,
 .Xr filesystem 7

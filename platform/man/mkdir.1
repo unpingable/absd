@@ -1,0 +1,43 @@
+.Dd November 3, 2026
+.Dt MKDIR 1
+.Os ABSD
+.Sh NAME
+.Nm mkdir
+.Nd create visible directories
+.Sh SYNOPSIS
+.Nm
+.Op Fl p
+.Ar directory ...
+.Sh DESCRIPTION
+Create each directory through this process's writable filesystem view.
+.Fl p
+also creates missing parents and accepts an existing directory.
+Without it, an existing directory is an error.
+There are no mode or owner arguments.
+Options precede operands; a later option word is a path.
+.Ql --
+ends option processing; use it or a
+.Ql ./
+prefix for a name beginning with a dash.
+Unknown leading options return status 2.
+.Pp
+Creation failures are diagnosed on standard error; later operands are
+attempted.
+There is no rollback of directories already created.
+Success prints nothing.
+The command cannot change the session's mount table or write through a
+read-only binding.
+See
+.Xr sync 1
+for the file-server durability barrier.
+.Sh EXIT STATUS
+0 when all directories were created or accepted by -p; 1 for failure;
+2 for no operands or an unknown leading option.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+mkdir -p /home/operator/notes/drafts
+.Ed
+.Sh SEE ALSO
+.Xr rm 1 ,
+.Xr sync 1 ,
+.Xr filesystem 7

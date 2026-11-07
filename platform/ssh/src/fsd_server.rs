@@ -4,9 +4,12 @@ use absd_fs::{Error, Fs, Kind, OpenFlags};
 use absd_fsd::log::{self as logfile, LogFile};
 use absd_fsd::proto::{self, Mount};
 use absd_fsd::recovery;
+use absd_fsd::{readiness, write_guard};
 use absd_fsd::{CONTROL, Event, Inbox, PipeState, Server, Taken};
 use absd_runtime::fsd::pipe_info;
 use absd_runtime::storage::{self, RegionDevice};
+
+mod service_journal;
 
 const SEED_PATH: &[u8] = b"/ssh/host_ed25519_seed";
 const SEED_STAGING: &[u8] = b"/ssh/host_ed25519_seed.new";
@@ -14,7 +17,7 @@ const ERROR_TIMEOUT: i64 = -110;
 const MAX_TRANSFER: usize = 256;
 
 fn fatal(message: &str) -> ! {
-    println!("FSD FAILED {message}");
+    eprintln!("FSD FAILED {message}");
     std::process::exit(3);
 }
 
@@ -42,9 +45,22 @@ impl Log {
     }
 }
 
-/// The RTC's seconds for `mtime`; `None` when the kernel refuses.
+/// Software civil seconds for `mtime`; `None` when the kernel has no time.
 fn wall_clock() -> Option<u64> {
     absd_runtime::wall_clock_seconds().ok()
+}
+
+fn refresh_civil_clock(server:&mut Server<RegionDevice>,ticks:u64) {
+    match absd_runtime::civil_clock::info() {
+        Ok(info)=>{
+            let seconds=info.unix_ns.map(|ns|ns/1_000_000_000);
+            if seconds.is_some(){server.observe_clock_generation(info.generation);}else{server.forget_clock();}
+            server.clock(ticks,||seconds);
+        },
+        // Old kernel: preserve its original bounded raw RTC read behavior.
+        Err(-38)=>server.clock(ticks,wall_clock),
+        Err(_)=>{server.forget_clock();server.clock(ticks,||None);},
+    }
 }
 
 fn ensure_dir(fs: &mut Fs<RegionDevice>, path: &[u8]) -> Result<(), Error> {
@@ -91,6 +107,8 @@ struct Io {
     inbox: Inbox,
     output: Vec<u8>,
     sent: usize,
+    quiet: readiness::Quiet,
+    request_ended: bool,
 }
 
 impl Io {
@@ -209,9 +227,51 @@ fn report_capacity(server: &Server<RegionDevice>, boot: &str) {
     let heap_free_pages = absd_runtime::heap_free_pooled_pages();
     // Sample outside println: never log while holding the allocator guard.
     println!(
-        "FSD CAPACITY boot={boot} settled_releases={settled_releases} fs_objects={} rotated_logs={rotated_logs} bound={bound} opens={opens} draining={draining} heap_pages_peak={} heap_free_pages={heap_free_pages}",
+        "FSD CAPACITY boot={boot} settled_releases={settled_releases} fs_objects={} rotated_logs={rotated_logs} bound={bound} opens={opens} logger_opens={} draining={draining} heap_pages_peak={} heap_free_pages={heap_free_pages}",
         server.fs.object_count(),
+        server.logger_opens(),
         absd_runtime::heap_mapped_pages(),
+    );
+}
+
+/// Idle commits this generation timed (`FSD STATS`): how many, their
+/// ticks in all, and the slowest. Commits made inside a request (namespace
+/// operations, a client's sync or commit) are counted by `WriteStats` but
+/// not timed here.
+#[derive(Default)]
+struct IdleCommits {
+    count: u64,
+    ticks: u64,
+    max: u64,
+}
+
+/// Direct console record of what the filesystem costs this process
+/// (docs/storage-sizing-20261102): the heap now and its true high-water
+/// mark (`heap_peak_pages`, unlike CAPACITY's sampled `heap_pages_peak`),
+/// commit totals since mount (`WriteStats`), and the block counts. At
+/// `stop` it adds the idle commits' timing and the final commit's, in PIT
+/// ticks (about 1 ms); at `ready` nothing has been timed, so it says
+/// `timing=none`. Console only, so it writes nothing.
+fn report_stats(server: &Server<RegionDevice>, phase: &str, timing: Option<(&IdleCommits, u64)>) {
+    let stats = server.fs.write_stats();
+    let heap_free_pages = absd_runtime::heap_free_pooled_pages();
+    let timing = match timing {
+        Some((idle, last)) => format!(
+            "idle_commits={} idle_commit_ticks_total={} idle_commit_ticks_max={} final_commit_ticks={last}",
+            idle.count, idle.ticks, idle.max
+        ),
+        None => String::from("timing=none"),
+    };
+    println!(
+        "FSD STATS phase={phase} heap_pages={} heap_peak_pages={} heap_free_pages={heap_free_pages} commits={} image_bytes={} superblock_sectors={} {timing} data_blocks={} free_blocks={} fs_objects={}",
+        absd_runtime::heap_mapped_pages(),
+        absd_runtime::heap_mapped_pages_peak(),
+        stats.commits,
+        stats.image_bytes,
+        stats.superblock_sectors,
+        server.fs.geometry().data_blocks,
+        server.fs.free_blocks(),
+        server.fs.object_count(),
     );
 }
 
@@ -223,6 +283,8 @@ fn reset(io: &mut Io) {
     io.inbox.discard();
     io.output.clear();
     io.sent = 0;
+    io.quiet.reset();
+    io.request_ended = false;
     let mut chunk = [0u8; MAX_TRANSFER];
     while let Ok([available, ..]) = pipe_info(io.request) {
         if available == 0 {
@@ -239,29 +301,32 @@ fn reset(io: &mut Io) {
 /// completed (file server reaped with status 0, every orphan drained,
 /// worker stream clean), with the block handle and no channels, to leave
 /// init's verdict for the next generation's recovery ledger
-/// (absd_fsd::recovery::SERVED_COMPLETED). Nothing else is served or
-/// changed; the fact is committed before exit 0, and any failure exits 3
+/// (absd_fsd::recovery::SERVED_COMPLETED). After a bounded diagnostic drain,
+/// the fact is committed before exit 0; no client is served. Any failure exits 3
 /// so the streak stays (conservative).
-fn finalize() -> ! {
+fn finalize(bounded: bool) -> ! {
     if !absd_runtime::has_block_device() {
         println!("FSD FINALIZE FAILED no block handle");
         std::process::exit(3);
     }
-    if let Err(e) = storage::mount(false, true) {
-        println!("FSD FINALIZE FAILED mount: {e:?}");
-        std::process::exit(3);
-    }
-    let mut fs = storage::take_mounted().unwrap_or_else(|| {
-        println!("FSD FINALIZE FAILED mount vanished");
-        std::process::exit(3);
-    });
     let boot = absd_runtime::boot_id().unwrap_or_else(|code| {
         println!("FSD FINALIZE FAILED boot identity: {code}");
         std::process::exit(3);
     });
     let hex = boot.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
     let boot_id: recovery::Boot = hex.as_bytes().try_into().expect("32 hex digits");
-    match recovery::completed(&mut fs, &boot_id).and_then(|()| fs.sync()) {
+    let (_, reader) = storage::mount_read_only_authority()
+        .unwrap_or_else(|error| fatal(&format!("finalize read-only mount: {error:?}")));
+    let mut fs = storage::take_mounted().unwrap_or_else(|| fatal("finalize read-only mount vanished"));
+    write_guard::assess_finalization(&mut fs, &boot_id, bounded)
+        .unwrap_or_else(|error| fatal(&format!("finalize state: {error:?}")));
+    drop(fs);
+    absd_runtime::close(reader).unwrap_or_else(|code| fatal(&format!("finalize reader close: {code}")));
+    storage::mount(false, true).unwrap_or_else(|error| fatal(&format!("finalize mount: {error:?}")));
+    let mut fs = storage::take_mounted().unwrap_or_else(|| fatal("finalize mount vanished"));
+    let mut journal = service_journal::Collector::new(&mut fs, boot_id);
+    journal.drain(&mut fs);
+    match write_guard::finish(&mut fs, &boot_id, bounded) {
         Ok(()) => {
             println!("FSD FINALIZED boot={hex}");
             std::process::exit(0);
@@ -273,21 +338,63 @@ fn finalize() -> ! {
     }
 }
 
+/// Every file-server generation assesses the durable entry guard and
+/// history through a read-only block duplicate. An unclean or unknown
+/// state refuses before any write or flush (docs/WRITABLE-ENTRY.md).
+/// A served refusal is pre-ready and never resets the machine. This is
+/// the one entry that may be admitted by an operator's resume record
+/// (`Resume::Allowed`, docs/WRITABLE-ENTRY.md "Operator-authorized
+/// resume"); the finalizer, enrollment and bounded updates never are.
+fn refuse_unfenced_recovery() -> write_guard::Admission {
+    let reader = match storage::mount_read_only_authority() {
+        Ok((_, reader)) => reader,
+        Err(e) => fatal(&format!("read-only mount: {e:?}")),
+    };
+    let mut fs = storage::take_mounted().unwrap_or_else(|| fatal("read-only mount vanished"));
+    let admission = write_guard::assess(&mut fs, write_guard::Resume::Allowed).unwrap_or_else(|refusal| {
+        match refusal {
+            recovery::Refusal::Unfenced(previous) => println!(
+                "RECOVERY WRITABLE REFUSED reason=storage_fence previous={} fence=none", previous.name()),
+            recovery::Refusal::Storage(e) => println!("RECOVERY STATE REFUSED reason=storage error={e:?}"),
+            other => println!("RECOVERY STATE REFUSED reason={}", other.reason()),
+        }
+        std::process::exit(3);
+    });
+    drop(fs);
+    absd_runtime::close(reader).unwrap_or_else(|code| fatal(&format!("read-only handle close: {code}")));
+    admission
+}
+
 fn main() {
-    absd_runtime::link_anchor();
+    link_anchor();
     if std::env::args().any(|arg| arg == "--finalize") {
-        finalize();
+        finalize(false);
     }
-    let regenerate = std::env::args().any(|arg| arg == "--regenerate-host-key");
+    if std::env::args().any(|arg| arg == "--finalize-bounded") {
+        finalize(true);
+    }
+    match absd_runtime::wait_readable(&[], absd_runtime::WAIT_READABLE_POLL) {
+        Err(-22) => {} // The supported call validates the deliberately empty set.
+        Err(-38) => fatal("kernel lacks wait_readable"),
+        result => fatal(&format!("wait_readable support probe {result:?}")),
+    }
+    let regenerate = cfg!(feature = "regenerate-host-key") || std::env::args().any(|arg| arg == "--regenerate-host-key");
     let qualification = QualificationControls {
         exit_on_notice: std::env::args().any(|arg| arg == "--qualification-exit-on-notice"),
         hang_on_notice: std::env::args().any(|arg| arg == "--qualification-hang-on-notice"),
     };
     let ends = absd_runtime::server::channels();
+    let logger_channel=std::env::args().find_map(|a|a.strip_prefix("--logger-channel=").map(str::to_string)).map(|s|s.parse::<usize>().unwrap_or(usize::MAX));
+    if logger_channel.is_some_and(|n|n==0 || n+1!=ends.len()) {fatal("invalid private logger channel");}
     if ends.len() < 2 || !absd_runtime::has_block_device() {
         fatal("needs the block handle and at least the control channel and one slot");
     }
-    let mounted = storage::mount(true, true).unwrap_or_else(|e| match e {
+    // Every writable entry is assessed, including net-fsd boots without a
+    // liveness cell. No caller-supplied declaration establishes a fence.
+    let args: Vec<String> = std::env::args().collect();
+    let fence = recovery::Fence::from_args(args.iter().map(String::as_str));
+    let admission = refuse_unfenced_recovery();
+    let mounted = storage::mount(false, true).unwrap_or_else(|e| match e {
         Error::UnsupportedFormat => fatal(
             "mount: UnsupportedFormat: the disk holds another filesystem format; this release \
              reads format 2 only (docs/FILESYSTEM.md); migrate the image on the host",
@@ -295,6 +402,28 @@ fn main() {
         e => fatal(&format!("mount: {e:?}")),
     });
     let mut fs = storage::take_mounted().unwrap_or_else(|| fatal("mount vanished"));
+    // Arming is the first mutation and touches only the preallocated
+    // marker sector. Charge precedes every directory, key or log write.
+    write_guard::begin(&mut fs, admission)
+        .unwrap_or_else(|error| fatal(&format!("writable entry: {error:?}")));
+    // An entry admitted by an operator's resume record: the record was
+    // consumed by `begin` as the first device write; the line is printed
+    // after consumption and before charge (ACCEPTANCE-v5 predicate A), and
+    // repeated into /var/log/fsd once the log exists.
+    let resumed = admission.resumed().map(|record| format!(
+        "RECOVERY WRITABLE RESUMED id={} previous={} fs_seq={} ledger_seq={}",
+        String::from_utf8_lossy(&record.id), record.previous.name(), record.seq, record.ledger_seq));
+    if let Some(line) = &resumed {
+        println!("{line}");
+    }
+    let boot = absd_runtime::boot_id()
+        .unwrap_or_else(|code| fatal(&format!("boot identity: {code}")))
+        .iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    let boot_id: recovery::Boot = boot.as_bytes().try_into()
+        .unwrap_or_else(|_| fatal("boot identity is not 32 hex digits"));
+    let (ledger, previous) = recovery::charge(&mut fs, &boot_id)
+        .unwrap_or_else(|error| fatal(&format!("recovery charge: {error:?}")));
+    if previous != admission.previous { fatal("recovery changed after assessment"); }
     // `mtime` comes from the wall clock; the loop refreshes it per request.
     fs.set_clock(absd_runtime::wall_clock_seconds().ok());
     for dir in [&b"/tmp"[..], b"/home", b"/home/operator", b"/var", logfile::DIR] {
@@ -309,25 +438,33 @@ fn main() {
         Mount::new(b"/bin", false),
         Mount::new(b"/etc", false),
         Mount::new(logfile::DIR, true),
+        Mount::new(absd_fsd::journal::DIR, false),
+        Mount::new(b"/var/log/journal-health", false),
         // The recovery ledger (absd_fsd::recovery) sshd reads but never
         // writes, and the facts directory it writes; the server refuses
         // either in any session's mount list.
         Mount::new(recovery::DIR, false),
         Mount::new(recovery::FACTS, true),
     ];
+    if logger_channel.is_some() {
+        if let Err(e)=ensure_dir(&mut fs,absd_fsd::journal::DIR){eprintln!("FSD JOURNAL PREPARE {e:?}");}
+        for path in [b"/var/log/journal/current".as_slice(),b"/var/log/journal/current.0",b"/var/log/journal/previous",b"/var/log/journal/previous.0",b"/var/log/journal-health",b"/var/log/sshd"] {
+            match fs.open(path,OpenFlags{write:true,create:true,..Default::default()}){Ok(h)=>{let _=fs.close(h);},Err(e)=>eprintln!("FSD JOURNAL PREPARE {e:?}")}
+        }
+    }
     let mut server = Server::new(fs, ends.len() - 1, control);
+    if let Some(channel)=logger_channel {if !server.attach_logger(channel){fatal("private logger construction");}}
+    let mut journal = if logger_channel.is_none(){Some(service_journal::Collector::new(&mut server.fs, boot_id))}else{None};
     let mut log = Log { file: LogFile::new(b"/var/log/fsd", "fsd") };
-    let boot = absd_runtime::boot_id()
-        .unwrap_or_else(|code| fatal(&format!("boot identity: {code}")))
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
     log.write(&mut server, &format!("started: boot {boot}, uptime {} ms", absd_runtime::boot_millis()));
+    if let Some(line) = &resumed {
+        log.write(&mut server, line);
+    }
     log.say(&mut server, &format!("FSD HOST KEY {key} path={}", String::from_utf8_lossy(SEED_PATH)));
     // Scratch of sessions an earlier boot's reset left bound: gone before
     // anything is served, so the baseline counts nothing of theirs and no
     // session of this boot meets it.
-    server.clock(absd_runtime::ticks(), wall_clock);
+    refresh_civil_clock(&mut server,absd_runtime::ticks());
     let swept = server.sweep_scratch().unwrap_or_else(|e| fatal(&format!("sweep: {e:?}")));
     log.say(&mut server, &format!("FSD SWEEP scratch_removed={swept}"));
     // The release this boot serves (docs/RELEASE.md section 3, items 2
@@ -340,22 +477,6 @@ fn main() {
     });
     server.bind_release(&release);
     log.say(&mut server, &format!("RELEASE OK release={}", String::from_utf8_lossy(&release)));
-    // The recovery ledger is charged and committed here, before anything
-    // is served: this generation already counts as not ended, so no
-    // failure of sshd or of this server needs to record itself. A ledger
-    // that was established and is now missing or corrupt is a refusal
-    // like a bad release record: the console names it and nothing resets.
-    let boot_id: recovery::Boot = boot
-        .as_bytes()
-        .try_into()
-        .unwrap_or_else(|_| fatal("boot identity is not 32 hex digits"));
-    let (ledger, previous) = recovery::charge(&mut server.fs, &boot_id).unwrap_or_else(|refusal| {
-        match refusal {
-            recovery::Refusal::Storage(e) => println!("RECOVERY STATE REFUSED reason=storage error={e:?}"),
-            other => println!("RECOVERY STATE REFUSED reason={}", other.reason()),
-        }
-        std::process::exit(3);
-    });
     if let Err(error) = recovery::publish_projection(&mut server.fs, &ledger) {
         log.say(&mut server, &format!("RECOVERY PROJECTION UNAVAILABLE reason=storage error={error:?}"));
     }
@@ -363,9 +484,15 @@ fn main() {
         &mut server,
         &format!("FSD RECOVERY seq={} streak={} previous={}", ledger.seq, ledger.streak, previous.name()),
     );
+    // Its own line: FSD RECOVERY's fields are parsed exactly by health and
+    // the harnesses. `assessed` is what the read-only check saw; it equals
+    // `previous` unless the disk changed in between.
+    log.say(&mut server,
+        &format!("FSD STORAGE FENCE fence={} previous={} assessed={}",
+            fence.name(), previous.name(), admission.previous.name()));
     let mut io: Vec<Io> = ends
         .iter()
-        .map(|&(request, reply)| Io { request, reply, inbox: Inbox::new(), output: Vec::new(), sent: 0 })
+        .map(|&(request, reply)| Io { request, reply, inbox: Inbox::new(), output: Vec::new(), sent: 0, quiet: readiness::Quiet::default(), request_ended: false })
         .collect();
     let ready_objects = server.fs.object_count();
     log.say(
@@ -373,42 +500,51 @@ fn main() {
         &format!(
             "FSD READY channels={} slots={} fs_seq={} formatted={} fs_objects={}",
             io.len(),
-            io.len() - 1,
+            io.len() - 1 - usize::from(logger_channel.is_some()),
             mounted.sequence,
             mounted.formatted,
             ready_objects
         ),
     );
     report_capacity(&server, &boot);
+    report_stats(&server, "ready", None);
+    let mut idle_commits = IdleCommits::default();
     let mut served = 0u64;
     let mut next = 0usize;
     // The channel served back to back, and since which tick.
     let mut hot: Option<(usize, u64)> = None;
+    let mut stopping:Option<u64>=None;
     loop {
         // One liveness beat per pass, and one more for every transfer
         // that moves bytes for a client below: a beat says the server made
-        // progress. An idle pass costs at most a tick per channel plus one
-        // idle commit; a pass with work costs one dispatch; a client that
+        // progress. Idle requests are polled; the bounded idle wait uses argument
+        // one (up to two delivered ticks), plus one idle commit. A client that
         // trickles a frame or drains a reply a few bytes at a time keeps
         // the server in the transfer loops, and those beat on progress, so
         // a beat missing for init's bound means the server stopped moving
         // (kernel docs/service-lifecycle-20261008/LIVENESS.md).
         absd_runtime::liveness_beat();
+        if let Some(journal)=&mut journal {if journal.poll(&mut server.fs) { server.note_write(absd_runtime::ticks()); }}
         let mut progress = false;
         // Round robin over the channels served now, starting after the one
-        // last served. Each look blocks at most one tick on an idle
-        // channel and returns at once when a client writes or drains:
-        // `pipe_info` is kept for the binding checks, off this path.
+        // last served. Poll every request, then wait once on at most eleven
+        // sources after an idle pass; omitted sources rotate each idle wait.
+        // Timed reply writes still wake as the client drains. `pipe_info`
+        // is kept for the binding checks, off this path.
         let count = io.len();
-        for step in 0..count {
-            let channel = (next + step) % count;
-            if !server.active(channel) {
+        for channel in readiness::round_robin(next, count) {
+            if (stopping.is_some() && channel==CONTROL) || !server.active(channel) {
                 continue;
             }
+            // Bound transfer work too: a reader draining one byte at a time
+            // must not monopolize FSD before the dispatch-level hot bound.
+            let transfer_end=absd_runtime::ticks().saturating_add(HOT_TICKS);
+            let mut transfers=0usize;
             // Stream the reply while the client keeps draining it: the pipe
             // holds four transfers, and every wait here ends the moment the
             // client reads. A tick without room means it is not reading.
-            while io[channel].pending() {
+            while io[channel].pending() && transfers<64 && absd_runtime::ticks()<transfer_end {
+                transfers+=1;
                 let this = &mut io[channel];
                 let end = (this.sent + MAX_TRANSFER).min(this.output.len());
                 match absd_runtime::write_within(this.reply, &this.output[this.sent..end], 1) {
@@ -439,30 +575,41 @@ fn main() {
             // Take the request whole while the client is still writing it.
             // `quiet`: the pipe had nothing more for a tick.
             let mut quiet = false;
-            while this.inbox.wants_more() {
+            while this.inbox.wants_more() && transfers<64 && absd_runtime::ticks()<transfer_end {
+                transfers+=1;
+                {
+                    if this.request_ended {
+                        quiet = true;
+                        break;
+                    }
+                    match absd_runtime::wait_readable(&[this.request], absd_runtime::WAIT_READABLE_POLL) {
+                        Ok(0) => {
+                            // An empty poll is not the old read timeout. Keep
+                            // its quiet period before recovering partial frames
+                            // or settling a released holder's channel.
+                            quiet = this.quiet.empty(absd_runtime::ticks());
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(code) => fatal(&format!("request readiness {code}")),
+                    }
+                }
                 let mut chunk = [0u8; MAX_TRANSFER];
                 match absd_runtime::read_within(this.request, &mut chunk, 1) {
                     Ok(0) if channel == CONTROL => {
-                        // End of file: sshd, the only holder of the control
-                        // channel's client end, is gone.
-                        let commits = server.fs.write_stats().commits;
-                        // The server's own fact for the next generation's
-                        // ledger: it reached its orderly end. It rides the
-                        // final commit; if that fails nothing is cleared.
-                        if let Err(e) = recovery::stopped(&mut server.fs, &boot_id) {
-                            log.say(&mut server, &format!("FSD RECOVERY STOPPED FACT FAILED {e:?}"));
-                        }
-                        log.say(&mut server, &format!("FSD STOPPED served={served} commits={commits}"));
-                        match server.sync() {
-                            Ok(()) => {
-                                std::process::exit(0);
-                            }
-                            Err(e) => fatal(&format!("final commit: {e:?}")),
-                        }
+                        // Keep serving only bounded outstanding logger work;
+                        // init independently closes its stop pipe on worker exit.
+                        stopping.get_or_insert_with(absd_runtime::ticks);
+                        break;
                     }
                     // A bound slot always has a writer (sshd keeps one).
-                    Ok(0) => break,
+                    Ok(0) => {
+                        this.request_ended = true;
+                        quiet = true;
+                        break;
+                    }
                     Ok(count) => {
+                        this.quiet.reset();
                         this.inbox.push(&chunk[..count]);
                         progress = true;
                         absd_runtime::liveness_beat();
@@ -491,7 +638,7 @@ fn main() {
                     // dropped, so the channel settles.
                     if quiet && server.draining(channel) {
                         this.inbox.discard();
-                        server.clock(absd_runtime::ticks(), wall_clock);
+                        refresh_civil_clock(&mut server,absd_runtime::ticks());
                         if server.settle(channel, state(this)) {
                             report_capacity(&server, &boot);
                         }
@@ -501,7 +648,7 @@ fn main() {
                     // The binding checks look at every channel's pipes.
                     let lookup = |index: usize| io.get(index).and_then(state);
                     let now = absd_runtime::ticks();
-                    server.clock(now, wall_clock);
+                    refresh_civil_clock(&mut server,now);
                     let mut reply = server.dispatch(channel, &body, &lookup, now);
                     // The reply carries its request's sequence word, so
                     // the holder that asked can tell it from a reply to
@@ -541,11 +688,75 @@ fn main() {
                 }
             }
         }
-        if let Err(e) = server.idle_commit(absd_runtime::ticks()) {
+        if let Some(since)=stopping {
+            let done=logger_channel.is_none_or(|index| {
+                let pipe=pipe_info(io[index].request).ok();
+                pipe.is_some_and(|p|p[3]<=1&&p[0]==0)&&io[index].inbox.is_empty()&&!io[index].pending()
+            });
+            if done || absd_runtime::ticks().saturating_sub(since)>=2000 {
+                if !done {eprintln!("FSD JOURNAL STOP logger grace expired; final commit follows");}
+                if let Some(channel)=logger_channel {server.retire_logger(channel);}
+
+                        // End of file: sshd, the only holder of the control
+                        // channel's client end, is gone.
+                        let commits = server.fs.write_stats().commits;
+                        // The server's own fact for the next generation's
+                        // ledger: it reached its orderly end. It rides the
+                        // final commit; if that fails nothing is cleared.
+                        if let Err(e) = recovery::stopped(&mut server.fs, &boot_id) {
+                            log.say(&mut server, &format!("FSD RECOVERY STOPPED FACT FAILED {e:?}"));
+                        }
+                        log.say(&mut server, &format!("FSD STOPPED served={served} commits={commits}"));
+                        if let Some(journal)=&mut journal {journal.drain(&mut server.fs);}
+                        let start = absd_runtime::ticks();
+                        match server.sync() {
+                            Ok(()) => {
+                                let ticks = absd_runtime::ticks() - start;
+                                report_stats(&server, "stop", Some((&idle_commits, ticks)));
+                                std::process::exit(0);
+                            }
+                            Err(e) => fatal(&format!("final commit: {e:?}")),
+                        }
+
+            }
+        }
+        let commits = server.fs.write_stats().commits;
+        let start = absd_runtime::ticks();
+        if let Err(e) = server.idle_commit(start) {
             fatal(&format!("commit: {e:?}"));
         }
+        if server.fs.write_stats().commits != commits {
+            let ticks = absd_runtime::ticks() - start;
+            idle_commits.count += 1;
+            idle_commits.ticks += ticks;
+            idle_commits.max = idle_commits.max.max(ticks);
+        }
         if !progress {
-            next = (next + 1) % io.len();
+            let wait_start = next;
+            next = readiness::next_idle_start(next, io.len());
+            {
+                let plan = readiness::WaitPlan::collect(readiness::round_robin(wait_start, io.len()).map(|channel| {
+                    let io = &io[channel];
+                    readiness::Channel {
+                        request: io.request,
+                        active: server.active(channel) && !(stopping.is_some() && channel == CONTROL),
+                        reply_pending: io.pending(),
+                        buffered_work: !io.inbox.wants_more(),
+                        request_ended: io.request_ended,
+                    }
+                }));
+                if plan.buffered_work { continue; }
+                if plan.handles().is_empty() {
+                    // Read readiness cannot notify that a reply gained room.
+                    // Preserve bounded retry for the existing timed writes.
+                    absd_runtime::sleep_ticks(readiness::IDLE_TICKS);
+                } else {
+                    match absd_runtime::wait_readable(plan.handles(), readiness::IDLE_TICKS) {
+                        Ok(_) | Err(ERROR_TIMEOUT) => {}
+                        Err(code) => fatal(&format!("idle readiness {code}")),
+                    }
+                }
+            }
         }
     }
 }

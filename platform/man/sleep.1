@@ -1,0 +1,35 @@
+.Dd November 5, 2026
+.Dt SLEEP 1
+.Os ABSD
+.Sh NAME
+.Nm sleep
+.Nd delay for a whole number of seconds
+.Sh SYNOPSIS
+.Nm
+.Ar seconds
+.Sh DESCRIPTION
+Delay for the requested number of seconds, then exit.
+The operand must be a whole decimal number from 0 through 4294967295.
+A zero duration returns immediately.
+The delay uses the existing monotonic kernel timer.
+Scheduling may make it longer than requested.
+.Sh UNSUPPORTED ON ABSD
+This is the unmodified sbase 0.1 implementation from the pinned archive;
+see
+.Xr sbase 7 .
+Fractional durations, unit suffixes, and multiple duration operands are
+not accepted.
+ABSD has no POSIX signal delivery or interrupted-duration reporting;
+the shell's documented session interruption applies.
+.Sh EXIT STATUS
+0 after a valid duration completes, nonzero for invalid options or operands.
+Successful execution produces no output.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+sleep 1
+/bin/echo before; sleep 1; /bin/echo after
+.Ed
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr uptime 1 ,
+.Xr sbase 7

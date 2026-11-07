@@ -53,6 +53,13 @@ numbers, never block addresses. The `std::fs` hooks of a process whose
 startup record names channels and no block handle go there
 (`runtime/src/fsd.rs`).
 
+The session-side `fsd-probe block` diagnostic reports whether the runtime
+exposes a block handle from its startup state, including block and
+filesystem-view startup mappings. Whole-process handle coverage is
+UNVERIFIED: handles include issue tags, and the current userspace interface
+provides no complete enumeration of issued handle values. This diagnostic
+performs no block-device reads or writes.
+
 Mounts bind normalized pathnames, not object identities. A channel cannot
 rename either endpoint or remove a directory that is a strict ancestor of
 one of its mounts: these operations return `-16` (busy), even below a wider
@@ -178,13 +185,16 @@ refused, and what every object gets from a process that sets no clock.
   sync a commit instead of only a flush (at most once per object per clock
   value). The crash and power-loss sweeps run with no clock, so they judge
   the same images as before; mtime itself is covered by unit tests.
-- Clock: only the file server sets it, from the kernel's `wall_clock`
-  (CMOS RTC, whole seconds, UTC), before each request and before its own
-  work (startup directories, sweeps, releases, its log). A reading is
-  reused for changes within 250 ticks (`CLOCK_TICKS`, about 250 ms), so a
-  value lags the RTC by less than that plus the RTC's own second. Processes
-  that link the library directly (the image importer, durable workers in
-  non-`fsd` boots) record 0.
+- Clock: only the file server sets it from fallible boot-local software
+  civil time, truncated to whole Unix seconds, before requests and its own
+  work (startup directories, sweeps, releases and logs). Ordinary passage
+  reuses a reading for 250 delivered ticks (`CLOCK_TICKS`); a changed civil
+  generation invalidates that cache before the next operation. An unknown
+  or refused observation clears an old known sample and records mtime 0,
+  meaning unknown. The Rust SystemTime bootstrap coordinate is never used
+  here. Forward/backward civil corrections can move later mtimes in either
+  direction. Direct library users without a clock (image importer and
+  non-`fsd` durable workers) record 0.
 - Exposed in the file server's `attr` payload (`fsd/src/proto.rs`,
   `ATTR_BYTES` 48, the last word), and by the host reader as each record's
   `mtime` (`None` for format-1 records, which have none). The internal V2
@@ -326,6 +336,25 @@ before a request leaves it; and executable loading from the filesystem,
 where the runtime reads the image through `std::fs` and the kernel's
 `spawn_image` starts it (kernel `docs/PROCESS-STARTUP.md`). The library
 itself still sees only absolute paths and never executes anything.
+
+For an explicit `Command::current_dir`, the runtime checks that the directory
+exists through the child's selected FSD channel before spawning. This includes
+a session binding already delegated to that child: sshd's control channel does
+not gain access to `/home/operator`. The STAT exchange has a 1000-tick budget;
+a missing, hidden, non-directory, invalid or unresponsive result refuses the
+spawn. Failure retains the existing cleanup ownership: derived-spare rollback
+requests UNDERIVE, while the session caller releases its own bound slot.
+The runtime does not verify that UNDERIVE succeeded. This query budget does
+not bound the existing DERIVE or UNDERIVE exchanges.
+
+An inherited working directory remains the existing logical label. Plans
+without an FSD channel retain the previous parent/local-filesystem check for
+an explicit directory; that fallback adds no filesystem grant to a child.
+The one-shot child filesystem selection is consumed even when an earlier
+argument or image error refuses the spawn, so it cannot select the filesystem
+of a later unrelated child. `scripts/test-spawn-cwd.py` checks these boundaries
+against the runtime code and actual host FSD dispatcher; it does not prove a
+live guest login or hardware generation transfer.
 
 ## Failure model
 

@@ -3,22 +3,20 @@
 //!
 //! Input (stdin): `ABSDFIX1`, then per file a `u16` path length, the
 //! absolute path, a `u64` byte length, the file's SHA-256, and its bytes; a
-//! zero path length ends the stream. Every file is created new, written,
-//! synced, read back, and checked against its digest through `std::fs` on
-//! the real filesystem. A path ending in `/` with zero bytes is a
+//! zero path length ends the stream. Every file is constructed in a new
+//! temporary object, synced, read back and verified before atomic rename
+//! on the real filesystem. A path ending in `/` with zero bytes is a
 //! directory, created (with its parents) and left empty. The importer knows
 //! paths and bytes only; it interprets no file format.
 //!
-//! Step word: 1 imports into a fresh device (formatting it); 2 adds files to
-//! the filesystem already on the device (each still created new, so nothing
-//! present is replaced); 3 appends each entry's bytes to the existing file
-//! at its path, and the digest checked is that of the appended bytes, read
-//! back from where they landed. Steps 2 and 3 carry a fixture too large for
-//! one boot's worker deadline across boots; the host checks whole files.
-//! 4 replaces each file whole, as one commit: the bytes go to `PATH.new`
-//! (created new, after removing a stale one), are synced and checked, and
-//! `PATH.new` is renamed over `PATH`, so a stop at any point leaves the old
-//! file or the new one (the operator image's reconfiguration of `/etc`).
+//! Step word: 1 imports into a blank device (permitting formatting it);
+//! 2 adds files to an existing filesystem. Both commit with rename-no-replace.
+//! 3 copies an existing writable file's committed prefix, adds the entry's
+//! bytes and replaces the final name only after prefix and suffix readback.
+//! Steps 2/3 carry large fixtures across boots: each final path is a verified
+//! prefix until the host checks the whole file. Replaying an uncertain step 3
+//! requires host reconciliation to avoid appending twice.
+//! 4 replaces a file whole with the same verified-temp construction.
 //! 5 removes trees: every entry is a directory entry (`PATH/`, zero bytes),
 //! and the directory at `PATH`, with everything below it, is removed in one
 //! commit, so a stop at any point leaves the whole tree or none of it (the
@@ -26,15 +24,21 @@
 //! refused, and so is a path that is absent or not a directory.
 //! 0 does nothing, so a durable boot can run only its reader.
 
-use std::io::{Read, Seek as _, SeekFrom, Write as _};
+use std::io::Read;
+
+#[path = "../fixture_import_file.rs"]
+mod file;
+use file::Boundary;
 
 use absd_runtime::storage;
 use sha2::{Digest as _, Sha256};
 
-const CHUNK: usize = 64 * 1024;
+const CHUNK: usize = file::CHUNK;
 
 fn exact(input: &mut impl Read, buffer: &mut [u8]) -> Result<(), String> {
-    input.read_exact(buffer).map_err(|_| "truncated fixture stream".to_owned())
+    input
+        .read_exact(buffer)
+        .map_err(|_| "truncated fixture stream".to_owned())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -44,7 +48,7 @@ fn hex(bytes: &[u8]) -> String {
 /// Streams each file straight to the filesystem in bounded chunks: no
 /// allocation grows with the fixture (ABSD maps at most 256 KiB at once).
 fn import(step: u64) -> Result<usize, String> {
-    let (format, append, replace, remove) = (step == 1, step == 3, step == 4, step == 5);
+    let (format, remove) = (step == 1, step == 5);
     let mut input = std::io::stdin().lock();
     let mut magic = [0u8; 8];
     exact(&mut input, &mut magic)?;
@@ -55,7 +59,10 @@ fn import(step: u64) -> Result<usize, String> {
     if !format && mounted.formatted {
         return Err("step 2 needs a filesystem already on the device".to_owned());
     }
-    println!("FS MOUNT OK formatted={} seq={}", mounted.formatted, mounted.sequence);
+    println!(
+        "FS MOUNT OK formatted={} seq={}",
+        mounted.formatted, mounted.sequence
+    );
     let mut chunk = vec![0u8; CHUNK];
     let mut files = 0;
     loop {
@@ -68,11 +75,19 @@ fn import(step: u64) -> Result<usize, String> {
         let mut name = vec![0u8; length];
         exact(&mut input, &mut name)?;
         let path = String::from_utf8(name).map_err(|e| e.to_string())?;
+        if file::reserved_path(&path) && !remove {
+            return Err(format!("{path}: reserved importer temporary component"));
+        }
         let mut size = [0u8; 8];
         exact(&mut input, &mut size)?;
         let size = u64::from_le_bytes(size);
         let mut digest = [0u8; 32];
         exact(&mut input, &mut digest)?;
+        println!(
+            "FIXTURE ENTRY index={} path_hex={} step={step}",
+            files + 1,
+            hex(path.as_bytes())
+        );
         if remove {
             let Some(directory) = path.strip_suffix('/') else {
                 return Err(format!("{path}: step 5 removes directories only"));
@@ -83,7 +98,10 @@ fn import(step: u64) -> Result<usize, String> {
             if directory.is_empty() || !directory.starts_with('/') {
                 return Err(format!("{path}: not a removable directory"));
             }
-            if !std::fs::metadata(directory).map_err(|e| format!("{path}: {e}"))?.is_dir() {
+            if !std::fs::metadata(directory)
+                .map_err(|e| format!("{path}: {e}"))?
+                .is_dir()
+            {
                 return Err(format!("{path}: not a directory"));
             }
             let removed = storage::with_fs(|fs| fs.remove_tree(directory.as_bytes(), true))
@@ -102,7 +120,10 @@ fn import(step: u64) -> Result<usize, String> {
                 return Err(format!("{path}: a directory carries no bytes"));
             }
             std::fs::create_dir_all(directory).map_err(|e| format!("{path}: {e}"))?;
-            if !std::fs::metadata(directory).map_err(|e| format!("{path}: {e}"))?.is_dir() {
+            if !std::fs::metadata(directory)
+                .map_err(|e| format!("{path}: {e}"))?
+                .is_dir()
+            {
                 return Err(format!("{path}: not a directory after creation"));
             }
             println!("FIXTURE DIRECTORY path={directory}");
@@ -112,50 +133,45 @@ fn import(step: u64) -> Result<usize, String> {
         if let Some(parent) = std::path::Path::new(&path).parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{path}: {e}"))?;
         }
-        let target = if replace { format!("{path}.new") } else { path.clone() };
-        if replace {
-            match std::fs::remove_file(&target) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("{target}: {e}")),
-                _ => {}
-            }
-        }
-        let mut file = if append {
-            std::fs::OpenOptions::new().append(true).open(&target)
-        } else {
-            std::fs::OpenOptions::new().write(true).create_new(true).open(&target)
-        }
-        .map_err(|e| format!("{target}: {e}"))?;
-        let start = file.metadata().map_err(|e| format!("{path}: {e}"))?.len();
-        let mut remaining = size;
-        while remaining > 0 {
-            let take = remaining.min(CHUNK as u64) as usize;
-            exact(&mut input, &mut chunk[..take])?;
-            file.write_all(&chunk[..take]).map_err(|e| format!("{path}: {e}"))?;
-            remaining -= take as u64;
-        }
-        file.sync_all().map_err(|e| format!("{path}: {e}"))?;
-        drop(file);
-        let mut back = std::fs::File::open(&target).map_err(|e| format!("{target}: {e}"))?;
-        back.seek(SeekFrom::Start(start)).map_err(|e| format!("{path}: {e}"))?;
-        let mut hasher = Sha256::new();
-        let mut read_back = 0u64;
-        loop {
-            let count = back.read(&mut chunk).map_err(|e| format!("{path}: {e}"))?;
-            if count == 0 {
-                break;
-            }
-            hasher.update(&chunk[..count]);
-            read_back += count as u64;
-        }
-        let actual: [u8; 32] = hasher.finalize().into();
-        if actual != digest || read_back != size {
-            return Err(format!("{path}: read back {read_back} bytes with a different digest"));
-        }
-        drop(back);
-        if replace {
-            std::fs::rename(&target, &path).map_err(|e| format!("{path}: {e}"))?;
-        }
-        println!("FIXTURE FILE path={path} offset={start} bytes={size} sha256={}", hex(&actual));
+        let start = storage::with_fs(|fs| {
+            file::import_file(
+                fs,
+                &mut input,
+                step,
+                &path,
+                size,
+                digest,
+                &mut chunk,
+                |point, fs, temp| {
+                    if matches!(point, Boundary::DirectoryCreated | Boundary::Created) {
+                        let attr = fs
+                            .stat(temp.as_bytes())
+                            .map_err(|error| format!("{error:?}"))?;
+                        println!(
+                            "FIXTURE TEMP path_hex={} final_hex={} fs_id={} serial={} kind={:?}",
+                            hex(temp.as_bytes()),
+                            hex(path.as_bytes()),
+                            attr.fs_id,
+                            attr.serial,
+                            attr.kind
+                        );
+                    }
+                    // Qualification build only. Cargo tracks the setting in the
+                    // executable's inputs; normal builds select no boundary.
+                    if option_env!("ABSD_FIXTURE_IMPORT_STOP") == Some(point.name()) {
+                        println!("FIXTURE IMPORT STOP boundary={} final={path}", point.name());
+                        std::process::exit(96);
+                    }
+                    Ok(())
+                },
+            )
+        })
+        .ok_or_else(|| "no filesystem mounted".to_owned())?
+        .map_err(|error| format!("{path}: {error}"))?;
+        println!(
+            "FIXTURE FILE path={path} offset={start} bytes={size} sha256={}",
+            hex(&digest)
+        );
         files += 1;
     }
     let mut trailing = [0u8; 1];
@@ -167,6 +183,21 @@ fn import(step: u64) -> Result<usize, String> {
 
 fn main() {
     absd_runtime::link_anchor();
+    if let Some(stop) = option_env!("ABSD_FIXTURE_IMPORT_STOP") {
+        let valid = [
+            Boundary::DirectoryCreated,
+            Boundary::Created,
+            Boundary::PrefixCopied,
+            Boundary::InputWritten,
+            Boundary::Synced,
+            Boundary::Verified,
+            Boundary::Renamed,
+        ];
+        if !valid.iter().any(|point| point.name() == stop) {
+            println!("FIXTURE IMPORT FAILED invalid qualification stop");
+            std::process::exit(95);
+        }
+    }
     match absd_runtime::step() {
         0 => println!("FIXTURE IMPORT SKIPPED"),
         step @ (1..=5) => match import(step) {

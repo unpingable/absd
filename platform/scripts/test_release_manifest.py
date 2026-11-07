@@ -9,6 +9,8 @@ scripts/verify-inputs.sh's shell pipeline.
 """
 
 import os
+import json
+from unittest.mock import patch
 import pathlib
 import shutil
 import struct
@@ -66,6 +68,52 @@ def make_iso(kernel, cfg, out, work):
     write(tree / "boot" / "absd-kernel", kernel.read_bytes())
     write(tree / "boot" / "grub" / "grub.cfg", cfg)
     subprocess.run(["xorriso", "-as", "mkisofs", "-r", "-o", str(out), str(tree)], check=True, capture_output=True)
+
+
+class DocumentConfigurationTest(unittest.TestCase):
+    def test_disabled_and_unbound_installed_app(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            root = pathlib.Path(directory)
+            self.assertEqual(rm.document_configuration(root, root), {"enabled": False})
+            write(root / "tree/bin/https-document", b"app")
+            with self.assertRaisesRegex(rm.Failed, "without ABSD_HTTPS_DOCUMENT=1"):
+                rm.document_configuration(root, root)
+
+    def test_receipt_binds_selection_bytes_source_and_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            platform, release, stage = root / "platform", root / "release", root / "stage"
+            write(platform / "commands/https-document", b"app")
+            write(release / "tree/bin/https-document", b"app")
+            write(platform / "tls/Cargo.lock", b"lock")
+            write(platform / "targets/x86_64-unknown-absd.json", b"target")
+            write(stage / "STAGE.json", '{"ring": "pinned"}')
+            receipt = {"application": {"schema": "absd-https-document-build/1", "fixture_selectors": False},
+                       "source_revision": "revision", "source_tree": "tree", "tracked_dirty": False,
+                       "untracked_source": False, "ring_stage": {"ring": "pinned"},
+                       "outputs": {"https_document": {"sha256": rm.sha256_bytes(b"app"), "bytes": 3}},
+                       "cargo_lock_sha256": rm.sha256_bytes(b"lock"),
+                       "target_sha256": rm.sha256_bytes(b"target"), "staged_std_source_sha256": "a" * 64}
+            path = root / "receipt.json"
+            path.write_text(json.dumps(receipt))
+            env = {"ABSD_HTTPS_DOCUMENT": "1", "ABSD_TLS_STAGE": str(stage),
+                   "ABSD_HTTPS_DOCUMENT_RECEIPT": str(path)}
+            def identity(_, *args):
+                return "tree" if args[-1] == "HEAD^{tree}" else "revision"
+            with patch.dict(os.environ, env, clear=True), patch.object(rm, "git", side_effect=identity):
+                selected = rm.document_configuration(platform, release)
+                self.assertTrue(selected["enabled"])
+                self.assertEqual(selected["build_receipt_sha256"], rm.sha256_file(path))
+                for field, value in (("source_revision", "other"), ("tracked_dirty", True),
+                                     ("ring_stage", {})):
+                    changed = dict(receipt, **{field: value})
+                    path.write_text(json.dumps(changed))
+                    with self.assertRaises(rm.Failed):
+                        rm.document_configuration(platform, release)
+                path.write_text(json.dumps(receipt))
+                write(release / "tree/bin/https-document", b"changed")
+                with self.assertRaises(rm.Failed):
+                    rm.document_configuration(platform, release)
 
 
 @unittest.skipUnless(shutil.which("xorriso") and shutil.which(rm.STRIP) and ELF.is_file(), "needs xorriso, "
@@ -127,6 +175,8 @@ class ReleaseManifestTest(unittest.TestCase):
         self.assertEqual(doc["source"]["coordination_pins"]["pulse_commit"], "1" * 40)
         self.assertEqual(doc["build"]["rustflags"], ["-C", "x"])
         self.assertEqual(doc["build"]["kernel_image"]["EXTERNAL_KERNEL_FEATURES"], served_kernel.FEATURES)
+        self.assertEqual(doc["build"]["kernel_image"]["ABSD_LOCAL_CONSOLE"], "1")
+        self.assertEqual(doc["build"]["kernel_image"]["EXTERNAL_INPUT_sha256"], rm.sha256_bytes(b""))
         self.assertEqual(doc["schema"], "absd-release-manifest/2")
         self.assertEqual(doc["artifacts"]["iso"]["boot/absd-kernel"], rm.sha256_file(ELF))
         self.assertEqual(doc["artifacts"]["iso"]["boot/grub/grub.cfg"], rm.sha256_bytes(self.cfg.encode()))
@@ -232,7 +282,7 @@ class ReconstructionFeaturesTest(unittest.TestCase):
     Only toolchain preflight/comparison and rustc identity are fixture tools.
     Git cloning, the shell recipe and make run normally; no kernel is built.
     """
-    def reconstruction(self, directory, features):
+    def reconstruction(self, directory, features, document=False, local_console="1"):
         root = pathlib.Path(directory)
         tools = root / "fixture-tools" / "scripts"
         tools.mkdir(parents=True)
@@ -250,7 +300,9 @@ elif sys.argv[1] != "toolchain-check":
 ''')
         source = root / "kernel source"
         write(source / "Makefile", 'durable-iso:\n\t@mkdir -p build/durable\n'
-              '\t@printf \'%s\\n\' "$(EXTERNAL_KERNEL_FEATURES)" > build/durable/absd-durable-0.iso\n')
+              '\t@printf \'%s\\n\' "$(EXTERNAL_KERNEL_FEATURES)" > build/durable/absd-durable-0.iso\n'
+              '\t@printf \'%s\\n\' "$(LOGD_ELF)" "$(LOGD_FAULT)" > build/durable/logger.flags\n'
+              '\t@printf \'%s\\n\' "$(ABSD_LOCAL_CONSOLE)" > build/durable/local-console.flag\n')
         git(source, "init", "-q")
         git(source, "add", ".")
         git(source, "commit", "-q", "-m", "fixture")
@@ -265,20 +317,32 @@ elif sys.argv[1] != "toolchain-check":
             variables.pop("EXTERNAL_KERNEL_FEATURES")
         else:
             variables["EXTERNAL_KERNEL_FEATURES"] = features
+        if local_console is None:
+            variables.pop("ABSD_LOCAL_CONSOLE", None)
+        else:
+            variables["ABSD_LOCAL_CONSOLE"] = local_console
         variables["EXTERNAL_INPUT_sha256"] = rm.sha256_bytes(b"")
         doc = {"schema": rm.SCHEMA, "release": {"id": "fixture"},
                "source": {"kernel_commit": revision, "kernel_repository": str(source),
                           "platform_commit": "c" * 40, "platform_repository": str(products)},
                "build": {"platform_root": str(root / "unused-platform"), "kernel_root": str(root / "unused-kernel")},
                "build.kernel_image": variables, "toolchain.kernel_rustc": {"commit_hash": "b" * 40}}
+        options = []
+        if document:
+            stage = root / 'TLS stage'
+            write(stage / 'STAGE.json', '{"ring": "pinned"}')
+            digest = rm.sha256_bytes(b'{"ring":"pinned"}')
+            doc['build.https_document'] = {'enabled': True, 'ring_stage_sha256': digest}
+            doc['artifacts.files'] = {'tree/bin/https-document': {'sha256': 'a' * 64}}
+            options = ['--tls-stage', str(stage)]
         manifest = root / "manifest.toml"
         manifest.write_text(rm.toml_dump(doc))
         clone = root / "replayed kernel"
         work = root / "work"
         result = subprocess.run(["sh", str(tools / "reconstruct-release.sh"), "--workdir", str(work),
-                                 "--kernel-dir", str(clone), "--platform-products", str(products), str(manifest)],
+                                 "--kernel-dir", str(clone), "--platform-products", str(products), *options, str(manifest)],
                                 env=dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ["PATH"],
-                                         EXTERNAL_KERNEL_FEATURES="ambient-feature", MAKEFLAGS="-e"),
+                                         EXTERNAL_KERNEL_FEATURES="ambient-feature", ABSD_LOCAL_CONSOLE="ambient-invalid", MAKEFLAGS="-e"),
                                 capture_output=True, text=True)
         return result, clone, work
 
@@ -289,6 +353,55 @@ elif sys.argv[1] != "toolchain-check":
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual((clone / "build/durable/absd-durable-0.iso").read_text(), features + "\n")
                 self.assertEqual((work / "reconstruction-receipt.toml").read_text(), "compared\n")
+
+    def test_logger_policy_is_recorded_and_replayed(self):
+        self.assertEqual(rm.KERNEL_MAKE["LOGD_ELF"], "absd-logd.elf")
+        self.assertEqual(rm.KERNEL_MAKE["LOGD_FAULT"], "0")
+        with tempfile.TemporaryDirectory() as directory:
+            result, clone, _ = self.reconstruction(directory, served_kernel.FEATURES)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((clone / "build/durable/logger.flags").read_text().splitlines(),
+                             [str(pathlib.Path(directory) / "products/absd-logd.elf"), "0"])
+
+    def test_local_console_policy_is_recorded_and_replayed_without_ambient_defaults(self):
+        self.assertEqual(rm.KERNEL_MAKE["ABSD_LOCAL_CONSOLE"], "1")
+        for flag in ("0", "1"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
+                result, clone, _ = self.reconstruction(directory, served_kernel.FEATURES, local_console=flag)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual((clone / "build/durable/local-console.flag").read_text(), flag + "\n")
+
+    def test_unrecorded_or_invalid_console_policy_refuses_before_cloning(self):
+        for flag in (None, "yes", "2", ""):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
+                result, clone, work = self.reconstruction(directory, served_kernel.FEATURES, local_console=flag)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ABSD_LOCAL_CONSOLE", result.stderr)
+                self.assertFalse(clone.exists())
+                self.assertFalse(work.exists())
+
+    def test_enabled_app_preflight_accepts_exact_stage_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, _, _ = self.reconstruction(directory, served_kernel.FEATURES, document=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unbound_app_and_missing_or_wrong_stage_refused_before_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            manifest = root / 'manifest.toml'
+            stage = root / 'stage'
+            write(stage / 'STAGE.json', '{"ring": "wrong"}')
+            cases = [({}, [], 'selection disagree'),
+                     ({'enabled': True, 'ring_stage_sha256': 'a' * 64}, [], '--tls-stage'),
+                     ({'enabled': True, 'ring_stage_sha256': 'a' * 64}, ['--tls-stage', str(stage)], 'differs')]
+            for config, options, reason in cases:
+                manifest.write_text(rm.toml_dump({'schema': rm.SCHEMA, 'build.https_document': config,
+                                                 'artifacts.files': {'tree/bin/https-document': {'sha256': 'b' * 64}}}))
+                result = subprocess.run(['sh', str(here / 'reconstruct-release.sh'), *options, str(manifest)],
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(reason, result.stderr)
+                self.assertNotIn('RELEASE TOOLCHAIN', result.stdout + result.stderr)
 
     def test_a_v1_manifest_is_sent_to_its_own_platform_commit(self):
         # The accepted candidate 8 release's manifest (absd-release-manifest/1,

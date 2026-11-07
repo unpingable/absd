@@ -1,42 +1,20 @@
-//! absd-sh: a deliberately small line-based command shell.
-//!
-//! One line is a list of pipelines joined by `;`, `&&` (the next runs if
-//! the status is 0), or `||` (if it is not), run in order; a pipeline is
-//! commands joined by `|`, each with optional `< file`, `> file`,
-//! `>> file`, and `2> file` / `2>> file`. Words split on whitespace, with
-//! double quotes grouping (inside them `\"` and `\\` are escapes; a quoted
-//! `|`, `<`, `>`, `;`, or `&` is an ordinary character). Builtins are
-//! `cd`, `pwd`, `echo [-n]`, `exit [n]`, `status`, and `help`, and, in a
-//! shell sshd started for a session, `ps`, `shutdown`, and `reboot`, which
-//! ask sshd on the session control channel; anything else runs as a
-//! filesystem executable, by path when the name contains `/`, else from the
-//! fixed directory `/bin`. No globbing, variables, descriptor duplication
-//! (`2>&1`), background jobs (`&`), job control, or signals.
-//!
-//! Interruption: in a session with a control channel, ^C typed while a
-//! pipeline runs reaches the shell there (never through its input), and the
-//! shell ends every command of the pipeline with the process handles it
-//! holds ([`Host::run`]); the line's status is [`STATUS_INTERRUPTED`].
-//!
-//! Ending: when the session ends (the client disconnected, the session
-//! timed out, or the system is going down), the server says so on the same
-//! channel; the shell ends and reaps every command it is running, as for
-//! ^C, and exits instead of reading another line ([`Host::ended`]). The
-//! commands it starts cannot start programs of their own (they get no spawn
-//! right), so those are every process of the session.
-//!
-//! Authority: the shell opens every redirection target itself, with its
-//! own filesystem authority, before anything starts; a child is only ever
-//! given a pipe end for a redirected stream, and the shell copies between
-//! that pipe and the file ([`Host::run`]). A child therefore never holds a
-//! file, only the one pipe end its stream needs. A pipeline's status is
-//! its last command's.
-//!
-//! The shell keeps its own working directory and gives it to every child;
-//! the platform (composition, files, directory test) is the [`Host`] trait
-//! so the logic is tested on the host.
+//! Native ABSD shell: upstream conch grammar and a capability-aware executor.
+//! Scripts and control flow use `language`; pipelines retain explicit process
+//! handles, filesystem authority and bounded session interruption. No fork or jobs.
 
 use std::io::{self, Write};
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
+use std::cell::RefCell;
+#[path = "../../ssh/src/input_record.rs"]
+#[allow(dead_code)]
+// Tests compile the real SSH producer beside the shell consumer in separate module scopes.
+#[cfg_attr(test, allow(clippy::duplicate_mod))]
+mod input_record;
+pub use input_record::PREFIX as INPUT_RECORD_PREFIX;
+mod language;
+mod streams;
+use streams::{Destination, Endpoint, outer_streams};
 
 /// The fixed directory searched for a bare command name.
 pub const BIN_DIR: &str = "/bin";
@@ -70,6 +48,7 @@ pub enum Exit {
 pub enum SessionRequest<'a> {
     /// A `shutdown` or `reboot` command's words, decided by the server.
     Machine(&'a str),
+    Clock(&'a str),
     /// This session's processes.
     List,
 }
@@ -93,10 +72,19 @@ pub enum Input<S> {
 pub enum Output<W> {
     /// The shell's own stream.
     Inherit,
-    /// The next command's standard input (stdout only).
+    /// Explicit inheritance across stdout and stderr slots.
+    ParentStdout,
+    ParentStderr,
+    /// Child stderr shares the resolved stdout endpoint.
+    SameAsStdout,
+    /// Shell-provided /dev/null output, consumed without a filesystem object.
+    Discard,
+    /// The next command's standard input (either output stream).
     Next,
-    /// A file the shell opened; the shell copies a pipe into it.
-    File(W),
+    /// Bounded stdout collected by command substitution.
+    Capture(Capture),
+    /// Stream inherited from an interpreted script or compound redirection.
+    Shared(SharedSink<W>),
 }
 
 /// The filesystem authority a started command gets, never more than the
@@ -126,11 +114,21 @@ pub struct Stage<S, W> {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: String,
+    /// Complete child environment, including command-local assignments.
+    pub env: Vec<(String, String)>,
     /// What of the shell's filesystem authority the command gets.
     pub authority: Authority,
     pub stdin: Input<S>,
     pub stdout: Output<W>,
     pub stderr: Output<W>,
+}
+
+impl<S, W> Stage<S, W> {
+    /// Whether stream copying uses this shell's filesystem channel concurrently
+    /// with the child. Such a child must receive a spare, never borrow ours.
+    pub fn copies_files(&self) -> bool {
+        matches!(self.stdin, Input::File(_)) || matches!(self.stdout, Output::Shared(_)) || matches!(self.stderr, Output::Shared(_))
+    }
 }
 
 /// What became of one stage.
@@ -166,9 +164,28 @@ pub trait Host {
     /// Asks the server that started this session; its status and text.
     /// `Unsupported` when this shell has no session control channel.
     fn session_request(&mut self, request: SessionRequest) -> io::Result<(i32, String)>;
-    /// The interactive loop read one more whole line: a ^C typed before it,
-    /// at the prompt, is not meant for the command it starts.
+    /// The interactive loop read a whole line; collect pending control
+    /// events before deciding whether its input may execute.
     fn line_read(&mut self) {}
+    /// 1/2 arm primary/continuation reads; 3 acknowledges a completed read
+    /// without transferring pending input to an application; 0 enters actual
+    /// program input. Script/application input never enables command history.
+    fn prompt_input(&mut self, _mode: u8) {}
+    /// Read one physical line or one complete approved paste source. Native
+    /// controlled sessions keep source separate from inherited application stdin.
+    fn read_interactive(&mut self, input: &mut dyn io::BufRead, text: &mut String) -> io::Result<usize> { read_interactive_plain(input, text) }
+    fn input_limit_notice(&self) -> &'static str { "absd-sh: input exceeds 1 MiB" }
+    /// A prompt interrupt wakes the input read and cancels accumulated syntax.
+    fn prompt_cancelled(&mut self) -> bool { false }
+    /// Pause the producer and discard pending interactive input after cancellation.
+    fn discard_pending_input(&mut self) {}
+    /// Enter bounded recovery only when this frontend can actually quarantine
+    /// input. Other frontends retain their existing source-limit refusal.
+    fn refuse_interactive_input(&mut self) -> bool { false }
+    /// Current observed terminal size; zero fields stay unknown.
+    fn terminal_size(&self) -> Option<(u32, u32)> { None }
+    /// Poll an interrupt while executing builtins or loops without children.
+    fn interrupted(&mut self) -> bool { false }
     /// The session has ended (the server said so): every command this
     /// shell started is gone, and the shell exits without reading on.
     fn ended(&self) -> bool {
@@ -176,273 +193,28 @@ pub trait Host {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Token {
-    Word(String),
-    /// `|`
-    Pipe,
-    /// `<`
-    In,
-    /// `>` or `>>` (append)
-    Out { append: bool },
-    /// `2>` or `2>>` (append)
-    Err { append: bool },
-    /// `;`
-    Seq,
-    /// `&&`
-    And,
-    /// `||`
-    Or,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum ParseError {
-    UnterminatedQuote,
-    /// A `|` with no command on one side.
-    EmptyCommand,
-    /// A redirection operator with no file name after it.
-    MissingTarget(&'static str),
-    /// The same stream redirected twice in one command.
-    Duplicate(&'static str),
-    /// Standard output both to a file and into a pipe.
-    OutputConflict,
-    /// Standard input both from a file and from a pipe.
-    InputConflict,
-    /// `2>&1` and similar: there are no descriptors to duplicate.
-    Duplication,
-    /// A `;`, `&&`, or `||` with no pipeline on one side (a trailing `;`
-    /// is allowed).
-    EmptyList,
-    /// A single `&` (not `&&`), anywhere outside quotes: there are no
-    /// background jobs.
-    Background,
-}
-
-impl ParseError {
-    fn message(&self) -> String {
-        match self {
-            ParseError::UnterminatedQuote => "unterminated quote".into(),
-            ParseError::EmptyCommand => "syntax error: empty command in pipeline".into(),
-            ParseError::MissingTarget(op) => format!("syntax error: `{op}` needs a file name"),
-            ParseError::Duplicate(op) => format!("syntax error: `{op}` given twice for one command"),
-            ParseError::OutputConflict => {
-                "syntax error: output cannot go both to a file and into a pipe".into()
-            }
-            ParseError::InputConflict => {
-                "syntax error: input cannot come both from a file and from a pipe".into()
-            }
-            ParseError::Duplication => {
-                "syntax error: descriptor duplication (`>&`) is not supported".into()
-            }
-            ParseError::EmptyList => "syntax error: empty command in list".into(),
-            ParseError::Background => "syntax error: `&` is not supported (there are no background jobs)".into(),
-        }
-    }
-}
-
-/// Splits a line into words and operators: whitespace separates, `"..."`
-/// groups (and may join adjacent text, `a"b c"` is one word), `\"` and
-/// `\\` escape inside quotes. Outside quotes a backslash is literal and
-/// `|`, `||`, `<`, `>`, `>>`, `;`, `&&` are operators wherever they
-/// appear; `2>` and `2>>` are operators when the `2` starts a word; any
-/// other `&`, even inside a word, is an error (after a redirection it
-/// starts a word, for the parser to refuse as `>&` duplication).
-pub fn tokenize(line: &str) -> Result<Vec<Token>, ParseError> {
-    let mut tokens = Vec::new();
-    let mut word = String::new();
-    let mut in_word = false;
-    let mut chars = line.chars().peekable();
-    let end_word = |tokens: &mut Vec<Token>, word: &mut String, in_word: &mut bool| {
-        if *in_word {
-            tokens.push(Token::Word(std::mem::take(word)));
-            *in_word = false;
-        }
-    };
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => {
-                in_word = true;
-                loop {
-                    match chars.next() {
-                        None => return Err(ParseError::UnterminatedQuote),
-                        Some('"') => break,
-                        Some('\\') => match chars.next() {
-                            Some(e @ ('"' | '\\')) => word.push(e),
-                            Some(other) => {
-                                word.push('\\');
-                                word.push(other);
-                            }
-                            None => return Err(ParseError::UnterminatedQuote),
-                        },
-                        Some(other) => word.push(other),
-                    }
-                }
-            }
-            '2' if !in_word && chars.peek() == Some(&'>') => {
-                chars.next();
-                let append = chars.next_if_eq(&'>').is_some();
-                tokens.push(Token::Err { append });
-            }
-            '|' => {
-                end_word(&mut tokens, &mut word, &mut in_word);
-                let or = chars.next_if_eq(&'|').is_some();
-                tokens.push(if or { Token::Or } else { Token::Pipe });
-            }
-            ';' => {
-                end_word(&mut tokens, &mut word, &mut in_word);
-                tokens.push(Token::Seq);
-            }
-            '&' if chars.peek() == Some(&'&') => {
-                end_word(&mut tokens, &mut word, &mut in_word);
-                chars.next();
-                tokens.push(Token::And);
-            }
-            // `>&`, `2>&`: a word for the parser to refuse as duplication.
-            '&' if !in_word && matches!(tokens.last(), Some(Token::In | Token::Out { .. } | Token::Err { .. })) => {
-                in_word = true;
-                word.push('&');
-            }
-            '&' => return Err(ParseError::Background),
-            '<' => {
-                end_word(&mut tokens, &mut word, &mut in_word);
-                tokens.push(Token::In);
-            }
-            '>' => {
-                end_word(&mut tokens, &mut word, &mut in_word);
-                let append = chars.next_if_eq(&'>').is_some();
-                tokens.push(Token::Out { append });
-            }
-            c if c.is_whitespace() => end_word(&mut tokens, &mut word, &mut in_word),
-            c => {
-                in_word = true;
-                word.push(c);
-            }
-        }
-    }
-    end_word(&mut tokens, &mut word, &mut in_word);
-    Ok(tokens)
-}
-
 /// A redirection target as written (resolved against the working
 /// directory when the line runs).
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Redirect {
-    pub path: String,
-    pub append: bool,
+pub enum Redirect {
+    File { fd: u8, path: String, append: bool },
+    Dup { fd: u8, from: u8 },
 }
 
 /// One command of a parsed line.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommandInput {
+    File(String),
+    Bytes(Vec<u8>),
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Command {
     pub words: Vec<String>,
-    pub stdin: Option<String>,
-    pub stdout: Option<Redirect>,
-    pub stderr: Option<Redirect>,
+    pub stdin: Option<CommandInput>,
+    pub redirects: Vec<Redirect>,
 }
 
-/// What must hold for the pipeline after this one to run.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Join {
-    /// `;` (or the end of the line)
-    Always,
-    /// `&&`
-    IfOk,
-    /// `||`
-    IfFailed,
-}
-
-/// One pipeline of a line, and how the next one is joined to it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Pipeline {
-    pub commands: Vec<Command>,
-    pub then: Join,
-}
-
-/// Parses a line into its pipelines, in order; an empty line is none.
-pub fn parse(line: &str) -> Result<Vec<Pipeline>, ParseError> {
-    let tokens = tokenize(line)?;
-    let mut list = Vec::new();
-    let mut group = Vec::new();
-    for token in tokens {
-        let then = match token {
-            Token::Seq => Join::Always,
-            Token::And => Join::IfOk,
-            Token::Or => Join::IfFailed,
-            other => {
-                group.push(other);
-                continue;
-            }
-        };
-        if group.is_empty() {
-            return Err(ParseError::EmptyList);
-        }
-        list.push(Pipeline { commands: pipeline_of(std::mem::take(&mut group))?, then });
-    }
-    if group.is_empty() {
-        // Nothing, or a trailing `;`; `a &&` and `a ||` promise a pipeline.
-        if list.last().is_some_and(|p| p.then != Join::Always) {
-            return Err(ParseError::EmptyList);
-        }
-        return Ok(list);
-    }
-    list.push(Pipeline { commands: pipeline_of(group)?, then: Join::Always });
-    Ok(list)
-}
-
-/// Parses one pipeline's tokens (no list operators among them).
-fn pipeline_of(tokens: Vec<Token>) -> Result<Vec<Command>, ParseError> {
-    let mut commands = vec![Command::default()];
-    let mut tokens = tokens.into_iter();
-    while let Some(token) = tokens.next() {
-        let current = commands.last_mut().expect("never empty");
-        let (op, slot_is_set) = match &token {
-            Token::Word(word) => {
-                current.words.push(word.clone());
-                continue;
-            }
-            Token::Pipe => {
-                commands.push(Command::default());
-                continue;
-            }
-            Token::In => ("<", current.stdin.is_some()),
-            Token::Out { append: false } => (">", current.stdout.is_some()),
-            Token::Out { append: true } => (">>", current.stdout.is_some()),
-            Token::Err { append: false } => ("2>", current.stderr.is_some()),
-            Token::Err { append: true } => ("2>>", current.stderr.is_some()),
-            Token::Seq | Token::And | Token::Or => unreachable!("list operators are split off first"),
-        };
-        let path = match tokens.next() {
-            Some(Token::Word(path)) if path.starts_with('&') => return Err(ParseError::Duplication),
-            Some(Token::Word(path)) => path,
-            _ => return Err(ParseError::MissingTarget(op)),
-        };
-        if slot_is_set {
-            return Err(ParseError::Duplicate(op));
-        }
-        match token {
-            Token::In => current.stdin = Some(path),
-            Token::Out { append } => current.stdout = Some(Redirect { path, append }),
-            Token::Err { append } => current.stderr = Some(Redirect { path, append }),
-            Token::Word(_) | Token::Pipe | Token::Seq | Token::And | Token::Or => unreachable!(),
-        }
-    }
-    let last = commands.len() - 1;
-    for (index, command) in commands.iter().enumerate() {
-        if command.words.is_empty() {
-            return Err(ParseError::EmptyCommand);
-        }
-        if index < last && command.stdout.is_some() {
-            return Err(ParseError::OutputConflict);
-        }
-        if index > 0 && command.stdin.is_some() {
-            return Err(ParseError::InputConflict);
-        }
-    }
-    Ok(commands)
-}
-
-/// Resolves `path` against the absolute directory `cwd` lexically:
-/// `.` and empty components drop, `..` removes one (never above `/`).
 pub fn resolve(cwd: &str, path: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
     let joined = if path.starts_with('/') { path.to_string() } else { format!("{cwd}/{path}") };
@@ -471,11 +243,58 @@ pub enum Flow {
     Exit(i32),
 }
 
-pub struct Shell<H> {
+pub struct Shell<H: Host> {
     pub host: H,
     pub cwd: String,
     /// The last command's status (`$?`).
     pub status: i32,
+    vars: BTreeMap<String, String>,
+    exported: BTreeSet<String>,
+    positional: Vec<String>,
+    functions: BTreeMap<String, conch_parser::ast::DefaultCompoundCommand>,
+    loop_control: Option<bool>,
+    loop_depth: usize,
+    depth: usize,
+    steps: usize,
+    halted: bool,
+    substitution_status: Option<i32>,
+    report_native_status: bool,
+    output_context: [Endpoint<H::Sink>; 2],
+}
+
+/// Shared owned stream for script/compound redirections, borrowed only per write.
+#[derive(Debug)]
+pub struct SharedSink<W>(Rc<RefCell<W>>);
+impl<W> Clone for SharedSink<W> { fn clone(&self) -> Self { Self(self.0.clone()) } }
+impl<W> SharedSink<W> {
+    pub(crate) fn with_mut<T>(&self, body: impl FnOnce(&mut W) -> T) -> T { body(&mut self.0.borrow_mut()) }
+}
+impl<W: Write> Write for SharedSink<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.with_mut(|writer| writer.write(bytes)) }
+    fn flush(&mut self) -> io::Result<()> { self.with_mut(|writer| writer.flush()) }
+}
+
+/// Command substitution output stays bounded and is drained concurrently with pipes.
+#[derive(Clone, Debug)]
+pub struct Capture(Rc<RefCell<Vec<u8>>>, Rc<std::cell::Cell<bool>>);
+pub const MAX_SCRIPT_BYTES: usize = 1024 * 1024;
+impl Capture {
+    pub fn new() -> Self { Self(Rc::new(RefCell::new(Vec::new())), Rc::new(std::cell::Cell::new(false))) }
+    fn bytes(&self) -> Vec<u8> { self.0.borrow().clone() }
+}
+impl Default for Capture {
+    fn default() -> Self { Self::new() }
+}
+impl Write for Capture {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut buf = self.0.borrow_mut();
+        if buf.len().saturating_add(bytes.len()) > MAX_SCRIPT_BYTES {
+            self.1.set(true);
+            return Err(io::Error::other("command substitution exceeds 1 MiB"));
+        }
+        buf.extend_from_slice(bytes); Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
 /// Builtins that only write output, allowed at the head of a pipeline.
@@ -485,7 +304,7 @@ fn is_output_builtin(name: &str) -> bool {
 
 /// Builtins that act on the session or the shell: alone on a line only.
 fn is_control_builtin(name: &str) -> bool {
-    matches!(name, "cd" | "exit" | "shutdown" | "reboot")
+    matches!(name, "cd" | "exit" | "shutdown" | "reboot" | "clock")
 }
 
 fn is_builtin(name: &str) -> bool {
@@ -507,7 +326,13 @@ fn open_error(path: &str, writing: bool, error: &io::Error) -> String {
 
 impl<H: Host> Shell<H> {
     pub fn new(host: H, cwd: String) -> Self {
-        Self { host, cwd, status: 0 }
+        Self { host, cwd: cwd.clone(), status: 0,
+            vars: BTreeMap::from([("PATH".into(), "/bin".into()), ("HOME".into(), "/".into()), ("PWD".into(), cwd.clone())]),
+            exported: BTreeSet::from(["PATH".into(), "HOME".into(), "PWD".into()]),
+            positional: vec!["sh".into()], functions: BTreeMap::new(),
+            loop_control: None, loop_depth: 0, depth: 0, steps: 0, halted: false,
+            substitution_status: None, report_native_status: true, output_context: outer_streams(),
+        }
     }
 
     /// Runs one line: its pipelines in order, each after the join before it
@@ -515,54 +340,58 @@ impl<H: Host> Shell<H> {
     /// the shell, is interrupted, or the session has ended. Builtin output
     /// goes to `out`, diagnostics to `err`.
     pub fn run_line(&mut self, line: &str, out: &mut dyn Write, err: &mut dyn Write) -> Flow {
-        let list = match parse(line) {
-            Ok(list) => list,
+        self.steps = 0;
+        self.halted = false;
+        match language::parse_program(line) {
+            Ok(program) => match self.eval_program(&program, out, err) {
+                Ok(flow) => flow,
+                Err(error) => {
+                    let _ = writeln!(err, "absd-sh: {error}");
+                    self.status = STATUS_USAGE;
+                    Flow::Continue
+                }
+            },
             Err(error) => {
-                let _ = writeln!(err, "absd-sh: {}", error.message());
+                let _ = writeln!(err, "absd-sh: {error}");
                 self.status = STATUS_USAGE;
-                return Flow::Continue;
-            }
-        };
-        let mut before = Join::Always;
-        for pipeline in list {
-            let runs = match before {
-                Join::Always => true,
-                Join::IfOk => self.status == 0,
-                Join::IfFailed => self.status != 0,
-            };
-            before = pipeline.then;
-            if !runs {
-                continue;
-            }
-            let (status, flow, interrupted) = match pipeline.commands.as_slice() {
-                [single] if is_builtin(&single.words[0]) => {
-                    let (status, flow) = self.builtin_line(single, out, err);
-                    (status, flow, false)
-                }
-                _ => {
-                    let (status, interrupted) = self.pipeline(pipeline.commands, out, err);
-                    (status, Flow::Continue, interrupted)
-                }
-            };
-            self.status = status;
-            let _ = out.flush();
-            if flow != Flow::Continue || interrupted || self.host.ended() {
-                return flow;
+                Flow::Continue
             }
         }
-        Flow::Continue
+    }
+
+    fn execute(&mut self, commands: Vec<Command>, out: &mut dyn Write, err: &mut dyn Write) -> Flow {
+        let (status, flow, interrupted) = match commands.as_slice() {
+            [single] if is_builtin(&single.words[0]) && !(single.words[0] == "ps" && single.words.len() > 1) => {
+                let (status, flow) = self.builtin_line(single, out, err);
+                (status, flow, false)
+            }
+            _ => {
+                let (status, interrupted) = self.pipeline(commands, out, err);
+                (status, Flow::Continue, interrupted)
+            }
+        };
+        self.status = status;
+        self.halted |= interrupted || self.host.ended();
+        let _ = out.flush();
+        flow
     }
 
     /// Opens the shell's own redirections of a builtin run alone.
     fn builtin_line(&mut self, command: &Command, out: &mut dyn Write, err: &mut dyn Write) -> (i32, Flow) {
         let name = command.words[0].as_str();
         if !is_output_builtin(name)
-            && (command.stdin.is_some() || command.stdout.is_some() || command.stderr.is_some())
+            && (command.stdin.is_some() || !command.redirects.is_empty())
         {
             let _ = writeln!(err, "absd-sh: {name}: takes no redirection");
             return (STATUS_USAGE, Flow::Continue);
         }
-        if let Some(path) = &command.stdin {
+        if matches!(command.stdin, Some(CommandInput::Bytes(_))) {
+            let _ = writeln!(err, "absd-sh: heredocs require a native consuming command");
+            return (STATUS_USAGE, Flow::Continue);
+        }
+        if let Some(CommandInput::File(path)) = &command.stdin
+            && path != "/dev/null"
+        {
             // Opened (and so checked) as any command's would be; unread.
             let path = resolve(&self.cwd, path);
             if let Err(error) = self.host.open_read(&path) {
@@ -570,40 +399,21 @@ impl<H: Host> Shell<H> {
                 return (STATUS_REDIRECT, Flow::Continue);
             }
         }
-        let mut sinks = Vec::new();
-        for redirect in [&command.stdout, &command.stderr] {
-            let Some(Redirect { path, append }) = redirect else {
-                sinks.push(None);
-                continue;
-            };
-            let path = resolve(&self.cwd, path);
-            match self.host.open_write(&path, *append) {
-                Ok(sink) => sinks.push(Some((path, sink))),
-                Err(error) => {
-                    let _ = writeln!(err, "{}", open_error(&path, true, &error));
-                    return (STATUS_REDIRECT, Flow::Continue);
-                }
+        let destinations = match self.resolve_outputs(command, false) {
+            Ok(outputs) => outputs,
+            Err(error) => {
+                let _ = writeln!(err, "{error}");
+                return (STATUS_REDIRECT, Flow::Continue);
             }
-        }
-        let mut stderr_sink = sinks.pop().expect("two");
-        let mut stdout_sink = sinks.pop().expect("two");
-        let (mut status, flow) = {
-            let out: &mut dyn Write = match &mut stdout_sink {
-                Some((_, sink)) => sink,
-                None => out,
-            };
-            let err: &mut dyn Write = match &mut stderr_sink {
-                Some((_, sink)) => sink,
-                None => err,
-            };
-            self.builtin(&command.words, out, err)
         };
-        for (path, mut sink) in [stdout_sink, stderr_sink].into_iter().flatten() {
-            if let Err(error) = sink.flush() {
-                let _ = writeln!(err, "absd-sh: {path}: {error}");
-                status = STATUS_REDIRECT;
-            }
-        }
+        let context = self.output_context.clone();
+        let (status, flow) = streams::with_writers(&destinations, &context, out, err, |out, err| {
+            self.builtin(&command.words, out, err)
+        });
+        let status = match streams::flush(&destinations) {
+            Ok(()) => status,
+            Err(error) => { let _ = writeln!(err, "absd-sh: {error}"); STATUS_REDIRECT }
+        };
         (status, flow)
     }
 
@@ -637,6 +447,7 @@ impl<H: Host> Shell<H> {
                 (STATUS_USAGE, Flow::Continue)
             }
             "ps" => (self.ask(name, SessionRequest::List, out, err), Flow::Continue),
+            "clock" => {let request=args.join(" ");(self.ask(name,SessionRequest::Clock(&request),out,err),Flow::Continue)},
             "shutdown" | "reboot" => {
                 let words = words.join(" ");
                 (self.ask(name, SessionRequest::Machine(&words), out, err), Flow::Continue)
@@ -655,7 +466,13 @@ impl<H: Host> Shell<H> {
                 let _ = writeln!(err, "absd-sh: {}: needs a program", command.words[0]);
                 return (STATUS_USAGE, false);
             };
-            if narrowed != Authority::Shell && is_builtin(name) {
+            if program_path(&self.cwd, name) == "/bin/https-document"
+                && !(words.len() == 2 && words[1] == "--sample")
+            {
+                let _ = writeln!(err, "absd-sh: https-document: requires direct SSH exec");
+                return (STATUS_REFUSED, false);
+            }
+            if narrowed != Authority::Shell && is_builtin(name) && !(name == "ps" && words.len() > 1) {
                 let _ = writeln!(err, "absd-sh: {}: applies to programs, not the builtin {name}", command.words[0]);
                 return (STATUS_USAGE, false);
             }
@@ -663,23 +480,24 @@ impl<H: Host> Shell<H> {
                 let _ = writeln!(err, "absd-sh: {name}: cannot run in a pipeline");
                 return (STATUS_USAGE, false);
             }
-            if is_output_builtin(name) && index > 0 {
+            if is_output_builtin(name) && !(name == "ps" && words.len() > 1) && index > 0 {
                 let _ = writeln!(err, "absd-sh: {name}: a builtin can only start a pipeline");
                 return (STATUS_USAGE, false);
             }
-            if is_output_builtin(name) && (command.stdin.is_some() || command.stderr.is_some()) {
+            if is_output_builtin(name) && !(name == "ps" && words.len() > 1) && (command.stdin.is_some() || !command.redirects.is_empty()) {
                 let _ = writeln!(err, "absd-sh: {name}: a builtin in a pipeline takes no redirection");
                 return (STATUS_USAGE, false);
             }
         }
         let mut stages = Vec::with_capacity(commands.len());
         let mut names = Vec::with_capacity(commands.len());
+        let mut report_status = Vec::with_capacity(commands.len());
         let mut head: Option<Vec<u8>> = None;
         let last = commands.len() - 1;
         for (index, command) in commands.iter().enumerate() {
             let (narrowed, words) = authority(&command.words);
             let (name, args) = words.split_first().expect("non-empty");
-            if is_output_builtin(name) {
+            if is_output_builtin(name) && !(name == "ps" && words.len() > 1) {
                 // Only first, and never last (a lone builtin runs above):
                 // its output is the next command's input.
                 let mut bytes = Vec::new();
@@ -689,7 +507,9 @@ impl<H: Host> Shell<H> {
             }
             let stdin = match (&command.stdin, index, head.take()) {
                 (_, _, Some(bytes)) => Input::Bytes(bytes),
-                (Some(path), _, None) => {
+                (Some(CommandInput::Bytes(bytes)), _, None) => Input::Bytes(bytes.clone()),
+                (Some(CommandInput::File(path)), _, None) if path == "/dev/null" => Input::Bytes(Vec::new()),
+                (Some(CommandInput::File(path)), _, None) => {
                     let path = resolve(&self.cwd, path);
                     match self.host.open_read(&path) {
                         Ok(source) => Input::File(source),
@@ -702,30 +522,24 @@ impl<H: Host> Shell<H> {
                 (None, 0, None) => Input::Inherit,
                 (None, _, None) => Input::Previous,
             };
-            let mut outputs = Vec::with_capacity(2);
-            for (redirect, next) in [(&command.stdout, index < last), (&command.stderr, false)] {
-                outputs.push(match redirect {
-                    Some(Redirect { path, append }) => {
-                        let path = resolve(&self.cwd, path);
-                        match self.host.open_write(&path, *append) {
-                            Ok(sink) => Output::File(sink),
-                            Err(error) => {
-                                let _ = writeln!(err, "{}", open_error(&path, true, &error));
-                                return (STATUS_REDIRECT, false);
-                            }
-                        }
-                    }
-                    None if next => Output::Next,
-                    None => Output::Inherit,
-                });
-            }
-            let stderr = outputs.pop().expect("two");
-            let stdout = outputs.pop().expect("two");
+            let destinations = match self.resolve_outputs(command, index < last) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    let _ = writeln!(err, "{error}");
+                    return (STATUS_REDIRECT, false);
+                }
+            };
+            let [stdout, stderr] = streams::stage_outputs(&destinations);
+            let explicit_stderr = command.redirects.iter().any(|redirect| matches!(redirect,
+                Redirect::File { fd: 2, .. } | Redirect::Dup { fd: 2, .. }));
+            let inherited_stderr = !matches!(self.output_context[1].as_ref(), Destination::Parent(1));
+            report_status.push(!explicit_stderr && !inherited_stderr);
             names.push(name.clone());
             stages.push(Stage {
                 program: program_path(&self.cwd, name),
                 args: args.to_vec(),
                 cwd: self.cwd.clone(),
+                env: self.exported.iter().filter_map(|key| self.vars.get(key).map(|value| (key.clone(), value.clone()))).collect(),
                 authority: narrowed,
                 stdin,
                 stdout,
@@ -742,7 +556,7 @@ impl<H: Host> Shell<H> {
             let stage_status = match ran.exit {
                 Ok(Exit::Code(0)) => 0,
                 Ok(Exit::Code(code)) => {
-                    if is_last {
+                    if is_last && report_status[index] && self.report_native_status {
                         let _ = writeln!(err, "absd-sh: {name}: exit status {code}");
                     }
                     code
@@ -815,28 +629,31 @@ impl<H: Host> Shell<H> {
 
     fn cd(&mut self, args: &[String], err: &mut dyn Write) -> i32 {
         let target = match args {
-            [] => "/".to_string(),
+            [] => self.vars.get("HOME").cloned().unwrap_or_else(|| "/".into()),
             [dir] => resolve(&self.cwd, dir),
             _ => {
                 let _ = writeln!(err, "absd-sh: cd: too many arguments");
                 return STATUS_USAGE;
             }
         };
+        let requested = args.first().map(String::as_str).unwrap_or(&target).to_string();
         match self.host.is_dir(&target) {
             Ok(true) => {
+                self.vars.insert("OLDPWD".into(), self.cwd.clone());
+                self.vars.insert("PWD".into(), target.clone());
                 self.cwd = target;
                 0
             }
             Ok(false) => {
-                let _ = writeln!(err, "absd-sh: cd: {}: not a directory", args[0]);
+                let _ = writeln!(err, "absd-sh: cd: {}: not a directory", requested);
                 1
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                let _ = writeln!(err, "absd-sh: cd: {}: not found", args[0]);
+                let _ = writeln!(err, "absd-sh: cd: {}: not found", requested);
                 1
             }
             Err(e) => {
-                let _ = writeln!(err, "absd-sh: cd: {}: {e}", args[0]);
+                let _ = writeln!(err, "absd-sh: cd: {}: {e}", requested);
                 1
             }
         }
@@ -865,13 +682,20 @@ fn write_text(out: &mut dyn Write, err: &mut dyn Write, text: &str) -> i32 {
 
 /// What `help` prints: the shell's whole grammar on one screen.
 pub const HELP: &str = "\
-absd-sh: a line is pipelines joined by `;`, `&&` (next if ok), `||` (if not)
-  pipeline: CMD [ARG...] [| CMD...]; < FILE, > FILE, >> FILE, 2> FILE, 2>> FILE
-  CMD: a builtin below, /bin/NAME, or a path with a `/`; `ls /bin` lists them
-  prefixes: `ro CMD` (read-only filesystem), `nofs CMD` (no filesystem)
-builtins: cd [DIR]  pwd  echo [-n] [WORD...]  status  exit [N]  help
-  ps (this session's processes)  shutdown -h|-p|-r now  reboot  (man absd-sh)
-quoting: \"a b\" is one word; no variables, globbing, scripts, or jobs (`&`)
+sh: scripts: sh FILE [ARG...] | sh -c COMMAND [NAME [ARG...]] | sh -s
+  lists: ; newline && || | ! ; if/for/while/until/case; functions and groups
+  words: single/double quotes, escapes, $VAR ${VAR:-default} $1 $@ $? $(CMD)
+  files: * ? [abc] ; < FILE > FILE >> FILE 2> FILE 2>> FILE
+  streams: 2>&1 1>&2 (literal output descriptors 1 or 2); shell /dev/null
+  native input: <<WORD <<-WORD heredocs (quoted delimiter keeps literal text)
+builtins: cd pwd echo [-n] exit status help true false : export unset
+  set -- [ARG...] shift [N] break continue sh . FILE
+  ps (session) ; ps ARGS (/bin/ps, if installed)
+  shutdown -h|-p|-r now ; reboot
+  clock [status | set UNIX_SECONDS | sync] (operator owner request)
+  ro CMD / nofs CMD narrow native filesystem authority; man absd-sh
+limits: source and expanded heredoc 1 MiB
+  no jobs/fork, descriptor closure or raw screen mode
 ";
 
 /// Parsed command line of the shell itself.
@@ -881,14 +705,54 @@ pub enum Mode {
     Interactive,
     /// Run one line and exit with its status (`-c LINE`).
     Command(String),
+    CommandArgs(String, Vec<String>),
+    Script(Vec<String>),
+    Stdin(Vec<String>),
 }
 
 pub fn parse_args(args: &[String]) -> Result<Mode, String> {
     match args {
         [] => Ok(Mode::Interactive),
         [flag, line] if flag == "-c" => Ok(Mode::Command(line.clone())),
-        _ => Err("usage: absd-sh [-c COMMAND]".to_string()),
+        [flag, line, rest @ ..] if flag == "-c" => Ok(Mode::CommandArgs(line.clone(), rest.to_vec())),
+        [flag, rest @ ..] if flag == "-s" => Ok(Mode::Stdin(rest.to_vec())),
+        [path, ..] if !path.starts_with('-') => Ok(Mode::Script(args.to_vec())),
+        _ => Err("usage: sh [-c COMMAND [NAME [ARG...]] | -s [ARG...] | FILE [ARG...]]".to_string()),
     }
+}
+
+/// A bounded plain physical line, without consuming foreground-child input.
+/// Classify overflow before decoding a potentially truncated UTF-8 prefix.
+pub fn read_interactive_plain(input: &mut dyn io::BufRead, text: &mut String) -> io::Result<usize> {
+    use std::io::{BufRead, Read};
+    let mut bytes = Vec::new();
+    let n = input.take((MAX_SCRIPT_BYTES + 1) as u64).read_until(b'\n', &mut bytes)?;
+    if bytes.len() > MAX_SCRIPT_BYTES {
+        return Err(io::Error::new(io::ErrorKind::FileTooLarge, "interactive source exceeds 1 MiB"));
+    }
+    let line = String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    text.push_str(&line);
+    Ok(n)
+}
+
+/// Matched native PTY protocol. ESC cannot be supplied as ordinary terminal
+/// source. Read the entire approved source before a child inherits stdin.
+/// A partial ordinary line may precede the record after a nonempty Ctrl-D.
+pub fn read_interactive_record(input: &mut dyn io::BufRead, text: &mut String) -> io::Result<usize> {
+    let mut physical = String::new();
+    let n = input.read_line(&mut physical)?;
+    let Some(at) = physical.find(INPUT_RECORD_PREFIX) else { text.push_str(&physical); return Ok(n); };
+    let length = physical[at + INPUT_RECORD_PREFIX.len()..].strip_suffix('\n').ok_or_else(|| io::Error::other("incomplete paste record header"))?;
+    if length.is_empty() || !length.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(io::Error::other("invalid paste record length"));
+    }
+    let length: usize = length.parse().map_err(|_| io::Error::other("invalid paste record length"))?;
+    if length > MAX_SCRIPT_BYTES { return Err(io::Error::other("paste record exceeds 1 MiB")); }
+    let mut bytes = vec![0; length];
+    input.read_exact(&mut bytes)?;
+    let source=String::from_utf8(bytes).map_err(|_| io::Error::other("invalid paste record UTF-8"))?;
+    text.push_str(&physical[..at]); text.push_str(&source);
+    Ok(at + source.len())
 }
 
 /// Runs the whole session over `input`. Returns the shell's exit status.
@@ -902,6 +766,25 @@ pub fn session<H: Host>(
     err: &mut dyn Write,
 ) -> i32 {
     match mode {
+        Mode::CommandArgs(line, args) => {
+            shell.set_positional(args);
+            session(shell, Mode::Command(line), input, out, err)
+        }
+        Mode::Script(args) => {
+            match shell.invoke_script(&args, false, out, err) {
+                Ok(_) => shell.status,
+                Err(error) => { let _ = writeln!(err, "absd-sh: {error}"); STATUS_USAGE }
+            }
+        }
+        Mode::Stdin(args) => {
+            use std::io::Read;
+            shell.set_positional(std::iter::once("sh".into()).chain(args).collect());
+            let mut text = String::new();
+            match input.take((MAX_SCRIPT_BYTES + 1) as u64).read_to_string(&mut text) {
+                Ok(_) => session(shell, Mode::Command(text), input, out, err),
+                Err(error) => { let _ = writeln!(err, "absd-sh: {error}"); STATUS_USAGE }
+            }
+        }
         Mode::Command(line) => match shell.run_line(&line, out, err) {
             _ if shell.host.ended() => STATUS_INTERRUPTED,
             Flow::Exit(code) => code,
@@ -909,13 +792,64 @@ pub fn session<H: Host>(
         },
         Mode::Interactive => {
             let mut line = String::new();
+            let mut pending_heredoc: Option<language::HeredocDelimiter> = None;
             loop {
-                let _ = out.write_all(PROMPT.as_bytes());
+                if let Some((columns, rows)) = shell.host.terminal_size() {
+                    for (key, value) in [("COLUMNS", columns), ("LINES", rows)] {
+                        if value == 0 { shell.vars.remove(key); shell.exported.remove(key); }
+                        else { shell.vars.insert(key.into(), value.to_string()); shell.exported.insert(key.into()); }
+                    }
+                }
+                shell.host.prompt_input(if line.is_empty() { 1 } else { 2 });
+                if shell.host.ended() { return STATUS_INTERRUPTED; }
+                if shell.host.prompt_cancelled() {
+                    line.clear();
+                    pending_heredoc = None;
+                    shell.host.discard_pending_input();
+                    if shell.host.ended() { return STATUS_INTERRUPTED; }
+                    shell.status = STATUS_INTERRUPTED;
+                    continue;
+                }
+                let _ = out.write_all(if line.is_empty() { PROMPT.as_bytes() } else { b"> " });
                 let _ = out.flush();
-                line.clear();
-                match input.read_line(&mut line) {
-                    Ok(0) => return shell.status,
-                    Ok(_) if line.ends_with('\n') => shell.host.line_read(),
+                let mut more = String::new();
+                let read = shell.host.read_interactive(input, &mut more);
+                shell.host.prompt_input(3);
+                if shell.host.ended() { return STATUS_INTERRUPTED; }
+                // Padding a cancelled record can split its last UTF-8 code
+                // point. Cancellation owns that input before decode errors.
+                if shell.host.prompt_cancelled() {
+                    line.clear();
+                    pending_heredoc = None;
+                    shell.host.discard_pending_input();
+                    if shell.host.ended() { return STATUS_INTERRUPTED; }
+                    shell.status = STATUS_INTERRUPTED;
+                    continue;
+                }
+                let overflow = matches!(&read, Err(error) if error.kind() == io::ErrorKind::FileTooLarge)
+                    || line.len().saturating_add(more.len()) > MAX_SCRIPT_BYTES;
+                if overflow {
+                    let _ = writeln!(err, "{}", shell.host.input_limit_notice());
+                    line.clear();
+                    more.clear();
+                    pending_heredoc = None;
+                    if !shell.host.refuse_interactive_input() { return STATUS_USAGE; }
+                    shell.host.discard_pending_input();
+                    if shell.host.ended() { return STATUS_INTERRUPTED; }
+                    shell.status = STATUS_USAGE;
+                    continue;
+                }
+                match read {
+                    Ok(0) => {
+                        shell.host.prompt_input(0);
+                        if shell.host.ended() || shell.host.prompt_cancelled() {
+                            shell.host.discard_pending_input();
+                            return STATUS_INTERRUPTED;
+                        }
+                        if !line.is_empty() { shell.run_line(&line, out, err); }
+                        return shell.status;
+                    },
+                    Ok(_) if more.ends_with('\n') => shell.host.line_read(),
                     Ok(_) => {}
                     Err(e) => {
                         let _ = writeln!(err, "absd-sh: read: {e}");
@@ -925,7 +859,41 @@ pub fn session<H: Host>(
                 if shell.host.ended() {
                     return STATUS_INTERRUPTED;
                 }
+                if shell.host.prompt_cancelled() {
+                    line.clear();
+                    pending_heredoc = None;
+                    shell.host.discard_pending_input();
+                    if shell.host.ended() { return STATUS_INTERRUPTED; }
+                    shell.status = STATUS_INTERRUPTED;
+                    continue;
+                }
+                line.push_str(&more);
+                if pending_heredoc.as_ref().is_some_and(|delimiter| !delimiter.may_finish(&more)) {
+                    continue;
+                }
+                pending_heredoc = None;
+                match language::continuation(&line) {
+                    language::Continuation::Complete => {},
+                    language::Continuation::Syntax => continue,
+                    language::Continuation::Heredoc(delimiter) => {
+                        pending_heredoc = Some(delimiter);
+                        continue;
+                    }
+                }
+                shell.host.prompt_input(0);
+                if shell.host.ended() { return STATUS_INTERRUPTED; }
+                // The final acknowledgement can itself receive an interrupt.
+                // Nothing in this command has executed or opened output yet.
+                if shell.host.prompt_cancelled() {
+                    line.clear();
+                    pending_heredoc = None;
+                    shell.host.discard_pending_input();
+                    if shell.host.ended() { return STATUS_INTERRUPTED; }
+                    shell.status = STATUS_INTERRUPTED;
+                    continue;
+                }
                 let flow = shell.run_line(&line, out, err);
+                line.clear();
                 if shell.host.ended() {
                     return STATUS_INTERRUPTED;
                 }
@@ -939,3 +907,6 @@ pub fn session<H: Host>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod throughput_tests;

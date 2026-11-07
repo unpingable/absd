@@ -1771,5 +1771,12 @@
       }
     ],
     "requirement": "The cloud Cargo tree query must match expected_tls_cargo_features exactly on both targets before compilation. An unexpected declared feature or package remains a refusal."
+  },
+  "application_addendum": {
+    "target": "https_document",
+    "dependency_change": false,
+    "lock_unchanged": true,
+    "runtime_inputs": "Fixed configured peer/name/path/SPKI, public issuer DER and operator-attested bounded clock. No fixture trust/time compiled into the app.",
+    "image": "Only explicit ABSD_HTTPS_DOCUMENT=1 adds the command; no default grant or fetch."
   }
 }

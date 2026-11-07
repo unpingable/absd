@@ -19,7 +19,6 @@ def load(name):
 
 
 operator = load('operator-matrix.py')
-tcc_checks = load('tcc-matrix-selftest.py')
 import mtime_reference
 
 
@@ -79,9 +78,6 @@ class Listing(unittest.TestCase):
             else:
                 os.environ['TZ'] = previous
             time.tzset()
-
-    def test_tcc_keeps_all_refusal_evidence_requirements(self):
-        tcc_checks.refusal()
 
 
 if __name__ == '__main__':

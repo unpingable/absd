@@ -1,0 +1,3 @@
+# K408a4a1 canonical failed smoke; original SHA256 0ef0369dee6ffc120397ad1022178176983ede8139f3e26b60c28de782946855
+FRAMES baseline=0 peak=8291 final=0 spawns=398 reaps=398 maps=238 unmaps=235 cells=0 transitions=432/11 cell_waits=78/68 pipes=0 pipe_io=175/54 pipe_waits=36/26 sleeps=17 timeouts=13 idle=27 ticks=9744 kstack_peak=7160/32768
+COUNTERS exits=320 faults=65 kills=13 preempts=3429 writes=453 refused unknown=2 pointer=10 handle=355 wait=1 spawn=2 map=5 init=0

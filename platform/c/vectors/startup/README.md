@@ -31,7 +31,7 @@ Each case `<name>` has two files:
 
 Regenerate (host only; the files must come out byte-identical):
 
-    R=/path/to/c-kit
+    R=archived-occurrence
     ABSD_EMIT_VECTORS=$R/c/vectors/startup env -u RUSTFLAGS cargo +1.95.0 test \
         --offline --release --manifest-path $R/broker/Cargo.toml \
         --target x86_64-unknown-linux-gnu --target-dir $R/.host-target \

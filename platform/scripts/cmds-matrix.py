@@ -40,9 +40,11 @@ Markers (each printed only when every check behind it held):
 manifest (userland/PORTS.tsv) and the image's command list
 (scripts/operator_image.py PORTS): every one listed for the image, none a
 native command, a Rust port, a shell builtin, or a command deliberately not
-provided (ABSENT, and `ps`); ports/NAME at the recorded digest; a manual
+provided (ABSENT); ports/NAME at the recorded digest; a manual
 page for each and sbase(7) carrying sbase's licence. It prints
 `COMMAND SBASE EXPECTED OK names=...`, or the first failure and status 1.
+The live matrix retains historical shell/ps expectations and is not qualified
+against the current operator composition. This host check makes no live claim.
 With `--without-image-list` (scripts/install-userland-ports.sh) it checks
 everything but the image's list, and says so (`image_list=not-checked`).
 """
@@ -74,20 +76,14 @@ health_validator = importlib.util.module_from_spec(health_spec)
 health_spec.loader.exec_module(health_validator)
 
 PROMPT = b"absd$ "
-# The platform's own commands (commands/<name>) and the ports (ports/<name>:
-# uutils and ripgrep).
-NATIVE = ["echo", "pwd", "ls", "cat", "printenv", "uname", "mkdir", "rm", "mv",
-          "cp", "head", "tail", "wc", "sha256sum", "stat", "df", "sync", "man", "date", "uptime", "release",
-          "sysinfo", "health", "net-status"]
-PORTS = ["basename", "seq", "cut", "fold", "nl", "uniq", "base64", "rg"]
-# Historical SBASE label now groups sbase and Toybox C ports; source origin
-# is read from PORTS.tsv rather than inferred from this compatibility label.
-# The base userland C ports (userland/PORTS.tsv, installed into ports/
-# by scripts/install-userland-ports.sh): C programs through the C kit. A name
-# here must not be a native command, a Rust port, a shell builtin, or ABSENT.
-SBASE = ["printf", "test", "grep", "sort", "sed", "od", "cmp", "ed", "find", "diff", "hexdump", "tar"]
+PTY_PROMPT = b"\x1b[?2004habsd$ "
+# Use the operator image's catalog for each source category. The historical
+# PORTS/SBASE labels below remain the Rust/C categories used by this matrix.
+import operator_image as oi  # noqa: E402
+NATIVE = oi.NATIVE
+PORTS = oi.RUST_PORTS
+SBASE = [name for name in oi.PORTS if name not in oi.RUST_PORTS]
 # Deliberately not provided (README "Commands", "Not provided").
-# `ps` is a shell builtin answered by sshd (ps(1)), never a /bin program.
 ABSENT = ["kill", "chmod", "chown", "touch", "ln", "top", "mount"]
 
 LINES = "".join(f"line {i}\n" for i in range(1, 31)).encode()
@@ -111,9 +107,18 @@ FIXTURES = {"/etc/lines.txt": LINES, "/etc/words.txt": WORDS, "/etc/alpha.txt": 
 
 class CmdsTarget(ssh_absd.AbsdTarget):
     def files(self, authorized):
-        files = [f for f in super().files(authorized) if f[0] not in {f"/bin/{n}" for n in NATIVE}]
+        import operator_image as oi
+        cports = oi.c_ports_installed(pathlib.Path(self.root))
+        if set(cports) != set(SBASE):
+            raise oi.Failed("verified C ports do not match the command matrix's C-port list")
+        files = [f for f in super().files(authorized)
+                 if f[0] not in {f"/bin/{n}" for n in NATIVE} | {"/bin/sh"}]
+        # The superclass selects the matrix's shell. Reuse those exact bytes,
+        # including an alternate fixture shell, rather than reopening a product.
+        files += [("/bin/sh", data) for path, data in files if path == "/bin/absd-sh"]
         files += [(f"/bin/{name}", (self.root / "commands" / name).read_bytes()) for name in NATIVE]
-        files += [(f"/bin/{name}", (self.root / "ports" / name).read_bytes()) for name in PORTS + SBASE]
+        files += [(f"/bin/{name}", (self.root / "ports" / name).read_bytes()) for name in PORTS]
+        files += [(f"/bin/{name}", cports[name]) for name in SBASE]
         files += list(FIXTURES.items())
         return files
 
@@ -125,14 +130,16 @@ class Shell:
     def __init__(self, matrix):
         self.term = matrix.client.terminal(matrix.op, extra=("-t",))
         sm.require(self.term.wait_raw(), "client never entered raw mode")
-        sm.require(self.term.expect(PROMPT, timeout=120), f"no first prompt: {self.term.shown[-300:]!r}")
+        sm.require(self.term.expect(PTY_PROMPT, timeout=120), f"no first prompt: {self.term.shown[-300:]!r}")
         self.times = {}
 
     def run(self, line, timeout=300):
         start = time.monotonic()
         self.term.type(line.encode() + b"\r")
         sm.require(self.term.expect(line.encode() + b"\r\n", timeout=60), f"no echo of {line!r}: {self.term.rest()!r}")
-        sm.require(self.term.expect(PROMPT, timeout=timeout), f"no prompt after {line!r}: {self.term.rest()[-600:]!r}")
+        sm.require(self.term.expect(b"\x1b[?2004l", timeout=60) and self.term.between == b"",
+                   f"no exact paste-disable boundary after {line!r}: {self.term.between!r}")
+        sm.require(self.term.expect(PTY_PROMPT, timeout=timeout), f"no prompt after {line!r}: {self.term.rest()[-600:]!r}")
         self.times[line] = time.monotonic() - start
         return self.term.between.replace(b"\r\n", b"\n")
 
@@ -259,7 +266,8 @@ class CmdsMatrix(sm.Matrix):
         sh = Shell(self)
         # -- COMMAND OUTPUT ---------------------------------------------------------
         self.expect(sh, "/bin/echo one two", b"one two\n")
-        self.expect(sh, "/bin/pwd", b"/\n")
+        self.expect(sh, "/bin/pwd", b"/home/operator\n", "a login shell starts in its writable home")
+        self.expect(sh, "cd /", b"")
         self.expect(sh, "ls /etc", b"alpha.txt\nbig.txt\nblob.bin\nlines.txt\nmotd\npasswd.txt\nsums.txt\nwords.txt\n")
         self.expect(sh, "cat /etc/words.txt /etc/alpha.txt", WORDS + ALPHA)
         self.expect(sh, "printenv", b"")
@@ -310,8 +318,8 @@ class CmdsMatrix(sm.Matrix):
         self.check("date is the host's UTC time, whole seconds", int(before) - 2 <= shown <= time.time() + 2,
                    f"{shown} vs {before:.0f}")
         self.expect_match(sh, "date +%s", r"\d{10}\n")
-        self.expect(sh, "date -s 12:00", b"date: usage: date [-u] [+%s] (setting the clock and other formats are not "
-                    b"supported)\nabsd-sh: date: exit status 2\n")
+        self.expect(sh, "date -s 12:00", b"date: usage: date [-u] [+%s] [--status] (use shell clock set EPOCH for authorized changes)\nabsd-sh: date: exit status 2\n")
+        self.expect_match(sh, "date --status", r"source=rtc-unverified known=true stale=false age_ticks=\d+ generation=1 utc_uncertainty=unknown last_attempt_tick=\d+ last_error=0 last_attempt_source=rtc-unverified last_success_rtt_ms=0 peer=none attempt_peer=none boot_only=yes\n")
         self.expect_match(sh, "uptime", r"up \d+ days \d\d:\d\d:\d\d, \d+ ticks since boot, boot [0-9a-f]{32}\n")
         # The ports: unmodified uutils 0.12.0.
         self.expect(sh, "basename /home/operator/notes.txt .txt", b"notes\n")
@@ -375,12 +383,14 @@ class CmdsMatrix(sm.Matrix):
         for line, message in [("cat -n /etc/words.txt", b"cat: unknown option -n (cat takes no options)"),
                               ("mv -f /etc/motd /home/operator/motd", b"mv: unknown option -f (mv takes no options)"),
                               ("cp -a /etc/motd /home/operator/motd", b"cp: unknown option -a (only -r)"),
-                              ("rm -f /etc/motd", b"rm: unknown option -f (only -r)"),
+                              ("rm -z /etc/motd", b"rm: unknown option -z (only -r, -f)"),
                               ("mkdir -m 755 /home/operator/d", b"mkdir: unknown option -m (only -p)")]:
             self.expect(sh, line, message + f"\nabsd-sh: {line.split()[0]}: exit status 2\n".encode())
         self.expect(sh, "ls /etc -l", b"/etc:\nalpha.txt\nbig.txt\nblob.bin\nlines.txt\nmotd\npasswd.txt\nsums.txt\nwords.txt\n"
                     b"ls: -l: ABSD path not found\nabsd-sh: ls: exit status 1\n", "options come first; a later -l is a path")
         self.expect(sh, "ls -- /etc/motd", b"/etc/motd\n", "-- ends the options")
+        self.expect(sh, "rm -f /home/operator/rm-force-missing", b"", "rm -f ignores only missing operands")
+        self.expect(sh, "rm -f", b"", "rm -f accepts no operands")
         self.mark("COMMAND OUTPUT OK")
 
         # -- COMMAND WRITES ---------------------------------------------------------------
@@ -420,6 +430,11 @@ class CmdsMatrix(sm.Matrix):
         self.expect(sh, "rm -r w/sub", b"")
         self.expect(sh, "rm w/lines", b"")
         self.expect(sh, "ls w", b"", "the directory is empty")
+        for flags in ("-rf", "-fr"):
+            self.expect(sh, "mkdir -p rm-force-check/sub && echo keep > rm-force-check/sub/file", b"")
+            self.expect(sh, f"rm {flags} rm-force-check rm-force-missing", b"",
+                        f"rm {flags} removes a populated tree and ignores a missing path")
+            self.expect(sh, "test ! -d rm-force-check", b"", "the forced recursive removal changed directory state")
         self.expect(sh, "cp /etc/big.txt big", b"")
         self.expect(sh, "sha256sum big", f"{sha(BIG)}  big\n".encode())
         self.expect(sh, "cd /", b"")
@@ -451,10 +466,13 @@ class CmdsMatrix(sm.Matrix):
             (f"mv {tmp} /home/operator/t", f"mv: {tmp} -> /home/operator/t: ".encode() + kept, "mv"),
             ("rm /bin/ls", b"rm: /bin/ls: " + ro, "rm"),
             ("rm /etc/motd", b"rm: /etc/motd: " + ro, "rm"),
+            ("rm -f /etc/motd", b"rm: /etc/motd: " + ro, "rm"),
             ("rm /ssh/authorized_keys", b"rm: /ssh/authorized_keys: " + nf, "rm"),
             ("rm -r /home/operator", b"rm: /home/operator: " + kept, "rm"),
             ("rm -r /bin", b"rm: /bin: " + kept, "rm"),
             ("rm -r /home", b"rm: /home: holds " + kept, "rm"),
+            ("rm -rf /home", b"rm: /home: holds " + kept, "rm"),
+            ("rm -fr /home/operator", b"rm: /home/operator: " + kept, "rm"),
             ("rm -r /tmp", b"rm: /tmp: holds " + kept, "rm"),
             ("rm -r /", b"rm: /: holds " + kept, "rm"),
             ("rm -r /home/operator/..", b"rm: /home/operator/..: refusing to remove `.` or `..`", "rm"),
@@ -622,13 +640,15 @@ class CmdsMatrix(sm.Matrix):
         self.expect(sh, "ls &", b"absd-sh: syntax error: `&` is not supported (there are no background jobs)\n")
         self.expect(sh, "echo \"a;b\" \"c && d\"", b"a;b c && d\n")
         self.expect_match(sh, "help", r"absd-sh: a line is pipelines joined by .*\n  pipeline: .*\n  CMD: .*\n"
-                          r"  prefixes: .*\nbuiltins: cd \[DIR\].*\n  ps .*\nquoting: .*\n", "help prints the grammar")
-        self.expect(sh, "help | wc -l", b"7\n")
+                          r"  prefixes: .*\nbuiltins: cd \[DIR\].*\n  ps .*\n  clock .*\nquoting: .*\n", "help prints the grammar")
+        self.expect(sh, "help | wc -l", b"8\n")
         self.expect(sh, "cd /", b"")
         # An up arrow and a left arrow typed into a line: dropped, not run.
         sh.term.type(b"echo \x1b[Aup\x1b[D\r")
         sm.require(sh.term.expect(b"echo up\r\n", timeout=60), f"no echo: {sh.term.rest()!r}")
-        sm.require(sh.term.expect(PROMPT, timeout=120), f"no prompt: {sh.term.rest()[-300:]!r}")
+        sm.require(sh.term.expect(b"\x1b[?2004l", timeout=60) and sh.term.between == b"",
+                   f"no exact paste-disable boundary: {sh.term.between!r}")
+        sm.require(sh.term.expect(PTY_PROMPT, timeout=120), f"no prompt: {sh.term.rest()[-300:]!r}")
         self.check("arrow keys are dropped from the line", sh.term.between.replace(b"\r\n", b"\n") == b"up\n",
                    repr(sh.term.between))
         rc, out, err = self.ssh("mkdir /home/operator/x && ls /home/operator && rm -r /home/operator/x; ls /home/operator")
@@ -701,7 +721,7 @@ def host_check(root=None, image_list=True):
     need(NATIVE == oi.NATIVE, f"NATIVE differs from scripts/operator_image.py's: {oi.NATIVE}")
     builtins = shell_builtins(root)
     for name in SBASE:
-        need(name not in NATIVE + ["absd-sh"], f"{name}: a native command has the name")
+        need(name not in NATIVE + ["absd-sh", "sh"], f"{name}: a native command has the name")
         need(name not in PORTS, f"{name}: a Rust port has the name")
         need(name not in builtins, f"{name}: an absd-sh builtin has the name ({sorted(builtins)})")
         need(name not in ABSENT + ["ps"], f"{name}: deliberately not provided (ABSENT)")
@@ -758,7 +778,8 @@ def main():
     args, rest = ap.parse_known_args()
     work = pathlib.Path(args.work)
     work.mkdir(parents=True, exist_ok=True)
-    # Room for the ports (about 5 MB) beside the platform's commands.
+    # Room for the ports (about 5 MB) beside the platform's commands; the
+    # import peak can raise it (ssh_absd setup, exec-matrix.py fitted_image_bytes).
     ssh_absd.IMAGE_BYTES = 32 * 1024 * 1024
     ssh_absd.DEVICE_SECTORS = ssh_absd.IMAGE_BYTES // 512
     base = ssh_absd.target(rest)

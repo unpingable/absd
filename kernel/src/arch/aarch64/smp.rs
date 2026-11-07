@@ -45,6 +45,8 @@ pub fn configure(board: &super::fdt::Board) {
         board.smp_request, board.cpu_count,
         "SMP topology/request mismatch"
     );
+    // cpu::id(), CPU_ON targets and SGI routing all use Aff0 today.
+    assert_eq!(board.cpu_shift, 0, "SMP with Aff1 CPU ids unsupported");
     crate::cpu::configure(board.cpu_count);
     ENABLED.store(true, Ordering::Release);
 }

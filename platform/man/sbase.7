@@ -6,21 +6,28 @@
 .Nm sbase
 .Nd the base userland's sbase ports, and their licence
 .Sh DESCRIPTION
-Nine commands under
+The following commands under
 .Pa /bin
 are C programs from sbase 0.1, the suckless project's Unix tools (MIT
 licence), built for ABSD with the platform's C kit
 .Pq Nm absd-cc , No Picolibc and the POSIX adapter :
 .Xr cmp 1 ,
+.Xr dirname 1 ,
 .Xr ed 1 ,
 .Xr find 1 ,
 .Xr grep 1 ,
 .Xr od 1 ,
+.Xr paste 1 ,
 .Xr printf 1 ,
+.Xr rmdir 1 ,
 .Xr sed 1 ,
 .Xr sort 1 ,
+.Xr sleep 1 ,
+.Xr tar 1 ,
+.Xr tee 1 ,
+.Xr test 1 ,
 and
-.Xr test 1 .
+.Xr tr 1 .
 They are bounded ports, not a promise of a Unix environment: where a tool
 needs something ABSD does not provide, it was patched to refuse that
 feature with a message and a status, and each page lists those features
@@ -131,7 +138,9 @@ Authors/contributors include:
 .Xr grep 1 ,
 .Xr intro 1 ,
 .Xr od 1 ,
+.Xr paste 1 ,
 .Xr printf 1 ,
+.Xr rmdir 1 ,
 .Xr sed 1 ,
 .Xr sort 1 ,
 .Xr test 1

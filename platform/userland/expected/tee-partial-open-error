@@ -1,0 +1,18 @@
+status 1
+--- stdout
+b
+a
+a
+c
+c
+c
+--- stderr
+/bin/tee: open missing/out: No such file or directory
+--- files
+file captured.txt 12
+b
+a
+a
+c
+c
+c

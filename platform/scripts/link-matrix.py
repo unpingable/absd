@@ -15,6 +15,7 @@ recovery = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(recovery)
 served, sm, ssh_absd = recovery.served, recovery.served.sm, recovery.served.ssh_absd
 from served_ram import served_qemu
+import storage_fence_guest as fence_guest
 
 NET = re.compile(r"(?m)^SSH NET link=(up|down|unknown) disabled=(0|1|unknown) rx_missed=(\d+) link_errors=(\d+)$")
 TX = re.compile(r"(?m)^SSH NET TX held=(0|1) no_carrier=(\d+)$")
@@ -26,12 +27,35 @@ FAULT = "SERVED SERVICE FAULT component=sshd reason=nic_disabled"
 BEGIN = re.compile(r"(?m)^SERVED RECOVERY BEGIN reason=served worker fault file_server_status=(running|0)$")
 CASES = ("link-down-at-boot", "loss-after-ready", "flaps", "persistent-outage", "absent-nic",
          "disabled-nic", "disabled-nic-budget", "tx-hold", "tx-hold-stuck")
+# Owner storage-fence contract (coordination record #63, #54): an unclean end, here
+# init's served recovery reset after a device fault (never finalized), is
+# refused on the next boot before readiness with zero writes. Nothing
+# bypasses the fence; read-only recovery still works.
+WRITABLE_REFUSED, NO_SERVER = fence_guest.WRITABLE_REFUSED, fence_guest.NO_SERVER
+# Owner decision 2026-10-19 (#63): init's three-reset budget is retained
+# and disclosed but inert, since every served recovery reset lands in a
+# pre-ready refusal on the next boot. disabled-nic-budget checks the first
+# fault and reset, then that refusal, and prints the UNSUPPORTED capability
+# line for the countdown; that line is never a mark or a pass.
+UNSUPPORTED = "AUTOMATIC WRITABLE RECOVERY UNSUPPORTED (owner 2026-10-19; #63: operator act only)"
 FLAPS, OUTAGE_SECONDS, IDLE_SECONDS, TRANSFER_BYTES = 5, 20, 10, 16_000_000
 LANE, MAX_LOAD = str(here.parent.parent), 10.0
 
 
 class Refused(Exception):
     """A U1 host rule would be broken by the next QEMU launch."""
+
+
+def successor_refusal(raw, status, armed=None):
+    """The fault-reset generation's successor, from its serial log and the
+    durable-boot status (storage_fence_guest.require_served_successor_refusal:
+    one boot, status 7, kernel not_declared, the exact fence refusal, init's
+    generation_not_ready, sshd's no_server, no readiness, reset or stop,
+    block_writes=0 block_flushes=0 block_errors=0), with no injected fault
+    and no `armed` fixture. A writable login, a missing line or a further
+    reset raises RuntimeError."""
+    return fence_guest.require_served_successor_refusal(
+        raw, status, forbid=("NIC RING FAULT INJECTED",) + ((armed,) if armed else ()))
 
 
 def host_rules():
@@ -66,6 +90,13 @@ class LinkTarget(served.ServedTarget):
 
 class LinkMatrix(sm.Matrix):
     qmp = None
+    unsupported_lines = ()
+
+    def unsupported(self, case, detail):
+        """A capability the fence makes unexercisable: printed, never marked."""
+        line = f"{UNSUPPORTED} case={case} {detail}"
+        print(line, flush=True)
+        self.unsupported_lines = (*self.unsupported_lines, line)
 
     def fresh(self, name):
         (self.work / name).mkdir()
@@ -290,34 +321,51 @@ class LinkMatrix(sm.Matrix):
         self.check("sshd: SSH LISTENING, then SSH NET link=down disabled=1, then the named fault",
                    "SSH NET link=down disabled=1 " in worker and FAULT in worker and worker.index("SSH LISTENING ")
                    < worker.index("SSH NET link=down disabled=1 ") < worker.index(FAULT), worker[-800:])
-        self.recovered_after_one_reset("disabled-nic", status, serial)
-        self.mark("DISABLED NIC RECOVERED OK resets=1 streak=1")
+        self.refused_after_one_reset("disabled-nic", status, serial)
+        self.mark("DISABLED NIC SUCCESSOR REFUSED OK resets=1 status=7 block_writes=0 block_flushes=0 image_unchanged=true")
 
-    def recovered_after_one_reset(self, name, status, serial, armed=None):
-        """The §6.4 tail shared by the one-shot device cases: the faulting
-        boot (under ABSD_QEMU_REBOOT=exit) ended QEMU at the guest reset after
-        init spent one reset under the unchanged budget; the same image then
-        boots without the fault option (harness only, D6), carries no `armed`
-        banner, recovers with streak 1, logs in and halts."""
+    def refused_after_one_reset(self, name, status, serial, armed=None):
+        """The §6.4 tail shared by the one-shot device cases, under the
+        owner's storage fence: the faulting boot (under
+        ABSD_QEMU_REBOOT=exit) ended QEMU at the guest reset after init
+        spent one reset under the unchanged budget. That reset is never
+        finalized, so the same image, booted without the fault option
+        (harness only, D6), must be refused before readiness: status 7,
+        the named fence refusal, sshd's no_server refusal, no further
+        reset, zero block writes and flushes, the image bytes unchanged."""
         t = self.t
         self.check("QEMU ended at the guest reset (status 0 under ABSD_QEMU_REBOOT=exit)", status == "0", f"status={status}")
         self.check("init spent one reset under the unchanged budget",
                    BEGIN.search(serial) is not None and "SERVED RECOVERY RESET " in serial
                    and "MACHINE RECOVER RESET" in serial and "SERVED RECOVERY ESCALATED" not in serial, serial[-800:])
-        os.environ["ABSD_QEMU_REBOOT"] = "allow"
+        self.check("the faulting boot was not finalized (an unclean end)",
+                   "FSD FINALIZED" not in serial and "SERVED SHUTDOWN FINALIZED" not in serial, serial[-800:])
+        # refused_cold_boot: explicit `net fsd served` options (no fault or
+        # fixture option, no declaration), ata, image sha256 before and after.
+        self.refused_cold(f"{name}-successor", armed)
+
+    def refused_cold(self, label, armed=None):
+        """The same image booted cold in a new QEMU without any fault option:
+        the strict served refusal with the image sha256 unchanged."""
+        what = (f"{label}: status 7, {WRITABLE_REFUSED}, {NO_SERVER}, no reset, "
+                "block_writes=0 block_flushes=0, image unchanged")
+        host_rules()
         try:
-            t.start(expect_sweep=True)
-        finally:
-            os.environ.pop("ABSD_QEMU_REBOOT", None)
-        _, serial, worker = recovery.ready(t, 0, t.proc.pid)
-        recovery.recovery_lines(serial, worker, 1, "failed")
-        if armed:
-            self.check("the next boot carries no fixture", armed not in serial, serial[-600:])
-        self.motd("a login on the next boot")
-        self.halt(name)
+            refusal = fence_guest.refused_cold_boot(self.t, "ata", label, served=True,
+                                                    previous="failed", reason="not_declared")
+            line = successor_refusal(pathlib.Path(refusal["log"]).read_bytes(), refusal["status"], armed)
+        except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            self.check(what, False, str(e))
+        self.check(what, line == WRITABLE_REFUSED, line)
 
     def disabled_nic_budget(self):
-        """Negative control: the fault on every boot spends three resets; the fourth stops."""
+        """§6.4 with the fault option on every boot, under the owner's decision
+        (2026-10-19, #63): the first boot faults and init spends one reset
+        exactly as before; that reset is not finalized, so the next boot in
+        the same QEMU (still armed) is the strict pre-ready refusal: status 7,
+        two boots only, no readiness, zero writes and flushes. A cold retry
+        without the option is refused with the image unchanged. The budget's
+        countdown to the named stop cannot be exercised: UNSUPPORTED."""
         t = self.t
         t.ring_fault = True
         try:
@@ -326,20 +374,28 @@ class LinkMatrix(sm.Matrix):
         finally:
             t.ring_fault = False
         self.qmp.close()
+        raw = t.log.read_bytes()
         parts = recovery.boot_parts(t)
-        self.check("four boots, then the named stop (QEMU status 83)",
-                   status == recovery.BUDGET_STOP_STATUS and len(parts) == recovery.BUDGET + 1,
-                   f"status={status} boots={len(parts)}")
-        for index, (serial, worker) in enumerate(parts):
-            recovery.recovery_lines(serial, worker, index, "none" if index == 0 else "failed")
-            self.check(f"boot {index + 1}: named fault after SSH LISTENING",
-                       FAULT in worker and worker.index("SSH LISTENING ") < worker.index(FAULT), worker[-400:])
-        last = parts[-1][0]
-        escalated = re.search(rf"(?m)^SERVED RECOVERY ESCALATED reason=recovery_budget_exhausted streak={recovery.BUDGET} "
-                              rf"budget={recovery.BUDGET} reaped=\d+ children_drained=\w+ outcome=stop code=20$", last)
-        self.check("the fourth fault escalates with code 20",
-                   escalated is not None and "MACHINE STOP code=20" in last, last[-800:])
-        self.mark(f"DISABLED NIC BUDGET OK resets={recovery.BUDGET} status={status}")
+        self.check("disabled-nic-budget: a first boot was recorded", len(parts) >= 1, f"status={status}")
+        serial, worker = parts[0]
+        recovery.recovery_lines(serial, worker, 0, "none")
+        self.check("boot 1: named fault after SSH LISTENING",
+                   FAULT in worker and worker.index("SSH LISTENING ") < worker.index(FAULT), worker[-400:])
+        self.check("boot 1: init spent one reset under the unchanged budget, not finalized",
+                   BEGIN.search(serial) is not None and "SERVED RECOVERY RESET " in serial
+                   and "MACHINE RECOVER RESET" in serial and "SERVED RECOVERY ESCALATED" not in serial
+                   and "FSD FINALIZED" not in serial and "SERVED SHUTDOWN FINALIZED" not in serial, serial[-800:])
+        what = (f"boot 2 (same QEMU): status 7, {WRITABLE_REFUSED}, {NO_SERVER}, no further reset, "
+                "block_writes=0 block_flushes=0")
+        try:
+            line = fence_guest.require_successor_in_log(raw, status, 1)
+        except RuntimeError as e:
+            self.check(what, False, str(e))
+        self.check(what, line == WRITABLE_REFUSED, line)
+        self.refused_cold("disabled-nic-budget-retry")
+        self.unsupported("disabled-nic-budget", f"budget={recovery.BUDGET} countdown=not_exercisable")
+        self.mark("DISABLED NIC BUDGET SUCCESSOR REFUSED OK resets=1 status=7 block_writes=0 block_flushes=0 "
+                  "image_unchanged=true")
 
     def tx_hold(self):
         """§10 (b) on QEMU through the kernel's qualification fixture: a
@@ -418,8 +474,9 @@ class LinkMatrix(sm.Matrix):
                    "SSH NET TX held=1 " in worker and "SSH NET link=down disabled=1 " in worker and FAULT in worker
                    and worker.index("SSH NET TX held=1 ") < worker.index("SSH NET link=down disabled=1 ")
                    < worker.index(FAULT), worker[-800:])
-        self.recovered_after_one_reset("tx-hold-stuck", status, serial, armed=FIXTURE)
-        self.mark("TX HOLD STUCK RECOVERED OK resets=1 streak=1")
+        self.refused_after_one_reset("tx-hold-stuck", status, serial, armed=FIXTURE)
+        self.mark("TX HOLD STUCK SUCCESSOR REFUSED OK resets=1 status=7 block_writes=0 block_flushes=0 "
+                  "image_unchanged=true")
 
 
 def main():
@@ -433,23 +490,57 @@ def main():
     target = LinkTarget.__new__(LinkTarget)
     target.__dict__.update(base.__dict__)
     matrix = LinkMatrix(target, work)
+    selected = (args.only,) if args.only else CASES
+    done = []
     try:
-        for name in (args.only,) if args.only else CASES:
+        for name in selected:
+            before = len(matrix.passed)
             getattr(matrix, name.replace("-", "_"))()
             target.stop()
+            if len(matrix.passed) != before + 1:
+                raise RuntimeError(f"case {name} marked {len(matrix.passed) - before} times, expected exactly once")
+            done.append(name)
     except Refused as e:
         print(f"LINK MATRIX REFUSED {e}", file=sys.stderr)
         target.stop()
+        report_not_run(selected, done)
         sys.exit(1)
     except (sm.Failed, ssh_absd.Failed, RuntimeError) as e:
         print(f"LINK MATRIX FAILED: {e}", file=sys.stderr)
         target.stop()
+        report_not_run(selected, done)
         sys.exit(1)
     except BaseException:
         target.stop()
         raise
-    print(f"LINK MATRIX OK checks={matrix.checks}")
+    sys.exit(verdict(selected, done, matrix.passed, matrix.checks, matrix.unsupported_lines))
 
+
+def report_not_run(selected, done):
+    """After a failure, every selected case that did not complete is named."""
+    rest = [n for n in selected if n not in done]
+    print(f"LINK MATRIX NOT_RUN cases={','.join(rest[1:]) or 'none'} failed_case={rest[0] if rest else 'none'}",
+          file=sys.stderr)
+
+
+def verdict(selected, done, passed, checks, unsupported=()):
+    """The case-count predicate: OK (exit 0) only when every selected case
+    ran, in order, and marked exactly once with a distinct mark. UNSUPPORTED
+    capability lines are repeated before the verdict and are never counted
+    as cases or marks: a mark that is a disclosure line fails the run."""
+    if list(done) != list(selected) or len(passed) != len(done):
+        print(f"LINK MATRIX FAILED: case count selected={len(selected)} ran={len(done)} marks={len(passed)}",
+              file=sys.stderr)
+        return 1
+    bad = [m for m in passed if str(m).startswith(UNSUPPORTED) or m in unsupported]
+    if bad or len(set(passed)) != len(passed):
+        print(f"LINK MATRIX FAILED: marks must be distinct and never disclosure lines: {bad or 'duplicate marks'}",
+              file=sys.stderr)
+        return 1
+    for line in unsupported:
+        print(line)
+    print(f"LINK MATRIX OK checks={checks} cases={len(done)}")
+    return 0
 
 if __name__ == "__main__":
     main()

@@ -56,14 +56,34 @@ pub const INIT_MODE_SERVED_FSD_HANG_TEST: u64 = 18;
 pub const INIT_MODE_MASK: u64 = 0xff;
 pub const INIT_STEP_SHIFT: u32 = 8;
 
+/// The file-server modes carry the boot's storage fence (the kernel's
+/// `storage_fence::Fence`) in the top two bits, above the step: init
+/// forwards it to the file server. This is a changed internal startup
+/// contract: the step is limited to the bits below it, even though no
+/// syscall number or KERNEL_ABI value changes. The current classifier
+/// establishes no fence; legacy controller/external words are unverified
+/// inputs and confer no writable-entry authority.
+pub const INIT_FENCE_SHIFT: u32 = 62;
+pub const INIT_FENCE_NONE: u64 = 0;
+pub const INIT_FENCE_CONTROLLER: u64 = 1;
+pub const INIT_FENCE_EXTERNAL: u64 = 2;
+/// The largest step `init_arg` keeps whole.
+pub const INIT_STEP_MAX: u64 = (1 << (INIT_FENCE_SHIFT - INIT_STEP_SHIFT)) - 1;
+
 pub const fn init_arg(mode: u64, step: u64) -> u64 {
-    (mode & INIT_MODE_MASK) | (step << INIT_STEP_SHIFT)
+    (mode & INIT_MODE_MASK) | ((step & INIT_STEP_MAX) << INIT_STEP_SHIFT)
+}
+pub const fn init_with_fence(arg: u64, fence: u64) -> u64 {
+    (arg & !(3 << INIT_FENCE_SHIFT)) | ((fence & 3) << INIT_FENCE_SHIFT)
 }
 pub const fn init_mode(arg: u64) -> u64 {
     arg & INIT_MODE_MASK
 }
 pub const fn init_step(arg: u64) -> u64 {
-    arg >> INIT_STEP_SHIFT
+    (arg >> INIT_STEP_SHIFT) & INIT_STEP_MAX
+}
+pub const fn init_fence(arg: u64) -> u64 {
+    arg >> INIT_FENCE_SHIFT
 }
 
 /// A durable worker that exits with `DURABLE_WORKER_ABORT_STATUS` is replaced
@@ -470,7 +490,33 @@ impl ServedReadyProbe {
         )
     }
 
+    /// Presentation may start with an unenrolled login prompt. This does not
+    /// authorize recovery or assert that a network listener exists.
+    pub fn presentation_line(line: &[u8]) -> bool {
+        Self::local_line(line).is_some() || Self::ready_line(line)
+    }
+
+    fn local_line(line: &[u8]) -> Option<bool> {
+        let rest = line.strip_prefix(b"LOCAL READY boot=")?;
+        if rest.len() != 43
+            || !rest[..32]
+                .iter()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+            || &rest[32..42] != b" enrolled="
+        {
+            return None;
+        }
+        match rest[42] {
+            b'0' => Some(false),
+            b'1' => Some(true),
+            _ => None,
+        }
+    }
+
     fn ready_line(line: &[u8]) -> bool {
+        if line.starts_with(b"LOCAL READY boot=") {
+            return Self::local_line(line) == Some(true);
+        }
         const PREFIX: &[u8] = b"SSH LISTENING port=";
         const FIELD: &[u8] = b" authorized_keys=";
         const SOURCE: &[u8] = b" preauth_per_source=";
@@ -661,8 +707,8 @@ pub const RT_PROBE: u64 = 41;
 pub const FPU_MXCSR: u64 = 42;
 /// Client channels init mints for an `fsd` boot besides the control
 /// channel: two pipes each, so the control channel and these take
-/// `2 * (1 + FILE_SERVER_SLOTS)` of the kernel's 48 pipes for the boot.
-pub const FILE_SERVER_SLOTS: usize = 10;
+/// `2 * (1 + FILE_SERVER_SLOTS)` pipes, plus an optional private logger channel.
+pub const FILE_SERVER_SLOTS: usize = 18;
 pub const INPUT_STREAM_BYTES: usize = 1245;
 pub const INPUT_STREAM_DIGEST: u32 = 0xfaef_2b56;
 
@@ -678,7 +724,9 @@ pub const fn input_stream_byte(index: usize) -> u8 {
 /// Private qualification fixture; AP placement is available only in the
 /// separately compiled and explicitly selected SMP user test boot.
 pub const SMP_USER: u64 = 43;
-pub const NAMES: [&str; 44] = [
+/// Separately supervised bounded diagnostics collector, supplied by the platform.
+pub const LOGD: u64 = 44;
+pub const NAMES: [&str; 45] = [
     "init",
     "hello-a",
     "hello-b",
@@ -723,6 +771,7 @@ pub const NAMES: [&str; 44] = [
     "rt-probe",
     "fpu-mxcsr",
     "smp-user",
+    "logd",
 ];
 
 /// Legacy-entry programs safe for the fuzz process to start and collect.
@@ -736,6 +785,30 @@ pub const FUZZ_LEGACY_PROGRAMS: [u64; 20] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_fence_rides_above_the_step_without_touching_it() {
+        for step in [0, 1, 7, DURABLE_REPLACEMENT_UNIT + 3, INIT_STEP_MAX] {
+            for fence in [INIT_FENCE_NONE, INIT_FENCE_CONTROLLER, INIT_FENCE_EXTERNAL] {
+                let arg = init_with_fence(init_arg(INIT_MODE_SERVED_FSD, step), fence);
+                assert_eq!(init_mode(arg), INIT_MODE_SERVED_FSD);
+                assert_eq!(init_step(arg), step);
+                assert_eq!(init_fence(arg), fence);
+            }
+        }
+        // A step past the limit cannot reach the fence bits (main.rs refuses
+        // such a step before it is encoded).
+        assert_eq!(
+            init_fence(init_arg(INIT_MODE_SERVED_FSD, u64::MAX)),
+            INIT_FENCE_NONE
+        );
+        // Replacing a fence replaces it, never ORs two together.
+        let arg = init_with_fence(init_arg(INIT_MODE_SERVED_FSD, 5), INIT_FENCE_EXTERNAL);
+        assert_eq!(
+            init_fence(init_with_fence(arg, INIT_FENCE_CONTROLLER)),
+            INIT_FENCE_CONTROLLER
+        );
+    }
 
     #[test]
     fn served_ready_requires_complete_current_listener_record() {
@@ -1249,5 +1322,17 @@ mod tests {
                 fsd_idle_ticks: SERVED_LIVENESS_TICKS,
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod local_readiness_tests {
+    use super::ServedReadyProbe;
+    #[test]
+    fn only_enrolled_local_service_can_be_ready_without_a_listener() {
+        let mut probe = ServedReadyProbe::new();
+        assert!(!probe.push(b"LOCAL READY boot=0123456789abcdef0123456789abcdef enrolled=0\n"));
+        assert!(!probe.push(b"LOCAL READY boot=bad enrolled=1\n"));
+        assert!(probe.push(b"LOCAL READY boot=0123456789abcdef0123456789abcdef enrolled=1\n"));
     }
 }

@@ -206,7 +206,9 @@ mod tests {
     }
 }
 
-pub const MAX_PIPES: usize = 48;
+// Bounded headroom for the ordinary operator composition: service channels,
+// two local terminals, four SSH shells and foreground pipelines.
+pub const MAX_PIPES: usize = 128;
 pub const PIPE_CAPACITY: usize = 1024;
 
 /// Identifies one issue of a pipe slot: index plus generation.
@@ -453,6 +455,27 @@ mod pipe_tests {
     }
 
     #[test]
+    fn operator_services_and_sessions_leave_pipeline_headroom() {
+        let mut table = Box::new(PipeTable::new());
+        //40 FSD pipes +3 worker +2 FSD capture +1 local +2 logger;
+        // six terminals with merged stdio/control; six two-stage redirected
+        // pipelines use at most5 pipes each plus one startup pipe per shell.
+        let needed = 40 + 3 + 2 + 1 + 2 + 6 * 4 + 6 * 5 + 6;
+        let mut owned = std::vec::Vec::new();
+        for _ in 0..needed {
+            owned.push(
+                table
+                    .create(HANDLE_READ | HANDLE_WRITE)
+                    .expect("operator pipe headroom"),
+            );
+        }
+        for id in owned {
+            assert_eq!(table.release(id, true, true), Ok(None));
+        }
+        assert_eq!(table.live(), 0);
+    }
+
+    #[test]
     fn arbitrary_handle_sequences_keep_pipe_reference_counts_balanced() {
         const SLOTS: usize = 32;
         let mut table = Box::new(PipeTable::new());
@@ -510,5 +533,29 @@ mod pipe_tests {
         }
         assert_eq!(table.live(), 0);
         assert_eq!(table.status(id), Err(PipeError::Gone));
+    }
+}
+
+#[cfg(test)]
+mod full_pipe_capacity_tests {
+    use super::*;
+    #[test]
+    fn all_128_global_pipes_exhaust_free_reuse_and_reclaim_exactly() {
+        let mut table = std::boxed::Box::new(PipeTable::new());
+        let mut held = std::vec::Vec::new();
+        for _ in 0..128 {
+            held.push(table.create(HANDLE_READ | HANDLE_WRITE).unwrap());
+        }
+        assert_eq!(table.create(HANDLE_READ), Err(PipeError::Full));
+        let stale = held.remove(42);
+        assert_eq!(table.release(stale, true, true), Ok(None));
+        let replacement = table.create(HANDLE_READ | HANDLE_WRITE).unwrap();
+        assert_ne!(stale, replacement);
+        assert_eq!(table.create(HANDLE_READ), Err(PipeError::Full));
+        held.push(replacement);
+        for id in held {
+            assert_eq!(table.release(id, true, true), Ok(None));
+        }
+        assert_eq!(table.live(), 0);
     }
 }

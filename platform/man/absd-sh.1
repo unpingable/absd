@@ -1,399 +1,469 @@
 .\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
-.Dd October 8, 2026
+.Dd November 4, 2026
 .Dt ABSD-SH 1
 .Os ABSD
 .Sh NAME
 .Nm absd-sh
-.Nd the ABSD command shell
+.Nd native ABSD command shell and script interpreter
 .Sh SYNOPSIS
 .Nm
-.Op Fl c Ar line
+.Op Fl c Ar command Op Ar name Op Ar argument ...
+.Nm
+.Fl s
+.Op Ar argument ...
+.Nm
+.Ar file
+.Op Ar argument ...
 .Sh DESCRIPTION
 .Nm
-reads one line at a time and runs it: one pipeline, or several joined
-by
-.Ql \&; ,
-.Ql && ,
-and
-.Ql || .
-Without arguments it writes the prompt
-.Ql absd$\ \&
-before every line, and at the end of its input exits with the status of the
-last line.
-With
+is the native ABSD shell, also installed as
+.Pa /bin/sh .
+Without arguments it reads interactive commands with the prompt
+.Ql absd$ .
+An unfinished quote or compound command continues at
+.Ql > .
+Interactive reads stop at each command newline, leaving following pasted bytes
+in the inherited input pipe for a foreground application such as cat.
+Script input retains its existing buffered parsing behavior.
 .Fl c
-it runs
-.Ar line
-and exits with its status.
-It is the shell an interactive SSH session starts.
-It is deliberately small: it is not a POSIX shell and does not run
-scripts.
+executes command text, with the optional name as $0 and following arguments
+as $1 and later parameters.
+.Fl s
+reads a script from standard input without prompts.
+Otherwise the named file is read as a script; $0 is its name.
 .Pp
-A command given to
-.Nm ssh
-.Pq Ql ssh host ls /bin
-does not run under
-.Nm
-unless it uses the shell's syntax: the SSH server splits it at
-whitespace and runs its first word directly (a bare name as
-.Pa /bin/ Ns Ar name ) ,
-but a command holding
-.Ql | ,
-.Ql < ,
-.Ql > ,
-.Ql \&; ,
-.Ql & ,
+The upstream conch-parser grammar handles shell syntax.
+Evaluation uses ABSD process handles and explicit stream and filesystem
+transfer, without fork or Unix job control.
+Every directly spawned native command loses the spawn right.
+Interpreted scripts run inside the authority-holding shell and can compose
+native children, all supervised by that shell.
+.Ss Words and expansions
+Single quotes preserve literal text, including dollar signs.
+Double quotes preserve spaces while allowing variable and command expansion.
+Backslash quotes the next character outside single quotes.
+A backslash followed by newline continues a command.
+Comments start with an unquoted # at a word boundary.
+Carriage return (CR) is a literal word byte, including outside quotes;
+it is not shell whitespace. CRLF scripts therefore retain CR in command
+names, arguments, assignments and redirection paths, as in Bash, and can
+fail to find commands or delimiters. For example, echo x > f followed by
+CR and newline writes to a filename ending in CR, not to f.
+Terminal input configured to translate CR to newline does so before parsing.
+.Pp
+Assignments, export and unset manage shell variables.
+Unexported variables stay inside the shell.
+Assignments preceding a native command apply to that command's environment;
+the previous shell values are restored afterward.
+Export assignment arguments preserve spaces.
+Supported parameters include $name, ${name}, $?, $0, $1 and later positions,
+$#, $@, $*, $$ and ${#name}.
+Quoted "$@" preserves individual argument boundaries, including empty ones.
+Default, alternative, assignment and required-value forms are supported:
+${name:-word}, ${name:+word}, ${name:=word}, ${name:?message},
+and their forms without a colon.
+.Pp
+Unquoted expansions split on space, tab and newline.
+IFS is not consulted; assigning IFS does not change this fixed splitting rule.
+Filename patterns *, ? and bracket expressions expand in sorted order;
+a leading dot must be explicit and unmatched patterns remain literal.
+Quoted or escaped pattern characters remain literal.
+A leading unquoted tilde expands HOME; named-user tildes are not implemented.
+An SSH login shell starts in writable /home/operator.
+SSH command requests start in /, including requests interpreted by the shell;
+use cd explicitly when a command needs a writable working directory.
+.Pp
+Commands are looked up in /bin, or relative to the shell's working directory
+when their name contains a slash. PATH is passed to children but is not a
+shell search-path configuration.
+.Pp
+Command substitutions $(commands) and backticks collect standard output,
+remove trailing newlines and preserve shell variables, arguments and cwd.
+The output limit is 1 MiB; overflow is an error.
+Arithmetic expansion supports integers, variables, +, -, *, /, %,
+parentheses and unary +, - and ! with checked overflow and division.
+.Ss Commands and control flow
+Pipelines connect native commands; an output builtin may start a pipeline.
+The pipeline status is its last command's status.
+Lists support semicolon, newline, &&, || and pipeline negation !.
+Control flow includes if/elif/else, for, while, until, case,
+brace groups, isolated parenthesized groups and function definitions.
+Break and continue operate on the innermost loop without numeric arguments.
+Requests made in while or until guards belong to that loop and are consumed
+before the surrounding command list resumes. The guard's normal terminating
+condition takes precedence over a pending request.
+Functions and parenthesized groups start with their own loop context.
+Outside an active loop, zero-argument break and continue print a diagnostic,
+return status 0 and allow following commands to run.
+Functions support positional arguments but no return builtin.
+.Pp
+Builtins are cd, pwd, echo (including -n), exit, status, help,
+true, false, :, export, unset, set --, shift, break, continue,
+sh and dot (source).
+Plain ps asks the session server for this session's process list;
+ps with arguments invokes /bin/ps when that command is installed.
+The shell does not supply machine-wide process inspection itself.
+Shutdown, reboot and clock ask the session server, which applies its own authority
+and command policy.
+See clock(1) for boot-local civil time and configured synchronization.
+A shell without session control cannot make those requests.
+.Ss Scripts and files
+Use sh FILE ARG... or ./FILE ARG... .
+A directly invoked script must begin with exactly
+.Ql #!/bin/sh
 or
-.Ql \&"
-runs as
-.Ql absd-sh -c
-with the whole text as its line.
-Lines on the shell's standard input work too:
-.Ql echo 'ls /bin | wc -l' | ssh host .
-.Ss Words
-A line splits into words at whitespace.
-Double quotes group:
-.Ql \&"a b"
-is one word, and
-.Ql a"b c"
-is the word
-.Ql ab c .
-Inside quotes,
-.Ql \e"
-and
-.Ql \e\e
-stand for
-.Ql \&"
-and
-.Ql \e ,
-and
-.Ql | ,
-.Ql < ,
-.Ql > ,
-.Ql \&; ,
-.Ql &
-are ordinary characters.
-Outside quotes a backslash is an ordinary character.
-Nothing else is special:
-.Ql $ ,
-.Ql * ,
-.Ql \(ti ,
-and
-.Ql #
-are ordinary characters, so there are no variables, no globbing, and no
-comments.
-An unterminated quote is a syntax error, and so is any single
-.Ql &
-outside quotes, even inside a word (there are no background jobs).
-.Ss Commands
-The first word names the command.
-The builtins are listed below.
-Any other name runs a program from the filesystem: the word itself when it
-contains a
-.Ql / ,
-resolved against the working directory, otherwise
-.Pa /bin/ Ns Ar name .
-There is no
-.Ev PATH
-search.
-A program is a static ABSD executable; there is no
-.Ql #!
-and no execute permission.
-The remaining words are its arguments.
-It starts with the shell's working directory and environment, and with any
-of its three standard streams that is not piped or redirected shared with
-the shell.
+.Ql #!/bin/absd-sh .
+The shebang interpreter cannot have flags.
+A file explicitly passed to sh may omit the shebang.
+Dot FILE executes in the current shell environment.
+Syntax and unsupported structural forms are validated across the whole
+parsed script before any command or redirection runs, including dead branches.
+A shell parsing or evaluation error inside sh, a direct script or dot
+becomes status 2 for that
+invocation; the caller may handle it with if, && or ||.
+Errors whose command names depend on expansion are diagnosed when expanded.
+A script run with sh or a direct path has its own variable, argument,
+function and working-directory scope.
 .Pp
-Commands cannot start programs.
-The shell starts every command without the spawn right
-.Pq Xr process 7 ,
-and nothing gives it back: a command that tries to start a program, such as
-another
-.Nm
-given
-.Fl c ,
-is refused
-.Pq Dq permission denied ,
-and an inner
-.Nm
-reports that command's status as 126.
-So every process of a session is the shell or one of its commands, and the
-shell can end all of them.
-.Ss Lists
-A line may hold several pipelines:
-.Bl -tag -width "a || b" -compact
-.It Ar a No \&; Ar b
-runs
-.Ar b
-after
-.Ar a ,
-whatever its status
-.It Ar a No && Ar b
-runs
-.Ar b
-only if
-.Ar a Ns 's
-status is 0
-.It Ar a No || Ar b
-runs
-.Ar b
-only if it is not
-.El
+Native commands accept < FILE, > FILE, >> FILE, 2> FILE and 2>> FILE.
+Output descriptor duplication supports literal descriptors 1 and 2:
+2>&1 sends stderr to the current stdout destination, and 1>&2 sends stdout
+to the current stderr destination.
+Redirection operands are expanded before files are opened; output opens
+and duplications then apply from left to right.
+A duplication keeps the destination selected at that point.
 .Pp
-They run left to right, each decided by the status of the last one
-run; the line's status is the last one run.
-A trailing
-.Ql \&;
-is allowed; an empty element
-.Po
-.Ql a ;; b ,
-.Ql \&; a ,
-.Ql a &&
-.Pc
-is a syntax error.
-.Ic exit
-ends the line, an interrupted pipeline (^C) ends it, and so does the
-session ending;
-.Ic cd
-may be an element.
-.Ss Pipelines and redirection
-Commands joined by
-.Ql |
-run at the same time, each one's standard output feeding the next one's
-standard input through a kernel pipe.
-When a reader ends first, the writer's next write fails with a broken pipe
-error; there is no signal.
-A pipeline's status is its last command's.
+With > FILE 2>&1 both streams share one opened file.
+With 2>&1 > FILE stderr keeps the original stdout destination while stdout
+goes to FILE.
+Repeated output opens retain their creation/truncation effects.
+When both native streams share a pipe-backed destination, the child gets
+two copies of one writer endpoint, preserving its stream-write order.
+A pipeline may receive stderr after stdout is redirected elsewhere;
+a pipe whose writer was redirected away reaches end of input.
 .Pp
-Each command may redirect its streams:
-.Bl -tag -width "2>> file" -compact
-.It Ic < Ar file
-standard input from
-.Ar file
-.It Ic > Ar file
-standard output to
-.Ar file ,
-created or truncated
-.It Ic >> Ar file
-standard output appended to
-.Ar file
-.It Ic 2> Ar file
-standard error to
-.Ar file
-.It Ic 2>> Ar file
-standard error appended to
-.Ar file
-.El
+The shell opens files and copies between them and child pipes;
+children do not receive the shell's open filesystem objects.
+A native command's own diagnostics follow its stderr destination.
+When its stderr has an explicit redirection, or is inherited from a
+redirected surrounding group, the shell omits its extra exit-status line.
+The shell also omits that extra line when testing a status in an if/elif,
+while or until guard, under pipeline negation, or before a following
+&& or || operand. Functions, scripts, groups, subshells and command
+substitutions inherit that condition context. The bodies of an if or loop
+construct also inherit it when the whole construct is evaluated as a condition.
+Actual command diagnostics remain visible, and the numeric status is still
+available through status and $?.
+A final operand outside a condition retains ordinary status reporting.
+When reported without stderr redirection, the extra exit-status line uses
+the enclosing shell error destination.
+Preparation, start and stream-copy errors still use that enclosing destination.
+Output builtins and interpreted groups support output/error redirection.
+Session/control builtins such as cd and exit still refuse their own
+redirections, and output builtins at the head of a pipeline take no
+redirections.
+Input redirection on an interpreted script or group is refused; redirect
+the native command that consumes the file instead.
+File input redirection reads at most 4 KiB into a pending buffer, then
+feeds the child's stdin through a pipe in steps of at most 256 bytes.
+Short writes and timeouts retain the pending suffix; each step yields to
+other streams and session control. A synchronous filesystem read can still
+delay the next control check. Direct filename arguments let a command read
+the file itself, without this shell-to-stdin copy.
+The prefixes ro and nofs give native commands read-only or no filesystem
+authority. They do not apply to interpreted builtins or scripts.
+File output uses one shared 4 KiB buffer per opened endpoint, including
+stdout/stderr aliases. The copier flushes pending bytes when full, when its
+pipe is idle, or after 16 monotonic ticks between copier steps.
+Filesystem waits can extend that interval. End of output and Ctrl-C flush
+accepted bytes and request durability. The copier's session END cleanup
+flushes accepted bytes without adding a sync request; enclosing file scopes
+and file close may still sync. Write and flush failures are reported, and
+failed buffered suffixes are not silently retried on close.
 .Pp
-The shell opens every redirection itself, with its own authority, before
-anything starts; if one cannot be opened nothing starts and the status is
-1.
-The command never holds the file: its stream is a pipe, and the shell copies
-between the pipe and the file.
+For supported redirections only, the exact expanded word /dev/null is
+provided by the shell: output is discarded, and input is immediate end
+of input.
+No filesystem entry or device is created, and no filesystem access is
+needed for that endpoint.
+Both > /dev/null and >> /dev/null discard bytes.
+Normal alias ordering still applies: > /dev/null 2>&1 discards both streams,
+while 2>&1 > /dev/null leaves stderr on the earlier stdout destination.
+Other spellings are ordinary paths.
+This is not a general /dev filesystem: a program that opens /dev/null by
+name, such as cat /dev/null, still fails because that file does not exist
+in the session.
+.Ss Heredocs
+Native consuming commands accept <<WORD and <<-WORD on standard input
+(descriptor 0).
+The nonempty delimiter ends the body on a line of its own.
+Quoting any part of the delimiter keeps the body literal; otherwise
+parameters, command substitutions and arithmetic expand as text without
+field splitting, globbing or tilde expansion.
+Quote characters inside an unquoted body are ordinary text.
+Backslash preserves its byte before a double quote; backslash-newline
+joins body lines before delimiter matching. A delimiter can span joined
+physical lines; a delimiter-looking suffix after a joined prefix stays body.
+Backslash escapes dollar, backtick and backslash.
+Quoted delimiters disable this joining and keep body backslashes literal.
+The <<- form strips leading tab characters from body and delimiter lines;
+spaces and tabs after a joined nonempty prefix are retained.
+Carriage return is a literal delimiter or body byte. A terminal configured
+to translate CR to newline performs that translation before shell parsing.
+An empty body delivers end of input.
 .Pp
-These are syntax errors (status 2, nothing starts): an empty command in a
-pipeline, a redirection without a file name, the same stream redirected
-twice, output both to a file and into a pipe, input both from a file and
-from a pipe, and descriptor duplication such as
-.Ql 2>&1 .
-.Ss Narrowing a command's authority
-By default a started command gets the shell's filesystem authority: a file
-server channel bound to the shell's own mounts, never more.
-Two prefixes narrow it for one command:
-.Bl -tag -width "nofs cmd" -compact
-.It Ic ro Ar command ...
-the same mounts, all read-only
-.It Ic nofs Ar command ...
-no filesystem at all
-.El
+The shell feeds the body through the existing native input pipe, without
+creating a temporary file or granting filesystem authority.
+The expanded body is limited to 1 MiB; overflow fails before its consumer
+starts.
+This bounds the delivered body, not every allocation in an existing
+parameter or command substitution.
+Duplicate input redirections, input on a later pipeline stage, and heredocs
+on interpreted commands or builtins remain unsupported.
+A command name determined by expansion may run body substitutions before
+being refused as an interpreted command; pre-execution structural refusal
+applies to forms and names known while validating the input.
+Interactive input continues at the > prompt until the delimiter arrives;
+Ctrl-C cancels the accumulated input and its pending delimiter.
+A bracketed paste may contain the whole heredoc or finish one already being
+collected, followed by more commands; press Enter after the paste to submit it.
+Large unbracketed input batches can be echoed before the shell writes their
+continuation prompts. Repeated > prompts can then appear together, with the
+next absd$ prompt on the same displayed line. Prompt placement does not mark
+an input or command boundary; this cosmetic limitation does not change the
+heredoc delimiter rules.
+A missing delimiter at script or command EOF reports an unterminated-heredoc
+error before any command in that input runs.
+A delimiter at EOF needs no final newline.
+The parser reports the pending delimiter and tab mode; ordinary body lines
+are collected without reparsing the whole accumulated body each time.
 .Pp
-A command started this way still writes its standard output and error;
-.Ql ro cmd > file
-writes
-.Ar file
-through the shell, while
-.Ar cmd
-itself cannot write anywhere.
-The prefixes apply to programs, not to builtins.
-.Pp
-Each command needs a file server channel of its own: one of the shell's
-spare channels (at most two, fewer while other sessions are open), or, for
-one command at a time, the shell's own channel lent to it.
-.Ic ro
-and
-.Ic nofs
-need a spare, and so does every command while the shell is copying a
-redirection.
-A command that gets no channel is not started (status 126).
-See
-.Sx CAVEATS .
-.Ss Builtins
-.Bl -tag -width "shutdown"
-.It Ic cd Op Ar dir
-Change the working directory to
-.Ar dir ,
-which must be an existing directory the session can see; without
-.Ar dir ,
-to
-.Pa / .
-.It Ic pwd
-Print the working directory.
-.It Ic echo Oo Fl n Oc Op Ar word ...
-Print the words separated by single spaces, and a newline unless
-.Fl n .
-.It Ic help
-Print the shell's grammar and builtins on one screen.
-.It Ic status
-Print the status of the last pipeline run.
-.It Ic exit Op Ar n
-Exit with status
-.Ar n ,
-or with the last status.
-.It Ic ps
-List this session's processes; see
-.Xr ps 1 .
-.It Ic shutdown Op Fl h | Fl p | Fl r Ar now
-Ask
-.Nm sshd
-to halt the machine, or with
-.Fl r
-to restart it; see
-.Xr shutdown 8 .
-.It Ic reboot
-Ask
-.Nm sshd
-to restart the machine; see
-.Xr reboot 8 .
-.El
-.Pp
-.Ic ps ,
-.Ic shutdown ,
-and
-.Ic reboot
-are requests to the SSH server on the session's control channel, which
-only a shell
-.Nm sshd
-started for a session holds (interactive, or running a
-.Ql ssh host 'a | b'
-command); any other
-.Nm
-answers
-.Ql no session control channel
-with status 1.
-.Pp
-.Ic pwd ,
-.Ic echo ,
-.Ic status ,
-.Ic help ,
-and
-.Ic ps
-may start a pipeline (the shell writes their output into the next command)
-and may take
-.Ic > ,
-.Ic >> ,
-and
-.Ic 2> .
-.Ic cd ,
-.Ic exit ,
-.Ic shutdown ,
-and
-.Ic reboot
-cannot be part of a pipeline.
-.Ss Diagnostics and status
-When the last command of a pipeline exits with a nonzero status the shell
-reports
-.Ql absd-sh: Ar name Ns : exit status Ar n .
-The statuses the shell itself assigns:
-.Bl -tag -width "128" -compact
-.It 1
-a redirection could not be opened or completed
-.It 2
-a syntax error, or a builtin used wrongly
-.It 126
-the program was found but could not be started
-.It 127
-the program was not found
-.It 128
-the program ended without an exit status (it faulted or was killed)
-.It 130
-the line was interrupted with ^C (nothing more is printed)
-.El
-.Ss On a terminal
-With a terminal
-.Pq Ql ssh -t ,
-or plain
-.Ql ssh host ,
-the SSH server, not the shell, echoes and edits the line: DEL or BS erases
-a character, ^U the line, and ^C discards the line being typed.
-Arrow, function, and Alt keys (escape sequences) are dropped: nothing
-moves the cursor, and nothing is typed or shown for them.
-.Pp
-^C while a line runs interrupts it.
-The key never reaches the command's input: the SSH server tells the shell
-on the session's control channel, and the shell kills every command of the
-running pipeline with the process handle it holds, waits for them, and
-prompts again; the line's status is 130.
-What a command wrote to a redirection file before it was killed stays
-there.
-The shell looks for ^C between bounded waits on its commands, so it acts
-within a few milliseconds of the SSH server passing it on.
-A ^C typed at the prompt only discards the line; it does not interrupt the
-next command.
-A line holds at most 4095 bytes.
-^D on an empty line ends input for the whole session: a command reading
-standard input sees end of file, and so does the shell, which then exits.
-Standard output and standard error arrive on the one screen, in the order
-written.
-The terminal type and window size are not used.
-.Sh EXAMPLES
+Compatibility bound: parameter-default words use this shell's ordinary word quoting;
+${UNSET:-'c'} produces c, without the single quotes.
+This differs from dash. Use a quoted delimiter for literal body bytes.
 .Bd -literal -offset indent
-absd$ cat /etc/motd | wc -l
-1
-absd$ ls /home/operator > /home/operator/listing
-absd$ ro cp /etc/motd /home/operator/copy
-cp: /etc/motd -> /home/operator/copy: ABSD filesystem is mounted read-only
-absd-sh: cp: exit status 1
-absd$ nofs df
-df: this process has no file server channel (-2)
-absd-sh: df: exit status 1
+cd /home/operator
+cat <<'TEXT' > notes.txt
+$HOME stays literal
+TEXT
+cat notes.txt
+NAME='field tech'
+cat <<TEXT
+operator: $NAME
+sum: $((2 + 3))
+TEXT
 .Ed
-.Sh SEE ALSO
-.Xr intro 1 ,
-.Xr ps 1 ,
-.Xr filesystem 7 ,
-.Xr handles 7 ,
-.Xr process 7 ,
-.Xr reboot 8 ,
-.Xr shutdown 8
-.Sh CAVEATS
-There is no process-tree kill; none is needed, since commands cannot
-start programs.
-Without a terminal
-.Pq Ql ssh -T
-there is no ^C.
+.Ss SSH command routing
+The stock SSH server uses argv mode for exec requests. Text with
+shell-significant syntax (operators, quotes, escapes, expansions or patterns),
+or starting with an assignment or a control/script builtin such as cd, export,
+if or sh, runs through absd-sh -c. That text is interpreted
+with the same command permissions as an interactive shell; quoted or patterned
+arguments are not passed as uninterpreted words. Plain native commands such as
+cat FILE retain direct execution.
+.Ss SSH terminal editing and history
+SSH PTY terminals support left and right arrows, Home, End and Delete.
+Backspace removes the preceding character, Ctrl-W the preceding word and
+Ctrl-U the current line. Tabs are stored but displayed as ^I.
+Editing handles single-column UTF-8 characters; wide and combining character
+layout and wrapped-line cursor motion are not implemented.
+PTY input must be valid UTF-8. A line longer than 65536 bytes or invalid
+UTF-8 is refused; subsequent input is discarded until bounded recovery
+completes. In a controlled interactive shell session, the SSH connection
+remains open and recovery uses the fresh code shown by the terminal,
+followed by Enter. Ordinary keys and Ctrl-C cannot release refused input.
+A direct command PTY recovers through the same displayed code; its SSH
+connection owns the input pause. Explicit client EOF or disconnect retains
+its normal meaning.
+This also applies to input to applications such as ed. Non-PTY input is
+unaffected; use a non-PTY SSH stream for byte-preserving file transfers.
 .Pp
-When the session ends (the client disconnects, the idle timeout passes, or
-the system is going down), the SSH server tells the shell on its control
-channel first.
-The shell kills and reaps every command it is running, as for ^C, and
-exits; what a redirection had copied into a file so far is kept.
-Only if the shell has not exited within a second of reading that, or has
-not read it within 10 seconds, does the server kill it
-.Pq Ql SSH SESSION END ... forced=true .
-Its commands are then left running, adopted by init, which has no right to
-end them; each keeps its file server channel out of use until it ends, and
+A new bracketed paste first classified for the shell is staged until its closing marker and
+an explicit Enter. Newlines inside that paste do not execute commands.
+Review the text before pressing Enter. The physical editing-line limit is
+65536 bytes; the complete staged source is bounded below 1 MiB.
+A refused bracketed paste is discarded through its closing marker; a missing
+marker can be recovered using the displayed fresh code and Enter.
+Ctrl-C before approval cancels the capture without executing its suffix.
+These markers are in-band text: a clipboard containing a forged closing
+marker can release later commands. Bracketed paste does not make clipboard
+content trustworthy. A complete line arriving after the real closing marker
+and recovery can likewise be treated as fresh typing and execute.
+A partially discarded line remains discarded through its newline.
+If a completed line is discarded after recovery, the terminal reports it and
+shows the current shell prompt again. Enter that command again.
+.Pp
+Application-owned paste streams through the existing cooked input processing,
+including newlines and Ctrl-C, without waiting for shell approval. Ownership
+at the opening marker persists through the closing marker across prompt
+changes. If an application enabled bracketed paste with ?2004h, its markers
+are forwarded; otherwise the markers are stripped. The 65536-byte physical
+line bound, UTF-8 checking and canonical editing still apply.
+Ctrl-C in an open application paste shows bounded refusal and a recovery code
+if its closing marker is missing; direct exec retains ordinary Ctrl-C termination.
+A stray application opening marker can keep the next paste application-owned
+after prompt return, so its lines stream without shell approval. Use the
+visible Ctrl-C recovery before starting a fresh shell paste in that state.
+Only standalone ?2004h/l requests update marker forwarding; combined mode
+sequences do not update that selection.
+A paste queued behind
+an earlier typed-ahead command that reads inherited stdin can be consumed by
+that command, including internal framing bytes. Wait for the actual shell
+prompt before pasting shell source. Ordinary input intended for an application
+should be sent after that application starts.
+.Pp
+Up and down arrows recall up to 32 nonempty primary-prompt lines in this session,
+within a 128 KiB history-text budget;
+down past the newest entry restores the current draft.
+History is held in memory by the terminal service, has no history file,
+and ends with logout or disconnection. Consecutive duplicate lines use one
+entry.
+.Pp
+Login tokens, script input and application input are never collected in history.
+The shell explicitly enables history while reading a primary prompt and disables
+it before running the line. Submitted lines immediately disarm collection,
+even when further application input arrives in the same network batch.
+Prompt-mode changes preserve unfinished bytes, cursor and partial UTF-8/escape
+sequences within the same live session. Any draft accepting input outside an
+armed primary prompt stays ineligible for history until completed or cancelled;
+rearming the prompt and recalling history cannot promote that draft.
+During a fast paste, a continuation prompt can appear within text already
+echoed on the screen; that displayed prompt is not part of the input bytes.
+Unfinished application text may therefore remain pending and become executable
+shell input after prompt return, including text a child with inherited stdin
+did not read. Mode changes do not prove private consumption or purge that text.
+Complete lines already submitted to the input pipe remain queued as before.
+Ctrl-C cancels the unfinished draft and pending complete input, including
+bytes already forwarded to the shell. Further bytes are discarded until
+the shell finishes cancellation and prints a fresh prompt. This cannot undo
+commands that executed before cancellation. EOF and session retirement
+retain their existing behavior.
+.Pp
+Input queues are bounded. A foreground program that does not read stdin
+can fill those queues; Ctrl-C waiting behind that input is not observed
+until space becomes available. Disconnect that SSH session if it cannot
+drain.
+.Pp
+Use terminal-size to query observed dimensions or terminal-size --watch
+to observe SSH window changes. Unknown serial dimensions remain unknown.
+TERM, COLUMNS and LINES describe the observed terminal when available;
+COLUMNS and LINES refresh at each shell prompt and native command start.
+No termios, raw mode, fullscreen editor or job control is implied.
+The installed ed editor uses these canonical input semantics.
+Ctrl-D after partial prompt input sends those bytes without a newline;
+the prompt remains active, so Ctrl-C still wakes and cancels the unfinished read.
+Middle-line pastes redraw the accepted insertion as a batch.
+A malformed or refused SSH resize keeps the previous known dimensions
+and leaves the session running.
+.Ss Interrupt and bounds
+At a prompt, Ctrl-C cancels the whole unfinished command, including earlier
+continuation lines, and restores the primary prompt with status 130.
+In a managed session, Ctrl-C ends and reaps the shell's running children.
+Builtin loops poll the same control channel and stop with status 130.
+Each builtin command performs a timed control check.
+The one-tick timeout can span two timer periods before scheduling delay;
+it is not a wall-clock response guarantee.
+Native redirection copying continues to check control events while bytes flow,
+without waiting on an empty event channel when a copy round made progress.
+Idle commands retain timed control checks.
+Loss of an established control channel ends the managed session and reaps
+its native children, as an explicit session END does.
+Session end also ends children before the shell exits.
+There is no background-job syntax, fork, Unix signals or process groups.
+.Pp
+A script or continued interactive command is limited to 1 MiB.
+On the managed local console, unterminated input past that limit refuses the
+unfinished command once and discards its pending suffix until explicit Ctrl-C.
+The session survives and accepts a separate command after its fresh prompt.
+Newlines and heredoc delimiters cannot release refused input.
+SSH without a PTY still ends the shell session at that source limit.
+The SSH PTY path retains its terminal recovery protocol.
+Evaluation is limited to 64 nesting levels and 100000 commands per input;
+exceeding a limit reports an error rather than continuing indefinitely.
+These are operating limits, not a complete POSIX compatibility claim.
+.Ss Unsupported forms
+Unsupported forms report a diagnostic and status 2:
+background jobs, descriptor closure (such as 2>&-),
+input descriptor duplication, output descriptor numbers other than 1 and 2,
+nonliteral descriptor-duplication targets,
+script builtins/functions/compound commands inside native pipelines,
+compound input redirection, parameter pattern removal, unsupported
+arithmetic operators, shell options beyond set --, numeric break/continue,
+return, read, trap, exec, eval, wait, local, getopts, ulimit, umask,
+jobs, fg and bg.
+These reserved unsupported builtin names fail with status 2 rather than
+falling through to an executable lookup.
+Unknown command names follow ordinary executable lookup and report 127 if
+missing.
+The test command is the native
+.Pa /bin/test ;
+it is not a shell builtin.
+.Sh EXAMPLES
+Create a script in a writable directory with the line editor:
+.Bd -literal -offset indent
+cd /home/operator
+ed -p ': ' notes.sh
 a
-.Xr shutdown 8
-or
-.Xr reboot 8
-while one runs stops the machine instead of halting or restarting it.
+#!/bin/sh
+for item in one 'two words'; do
+    echo "$item"
+done
+\&.
+w
+q
+sh notes.sh
+.Ed
 .Pp
-How many commands of one pipeline can hold a file server channel at once
-depends on how many sessions are open; there is no fixed number to rely on
-beyond two.
+Inspect and update a file without shell escapes inside the editor:
+.Bd -literal -offset indent
+ed -p ': ' notes.sh
+H
+1,$p
+s/one/first/
+u
+s/one/first/
+w
+q
+.Ed
 .Pp
-Standard input is shared with the shell, but lines the shell has already
-read are not visible to a command.
-.Sh BUGS
-There are no globbing, variables, descriptor duplication, job control,
-background jobs, here-documents, or scripts.
+Capture a diagnostic and check its status:
+.Bd -literal -offset indent
+net-status > network.txt
+if test -s network.txt; then
+    summary=$(head -n 1 network.txt)
+    echo "$summary"
+fi
+.Ed
+.Pp
+Capture both streams, then keep a diagnostic on the original stdout while
+saving only ordinary output. The missing file deliberately produces a
+nonzero command status and diagnostic:
+.Bd -literal -offset indent
+cd /home/operator
+{ /bin/echo output; /bin/cat /missing; } > combined.txt 2>&1
+cat combined.txt
+{ /bin/echo output; /bin/cat /missing; } 2>&1 > output.txt
+cat output.txt
+.Ed
+.Pp
+Discard a native diagnostic while retaining its status, or provide empty
+input without requiring a file:
+.Bd -literal -offset indent
+/bin/cat /missing 2>/dev/null
+status
+/bin/cat </dev/null
+.Ed
+The first command has a nonzero numeric status but prints no native
+diagnostic or extra shell exit-status line.
+.Sh DIAGNOSTICS
+Zero indicates success; a native command's nonzero status is preserved.
+A failed native command with unredirected stderr may print an exit-status
+diagnostic in addition to its own standard error.
+Shell syntax or unsupported forms return 2; redirection failure returns 1;
+missing executables return 127; refused starts return 126;
+abnormal termination returns 128 and managed interruption returns 130.
+.Sh SEE ALSO
+.Xr ed 1 ,
+.Xr ps 1 ,
+.Xr test 1 ,
+.Xr sbase 7

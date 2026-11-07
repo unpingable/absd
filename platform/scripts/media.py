@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Reproducible boot media for one frozen kernel/platform pair.
-Generalises the S4 recipe (the development checkout,
+"""Reproducible boot media for one frozen kernel/platform pair (coordination record
+#28). Generalises the S4 recipe (archived-occurrence,
 bf8c7583/f8184ca) into a repository-owned entry point with named profiles
 (media/<profile>.toml).
 
@@ -46,6 +46,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -863,6 +864,25 @@ def boot(args):
     print(f"MEDIA BOOTED {json.dumps(result)}", flush=True)
 
 
+def operator_producer_tests(args):
+    """Run the five fixture-dependent host cases after producer validation.
+    The cases call operator_validate directly, so they do not recurse here."""
+    env = os.environ.copy()
+    env.update(ABSD_REQUIRE_S4="1",
+               ABSD_OPERATOR_FIXTURE=str(pathlib.Path(args.out).resolve()),
+               ABSD_OPERATOR_PLATFORM=str(pathlib.Path(args.platform_tree).resolve()),
+               ABSD_OPERATOR_KERNEL=str(pathlib.Path(args.kernel_run).resolve()))
+    with tempfile.TemporaryDirectory(prefix="media-producer-cache-") as cache:
+        result = subprocess.run([sys.executable, "-I", "-B", "-X", f"pycache_prefix={cache}",
+                                 str(pathlib.Path(__file__).with_name("test_media.py")), "OperatorValidateGrub"],
+                                env=env, capture_output=True, text=True)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    if result.returncode or "MEDIA HOST TEST OK cases=5 skipped=0" not in result.stdout.splitlines():
+        raise Refused(f"operator_tests_failed rc={result.returncode}; require all five cases with zero skips")
+    print("MEDIA OPERATOR PRODUCER TESTS OK cases=5 skipped=0", flush=True)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -888,10 +908,16 @@ def main(argv=None):
                  "--authorized-keys", "--out"):
         o.add_argument(name, required=True)
     o.add_argument("--etc")
+    o.add_argument("--no-local-login", action="store_true",
+                   help="omit local-console enrollment for distributable preview media")
     o.add_argument("--release-id", default="dev")
+    o.add_argument("--bound-boot-inputs")
+    o.add_argument("--bound-boot-inputs-sha256")
     v = sub.add_parser("operator-validate")
     for name in ("--profile", "--platform-tree", "--kernel-run", "--out"):
         v.add_argument(name, required=True)
+    v.add_argument("--producer-tests", action="store_true",
+                   help="require the five OperatorValidateGrub cases on this run's validated media and build trees")
     c = sub.add_parser("operator-compare")
     c.add_argument("--out", required=True)
     c.add_argument("--reference", required=True)
@@ -911,6 +937,8 @@ def main(argv=None):
          "operator-image": media_operator.operator_image, "operator-validate": media_operator.operator_validate,
          "operator-compare": media_operator.operator_compare,
          "operator-boot": media_operator.operator_boot}[args.command](args)
+        if args.command == "operator-validate" and args.producer_tests:
+            operator_producer_tests(args)
         return 0
     except Refused as error:
         print(f"MEDIA REFUSED {error}", flush=True)

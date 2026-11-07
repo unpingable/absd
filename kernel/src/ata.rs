@@ -1,4 +1,4 @@
-//! Block backend: polled ATA PIO on the primary channel's master.
+//! Block backend: primary master ATA, PIIX3 DMA when admitted, otherwise PIO.
 //!
 //! QEMU attaches the device with `-drive if=ide,index=0,format=raw`.
 //!
@@ -8,7 +8,10 @@
 //! `FLUSH CACHE` becomes a host `fdatasync`; it is issued honestly but this
 //! kernel makes no claim about host power loss.
 
+use crate::pci;
+use absd_kernel::{ata_dma, dma_policy};
 use core::arch::asm;
+use core::sync::atomic::{Ordering, fence};
 
 use crate::block::{BlockError, wait_for_interrupt};
 use crate::kernel_lock::WaitSite;
@@ -49,6 +52,163 @@ const POLL_LIMIT: u32 = 20_000;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Device {
     sectors: u64,
+    dma: Option<Dma>,
+    failed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Dma {
+    function: pci::Function,
+    base: u16,
+}
+
+#[repr(C, align(4096))]
+struct Page([u8; 4096]);
+// Static identity-mapped kernel pages, never user addresses. The BSP device
+// lock serializes all requests; neither page is reused after a DMA failure.
+static mut BOUNCE: Page = Page([0; 4096]);
+static mut PRDT: Page = Page([0; 4096]);
+static mut DMA_SEEN: u8 = 0;
+
+fn dma_probe(identity: &[u16; 256]) -> Result<Option<Dma>, BlockError> {
+    if !ata_dma::qemu_disk(
+        core::arch::x86_64::__cpuid(1).ecx & (1 << 31) != 0,
+        identity,
+    ) {
+        return Ok(None);
+    }
+    let Some(function) = pci::find_id(0x8086, 0x7010) else {
+        return Ok(None);
+    };
+    let Some(base) = ata_dma::controller(
+        pci::read32(function, 0),
+        pci::read32(function, 8),
+        pci::read32(function, 0x40),
+        pci::read32(function, 0x20),
+    ) else {
+        return Ok(None);
+    };
+    let bounce = core::ptr::addr_of_mut!(BOUNCE) as u64;
+    let table = core::ptr::addr_of_mut!(PRDT) as u64;
+    if ata_dma::descriptor(bounce, 4096).is_none()
+        || table & 0xfff != 0
+        || table.checked_add(4096).is_none_or(|end| end > 1u64 << 32)
+    {
+        return Ok(None);
+    }
+    // Do not inherit an active firmware command or touch another owner.
+    // Both channels share the PCI bus-master enable bit.
+    unsafe {
+        if inb(base) & 1 != 0
+            || inb(base + 8) & 1 != 0
+            || inb(base + 2) & 1 != 0
+            || inb(base + 10) & 1 != 0
+        {
+            return Err(BlockError::Device);
+        }
+    }
+    pci::claim(function, "ata-bmide").map_err(|_| BlockError::Device)?;
+    crate::dma::arm_ide(function, &dma_policy::ATA_BMIDE).map_err(|_| BlockError::Device)?;
+    if pci::command(function) & 5 != 5 {
+        return Err(BlockError::Device);
+    }
+    crate::serial::write("ATA DMA pci=");
+    crate::serial::hex(u64::from(function.bus));
+    crate::serial::write(":");
+    crate::serial::hex(u64::from(function.device));
+    crate::serial::write(".");
+    crate::serial::hex(u64::from(function.function));
+    crate::serial::write(" id=");
+    crate::serial::hex(u64::from(pci::read32(function, 0)));
+    crate::serial::write(" bar4=");
+    crate::serial::hex(u64::from(base));
+    crate::serial::write(" identify-udma=");
+    crate::serial::hex(u64::from(identity[88]));
+    crate::serial::write(" primary compatibility static-prdt admitted\n");
+    Ok(Some(Dma { function, base }))
+}
+
+unsafe fn outl(port: u16, value: u32) {
+    unsafe {
+        asm!("out dx, eax", in("dx") port, in("eax") value,
+        options(nomem, nostack, preserves_flags));
+    }
+}
+
+fn dma_transfer(dma: Dma, lba: u64, bytes: usize, read: bool) -> Result<(), BlockError> {
+    let descriptor = ata_dma::descriptor(core::ptr::addr_of_mut!(BOUNCE) as u64, bytes)
+        .ok_or(BlockError::OutOfRange)?;
+    let table = core::ptr::addr_of_mut!(PRDT).cast::<u32>();
+    let direction = if read { 8 } else { 0 };
+    unsafe {
+        // Stop before changing direction/table, then clear only W1C events
+        // while preserving the software DMA-capability bits.
+        outb(dma.base, direction);
+        outb(dma.base + 2, (inb(dma.base + 2) & 0x60) | 6);
+        core::ptr::write_volatile(table, descriptor[0]);
+        core::ptr::write_volatile(table.add(1), descriptor[1]);
+        outl(dma.base + 4, table as u32);
+    }
+    select(lba);
+    fence(Ordering::SeqCst);
+    issue(lba, (bytes / 512) as u8, if read { 0xc8 } else { 0xca });
+    unsafe {
+        outb(dma.base, direction | 1);
+    }
+    crate::smp_fixture::device_first_poll(WaitSite::Ata);
+    let mut result = Err(BlockError::Timeout);
+    for _ in 0..POLL_LIMIT {
+        let bm = unsafe { inb(dma.base + 2) };
+        let status = unsafe { inb(STATUS) };
+        if bm & 2 != 0 || status & STATUS_BSY == 0 && status & (STATUS_ERR | STATUS_DF) != 0 {
+            result = Err(BlockError::Device);
+            break;
+        }
+        if bm & 4 != 0 {
+            result = if ata_dma::complete(bm, status) {
+                Ok(())
+            } else {
+                Err(BlockError::Device)
+            };
+            break;
+        }
+        wait_for_interrupt(WaitSite::Ata);
+    }
+    unsafe {
+        outb(dma.base, direction);
+    }
+    // Completion and inactive are required before CPU access to the bounce
+    // page. Failure poisons this backend and excludes further DMA entirely.
+    if unsafe { inb(dma.base + 2) } & 1 != 0 {
+        result = Err(BlockError::Device);
+    }
+    if result.is_err() {
+        pci::disable_dma(dma.function);
+        let mut found = device().ok_or(BlockError::Absent)?;
+        found.failed = true;
+        unsafe {
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(DEVICE), Some(found));
+        }
+    }
+    fence(Ordering::SeqCst);
+    if result.is_ok() {
+        let bit = if read { 1 } else { 2 };
+        unsafe {
+            let seen = core::ptr::read(core::ptr::addr_of!(DMA_SEEN));
+            if seen & bit == 0 {
+                crate::serial::write(if read {
+                    "ATA DMA first-complete read\n"
+                } else {
+                    "ATA DMA first-complete write\n"
+                });
+                core::ptr::write(core::ptr::addr_of_mut!(DMA_SEEN), seen | bit);
+            }
+        }
+    }
+    unsafe {
+        outb(dma.base + 2, (inb(dma.base + 2) & 0x60) | 6);
+    }
+    result
 }
 
 static mut DEVICE: Option<Device> = None;
@@ -179,8 +339,16 @@ pub fn probe() -> Result<u64, BlockError> {
     if sectors == 0 || sectors > LBA28_LIMIT {
         return Err(BlockError::Absent);
     }
+    let dma = dma_probe(&identity)?;
     unsafe {
-        core::ptr::write_volatile(core::ptr::addr_of_mut!(DEVICE), Some(Device { sectors }));
+        core::ptr::write_volatile(
+            core::ptr::addr_of_mut!(DEVICE),
+            Some(Device {
+                sectors,
+                dma,
+                failed: false,
+            }),
+        );
         // Unmask the PIC cascade and IRQ14 on the slave; every other line
         // keeps the mask the boot sequence chose.
         outb(0x21, inb(0x21) & !0x04);
@@ -194,6 +362,9 @@ pub fn probe() -> Result<u64, BlockError> {
 /// and fit one task-file count; returns the count.
 fn check_span(lba: u64, bytes: usize) -> Result<u8, BlockError> {
     let device = device().ok_or(BlockError::Absent)?;
+    if device.failed {
+        return Err(BlockError::Device);
+    }
     let sectors = crate::block::transfer_sectors(bytes)?;
     let end = lba
         .checked_add(sectors as u64)
@@ -216,6 +387,12 @@ pub fn read_sectors(lba: u64, buffer: &mut [u8]) -> Result<(), BlockError> {
     wait_not_busy()?;
     if crate::kernel_lock::current_stop_requested() {
         return Err(BlockError::Device);
+    }
+    if let Some(dma) = device().and_then(|found| found.dma) {
+        dma_transfer(dma, lba, buffer.len(), true)?;
+        let bounce = unsafe { &*core::ptr::addr_of!(BOUNCE) };
+        buffer.copy_from_slice(&bounce.0[..buffer.len()]);
+        return Ok(());
     }
     select(lba);
     issue(lba, sectors, COMMAND_READ_SECTORS);
@@ -259,6 +436,11 @@ pub fn write_sectors(lba: u64, buffer: &[u8]) -> Result<(), BlockError> {
     if crate::kernel_lock::current_stop_requested() {
         return Err(BlockError::Device);
     }
+    if let Some(dma) = device().and_then(|found| found.dma) {
+        let bounce = unsafe { &mut *core::ptr::addr_of_mut!(BOUNCE) };
+        bounce.0[..buffer.len()].copy_from_slice(buffer);
+        return dma_transfer(dma, lba, buffer.len(), false);
+    }
     select(lba);
     issue(lba, sectors, COMMAND_WRITE_SECTORS);
     for sector in buffer.as_chunks::<BLOCK_SECTOR_BYTES>().0 {
@@ -283,7 +465,9 @@ pub fn flush() -> Result<(), BlockError> {
     if !crate::block::WRITES_BUILT {
         return Err(BlockError::ReadOnly);
     }
-    device().ok_or(BlockError::Absent)?;
+    if device().ok_or(BlockError::Absent)?.failed {
+        return Err(BlockError::Device);
+    }
     wait_not_busy()?;
     if crate::kernel_lock::current_stop_requested() {
         return Err(BlockError::Device);

@@ -1,5 +1,42 @@
 # Hostile userspace qualification
 
+## Current default-profile regression contract
+
+The results recorded below retain their original 16-process, 64-handle,
+48-pipe profile. Current source uses 32 process slots, 128 process handles,
+128 pipe objects and the unchanged 64-entry spawn-copy vector. They are
+separate limits. `make smoke hostile-test` is required before handoff of any
+kernel-touching union, through the admitted execution path; host/unit and
+served-only gates do not substitute for these two canonical targets.
+
+Smoke imports the full legal vector into the multi-start consumer, which
+validates all 64 distinct read-only handles. A legacy `exit7` entry is still
+refused by that vector ABI; increasing destination occupancy does not change
+its entry convention. The hostile pipe probe stops at either the global pipe
+object bound (`NoMemory`) or its own handle bound (`TooManyHandles`), names the
+limiting resource, and verifies an already-issued pipe still works. It exits
+holding all issued handles; init retains its post-reap frame equality and
+fresh pipe/cell reuse controls.
+
+The isolated canonical hostile boot has one console handle in that child:
+it admits 127 pipes, then reports `limit=handles`. Global occupancy is tested
+separately by the actual PipeTable host control. The process-exhaustion child
+admits 29 sleepers (32 slots minus init, probe and the unreaped witness).
+The proposed `src/suite.rs` and Makefile default-profile oracles expect 37 kills: the prior
+21 plus the 16 additional sleeper children. The pipe phase now adds one
+handle refusal instead of one pipe-object refusal, changing the complete
+battery's expected totals from handle=33/pipe=1 to handle=34/pipe=0. These are
+source-derived contract expectations; they are not a new canonical run or a
+qualification result. Independent contract review and the canonical targets
+must verify the current pair before those outcomes are accepted.
+
+`python3 scripts/test-capacity-selftests.py` executes the actual scheduler
+entry selection, HandleTable, PipeTable, pipe-create handler and self-test
+consumers with process/loader/IPC substitutions. It covers both limiting
+resources and last-entry vector negative controls. It does not prove full
+process publication, frame reclamation or a guest boot.
+
+
 Qualification spike against the userspace/kernel boundary: can a hostile,
 buggy, or nonsensical ring-3 task corrupt kernel state, corrupt another task,
 fault or hang the kernel, cross the memory-isolation boundary, defeat syscall
@@ -149,7 +186,7 @@ and init phases S1-S5 follow.
 
 Stateful surfaces audited from source: the per-process handle table
 (`src/handle.rs`: tagged values, 64 slots, rights narrow only); the object
-tables (`src/object.rs`: 32 cells, 48 pipes, references counted by rights);
+tables (`src/object.rs`: 32 cells, 128 pipes, references counted by rights);
 the process table (`src/process.rs`, `src/sched.rs`: 16 slots, PIDs never
 reused within a boot, claim/reap accounting); the heap window
 (`src/vm.rs`, `syscall_map`/`syscall_unmap`: 64 pages per call, 8192-page

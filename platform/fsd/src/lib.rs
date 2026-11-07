@@ -31,11 +31,17 @@ extern crate alloc;
 extern crate std;
 
 pub mod civil;
+pub mod client_startup;
 pub mod inbox;
 pub mod log;
+pub mod journal;
+pub mod journal_rpc;
 pub mod net_status;
 pub mod proto;
 pub mod recovery;
+pub mod readiness;
+pub mod resume;
+pub mod write_guard;
 pub mod release;
 mod server;
 pub mod version;

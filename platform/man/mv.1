@@ -1,0 +1,44 @@
+.Dd November 3, 2026
+.Dt MV 1
+.Os ABSD
+.Sh NAME
+.Nm mv
+.Nd rename an object in one filesystem commit
+.Sh SYNOPSIS
+.Nm
+.Ar source destination
+.Sh DESCRIPTION
+Rename source to destination.
+If destination is an existing directory, move source into it under its
+own final name.
+A destination file can be replaced.
+Nothing is copied; both names must be writable through this process's
+filesystem view.
+There is no cross-filesystem copy fallback and no multi-source form.
+.Pp
+The rename is one filesystem commit, not a sequence of copy and remove.
+The command refuses the same filesystem object, session mount points, and
+moving a directory into itself.
+It does not preserve access to a removed name or expand the process's
+binding.
+Success prints nothing; failures are diagnosed on standard error.
+There is no
+.Fl f
+or overwrite prompt.
+Options precede operands; a later option word is a path.
+.Ql --
+ends option processing; use it or a
+.Ql ./
+prefix for a name beginning with a dash.
+Unknown leading options return status 2.
+.Sh EXIT STATUS
+0 after a successful rename; 1 for a failed or refused move;
+2 for wrong operand count or an unknown leading option.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+mv /home/operator/draft /home/operator/final
+.Ed
+.Sh SEE ALSO
+.Xr cp 1 ,
+.Xr rm 1 ,
+.Xr filesystem 7

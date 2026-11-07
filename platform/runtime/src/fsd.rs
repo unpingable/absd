@@ -73,6 +73,8 @@ struct Spare {
 
 struct State {
     own: Option<(u64, u64)>,
+    /// Successful VERSION admission for this installed server identity.
+    admitted: bool,
     spares: Vec<Spare>,
     /// Reply bytes read so far, per reply end: whole frames always, the
     /// first of which may be an earlier holder's (`proto`).
@@ -93,6 +95,7 @@ struct Global(UnsafeCell<State>);
 unsafe impl Sync for Global {}
 static STATE: Global = Global(UnsafeCell::new(State {
     own: None,
+    admitted: false,
     spares: Vec::new(),
     inboxes: Vec::new(),
     seq: 0,
@@ -111,6 +114,7 @@ fn state() -> &'static mut State {
 pub(crate) fn install(channels: &[(u64, u64)]) {
     let state = state();
     state.own = channels.first().copied();
+    state.admitted = false;
     state.spares =
         channels.iter().skip(1).map(|&(request, reply)| Spare { request, reply, holder: Holder::Vacant }).collect();
 }
@@ -135,6 +139,11 @@ pub fn set_default_child(policy: ChildFs) {
 /// Policy for the next child only.
 pub fn set_next_child(policy: ChildFs) {
     state().next_child = Some(policy);
+}
+
+/// A failed spawn must not leave its one-shot filesystem policy armed.
+pub(crate) fn cancel_next_child() {
+    state().next_child = None;
 }
 
 /// `pipe_info` words: available, space, readers, writers.
@@ -211,10 +220,27 @@ fn exchange_within(channel: (u64, u64), mut frame: Vec<u8>, budget: Option<u64>)
     if frame.len() < proto::HEADER + 1 + proto::TRAILER || frame.len() > proto::MAX_FRAME {
         return Err(status::INVALID);
     }
+    // Deferred diagnostic startup is not a protocol bypass, even for a
+    // caller with a forged startup name or using the public raw request API.
+    // Only a checked VERSION answer admits this installation; a raw VERSION
+    // exchange alone does not. The recursive admission exchange is VERSION.
+    if !state().admitted && frame[proto::HEADER] != op::VERSION {
+        require_server(0, false);
+    }
     let seq = next_seq();
     proto::stamp_seq(&mut frame, seq);
-    write_all(channel.0, &frame)?;
     let deadline = budget.map(|ticks| crate::ticks().saturating_add(ticks));
+    if let Some(deadline) = deadline {
+        let mut remaining = frame.as_slice();
+        while !remaining.is_empty() {
+            let now = crate::ticks();
+            if now >= deadline { return Err(absd_fsd::version::TIMEOUT); }
+            let count = remaining.len().min(MAX_TRANSFER);
+            let n = crate::write_within(channel.0, &remaining[..count], deadline - now)?;
+            if n == 0 { return Err(status::IO); }
+            remaining = &remaining[n..];
+        }
+    } else { write_all(channel.0, &frame)?; }
     let inbox = reply_inbox(channel.1);
     loop {
         if let Some(body) = inbox.take_for(seq) {
@@ -232,7 +258,15 @@ fn exchange_within(channel: (u64, u64), mut frame: Vec<u8>, budget: Option<u64>)
                 if now >= deadline {
                     return Err(absd_fsd::version::TIMEOUT);
                 }
-                crate::read_within(channel.1, &mut chunk, deadline - now)? as i64
+                // A dead reader may leave the tail of its old reply in
+                // this pipe. At a quiet boundary reuse the same verified
+                // frame resynchronization as the server, without extending
+                // the request's absolute deadline.
+                match crate::read_within(channel.1, &mut chunk, (deadline - now).min(10)) {
+                    Ok(n) => n as i64,
+                    Err(-110) => { inbox.idle(); continue; }
+                    Err(e) => return Err(e),
+                }
             }
         };
         if count <= 0 {
@@ -247,25 +281,51 @@ fn exchange_within(channel: (u64, u64), mut frame: Vec<u8>, budget: Option<u64>)
 /// own; for sshd, the control channel) who it is (`op::VERSION`), waiting
 /// at most `absd_fsd::version::ANSWER_TICKS`, and judges the answer: the
 /// protocol must be this build's, and with `require_release` the release
-/// too.
+/// too. A failed diagnostic recheck preserves a previously admitted
+/// installation; it does not admit a process that has never passed VERSION.
 pub fn check_server(index: usize, require_release: bool) -> Result<version::Version, version::Refusal> {
+    check_server_budget(index, require_release, version::ANSWER_TICKS)
+}
+
+/// Explicit bounded VERSION probe used by logs' optional retained read.
+/// Invalidate old own-channel admission first: refusal must not permit a
+/// later filesystem operation until another checked negotiation succeeds.
+pub fn check_server_within(index: usize, require_release: bool, ticks: u64) -> Result<version::Version, version::Refusal> {
+    if index == 0 { state().admitted = false; }
+    check_server_budget(index, require_release, ticks)
+}
+fn check_server_budget(index: usize, require_release: bool, ticks: u64) -> Result<version::Version, version::Refusal> {
     let channel = *channels().get(index).ok_or(version::Refusal::NoServer(status::NOT_FOUND))?;
-    let answer = exchange_within(channel, Frame::request(op::VERSION).finish(), Some(version::ANSWER_TICKS));
-    version::check(answer, require_release)
+    let answer = exchange_within(channel, Frame::request(op::VERSION).finish(), Some(ticks));
+    let version = version::check(answer, require_release)?;
+    if index == 0 { state().admitted = true; }
+    Ok(version)
 }
 
 /// [`check_server`], or the refusal's line on standard error (the console
 /// unless the startup record named another) and exit 104. The runtime
-/// calls it before `main` for every client of a file server; sshd calls it
+/// calls it before `main` except for logs, whose first actual filesystem
+/// request enforces the same admission; sshd calls it
 /// again, requiring its own release, before it listens.
 pub fn require_server(index: usize, require_release: bool) -> version::Version {
-    match check_server(index, require_release) {
-        Ok(version) => version,
-        Err(refusal) => {
+    require_server_named(index, require_release, b"")
+}
+/// Pre-main admission uses the explicitly supplied startup name.
+pub fn require_server_named(index: usize, require_release: bool, name: &[u8]) -> version::Version {
+    let answer = absd_fsd::client_startup::check(name, require_release, |frame, ticks| {
+        let channel = *channels().get(index).ok_or(status::NOT_FOUND)?;
+        exchange_within(channel, frame, Some(ticks))
+    });
+    match answer {
+        Ok(version) => {
+            if index == 0 { state().admitted = true; }
+            version
+        },
+        Err((refusal, exit_status)) => {
             let mut line = refusal.line().into_bytes();
             line.push(b'\n');
             unsafe { crate::__absd_std_stderr_write(line.as_ptr(), line.len()) };
-            crate::__absd_std_exit(version::REFUSED_STATUS)
+            crate::__absd_std_exit(exit_status)
         }
     }
 }
@@ -346,6 +406,14 @@ pub fn request_on(index: usize, frame: Vec<u8>) -> Result<(i64, Vec<u8>), i64> {
     exchange(channel, frame)
 }
 
+/// Bounded control request, including both request writes and reply reads.
+/// A timed-out partial frame is never acknowledged; the server's existing
+/// holder framing and idle handling determine its disposition.
+pub fn request_on_within(index: usize, frame: Vec<u8>, ticks: u64) -> Result<(i64, Vec<u8>), i64> {
+    let channel = *channels().get(index).ok_or(status::INVALID)?;
+    exchange_within(channel, frame, Some(ticks))
+}
+
 /// Reads and discards reply bytes an earlier holder of channel `index`
 /// never read (a killed client), so the next holder's first reply is its
 /// own. Only a keeper of the channel's reply end can do this.
@@ -393,6 +461,31 @@ impl Plan {
             Plan::Slot(ends) => ends.clone(),
         }
     }
+}
+
+/// Check an explicit child directory through the filesystem view already
+/// selected for that child. This never expands the parent's control view.
+/// Plans without an FSD channel retain the caller's legacy local-FS check.
+pub(crate) fn child_cwd_kind(plan: &Plan, path: &[u8]) -> Option<Result<absd_fs::Kind, i64>> {
+    let channel = plan.ends().first().copied()?;
+    Some((|| {
+        let (code, payload) = exchange_within(
+            channel,
+            Frame::request(op::STAT).bytes(path).finish(),
+            Some(1000),
+        )?;
+        if code < 0 {
+            return Err(code);
+        }
+        if code != 0 {
+            return Err(status::IO);
+        }
+        let attr: [u8; proto::ATTR_BYTES] = payload.try_into().map_err(|_| status::IO)?;
+        match kind(&attr)? {
+            WireKind::File => Ok(absd_fs::Kind::File),
+            WireKind::Dir => Ok(absd_fs::Kind::Dir),
+        }
+    })())
 }
 
 /// Decides, and asks the server for, the next child's channel.

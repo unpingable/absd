@@ -1,5 +1,12 @@
 # ABSD usability roadmap after the kernel-only AP gate
 
+Owner direction, 2026-11-03: the current priority is the experience-first
+workflow in coordination record #59.
+The U1/U2 goals below remain roadmap and evidence boundaries, not a statement
+of current execution priority. Read the current
+[steward handoff](archived-occurrence)
+and its linked integration checkpoint for accepted scope and active work.
+
 The [system maturity map](SYSTEM-MATURITY-ROADMAP.md), captured 2026-10-06,
 places current evidence and gaps under System R0–R7. It preserves this
 document's usability U1/U2 gates and the separate Userland U0–U6 scope.
@@ -10,26 +17,39 @@ captured 2026-10-06, uses the explicit namespace **Userland U0–U6**. Its Proje
 planning leaves this document's usability U1/U2/U3, operating gates and release
 boundaries unchanged and starts no implementation or qualification campaign.
 
-This is a sequence of **qualification decisions**, not an activation plan
-for AP userspace. The bounded RT gate (`8bc81ef`), UP handoff preparation
-(`a8f2691`), and kernel-only AP serialization/lifecycle gate (`0b73cd6`)
-are closed within their respective receipts. CPU 1 exists only for fixed
-CPL0 fixtures; its executable ordinary/RT user-return refusal remains in
-force. Served-boot survival and install/update/recovery are now qualified
+The earlier sequence of **qualification decisions** is historical evidence,
+not the current AP userspace envelope. The bounded RT gate (`8bc81ef`), UP
+handoff preparation (`a8f2691`), and kernel-only AP serialization/lifecycle gate (`0b73cd6`)
+are closed within their respective receipts. At those revisions, CPU 1 existed
+only for fixed CPL0 fixtures and ordinary/RT user return was refused.
+Served-boot survival and install/update/recovery were subsequently qualified
 for the exact local release scope recorded in
 the integration receipt (development record, not in a source release).
 That result does not establish multiweek named-machine U1 operation or
 independent lossless service restart. No later milestone follows automatically.
 
 The [ownership boundaries](OWNERSHIP-BOUNDARIES.md) describe the target
-semantic architecture, not implementation priority. U1 remains the current
-product milestone. Introduce native subsystems only for a demonstrated U1/U2
-invariant blocked by the current implementation or a separately admitted
+semantic architecture, not implementation priority. Introduce native subsystems
+only for a demonstrated U1/U2 invariant blocked by the current implementation
+or a separately admitted
 bounded architectural experiment. The authority/IPC/lifecycle/storage
 dependency graph opens no new lanes. Eventual IPC measurements attach to
 existing qualification receipts and do not authorize optimization work.
 
-## Decision before any AP userspace admission
+## SMP scope and the historical AP-admission decision
+
+The opt-in two-CPU operator boot in
+coordination record #125 is
+integrated; the four/six-CPU extension design is in flight as of 2026-11-03.
+These scopes do not assess
+Claim A (CPU0 RT independence) or Claim B (physical timing). They do not
+establish physical-machine support or extend any historical receipt.
+
+### Decision before any AP userspace admission
+
+The following records the earlier measured-need gate. It does not impose
+that old prerequisite on the separately admitted #125 work. Keep its
+evidence limits and unfinished claims attached to their original scope.
 
 Measure the current **UP** system first. Establish a KVM performance and
 concurrency matrix for the named ordinary, file-server, network, and RT
@@ -57,8 +77,8 @@ and recovered **without a build host in its normal operating path**, and can
 run for weeks under its documented limits. Choose the exact hardware and
 enumerate its timer/LAPIC, console, NVMe, NIC, and
 memory behavior before making a support claim. Keep the U1 path valid on
-UP unless the measured decision above justifies a separate AP userspace
-gate. The workstreams below describe dependencies, not a calendar or a weekly
+UP; separately admitted SMP work retains its own scope and evidence.
+The workstreams below describe dependencies, not a calendar or a weekly
 maintenance obligation.
 
 | Workstream | Work and observable exit condition |
@@ -71,10 +91,13 @@ maintenance obligation.
 Capacity claims must name the exercised boundary. The served local VM case
 reaches the four-connection SSH limit, observes prompt refusal, and serves an
 authenticated connection after a slot is released. The default non-served
-boot suite separately exercises process, handle, cell, and pipe full-table
-refusal and immediate reuse. The fixed limits are 16 processes, 64 handles
-per process, 32 cells, 48 pipes, and 11 file-server channels (one control
-and ten client slots); the accepted unauthenticated SSH source limit is two.
+boot suite separately exercises process, handle and cell full-table
+refusal and immediate reuse. With the current larger pipe table, a single
+process reaches its handle limit first; direct host tests exhaust the global
+pipe table. The legacy broker single-producer pipe-pressure gate is explicitly
+unsupported pending its two-producer apparatus repair. The current limits are 32 processes, 128 handles
+per process, 32 cells, 128 pipes, and 20 file-server channels (one control,
+eighteen session slots and a private logger channel); the accepted unauthenticated SSH source limit is two.
 Printed limits and instantaneous resource censuses do not prove that every
 kernel table was exhausted during served operation. Frame ownership checks
 do not establish frame exhaustion.
@@ -100,7 +123,7 @@ and the same named-machine envelope.
 ## U3 and separate research
 
 U3 is deferred until U1 and U2 have concrete operating receipts. It carries
-no current implementation or operator action. SMP beyond measured need,
+no current implementation or operator action. SMP beyond the admitted operator scope,
 governed RT grants/admission, sponsorship/subtree policy, formalization
 beyond focused transition models, and wider authority design remain separate
 research decisions, not implicit U1 dependencies. No general hardware

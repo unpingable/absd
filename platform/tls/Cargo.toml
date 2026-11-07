@@ -8,6 +8,10 @@ autobins = false
 path = "src/lib.rs"
 
 [[bin]]
+name = "https_document"
+path = "src/bin/https_document.rs"
+
+[[bin]]
 name = "https_get"
 path = "src/bin/https_get.rs"
 

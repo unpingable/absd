@@ -1,5 +1,5 @@
-/* Test-mode AP-owned int80, exception, return and departure entries.
-   Ordinary boot never installs these gates. Frame ABI matches boot.S. */
+/* AP-owned int80, exception, return and departure entries, installed only
+   for explicitly admitted qualification/operator boots. Frame ABI matches boot.S. */
 
 .section .text.ap_user,"ax",@progbits
 .code64
@@ -7,6 +7,28 @@
 ap_user_spurious_stub:
     nway_epoch 8, 1
     iretq
+.global ap_operator_park
+ap_operator_park:
+    cli
+    ap_local %r14
+    /* Validate raw hardware identity before selecting any transition RSP or
+       writing this private anchor's TSS. The damaged-stack exit stays in ASM. */
+    movl $1, %eax
+    cpuid
+    shrl $24, %ebx
+    testl %ebx, %ebx
+    jz .Lap_bad_cpu
+    cmpl AP_CPU_COUNT(%rip), %ebx
+    jae .Lap_bad_cpu
+    cmpb %bl, {cpu_identity_id}(%r14)
+    jne .Lap_bad_cpu
+    leaq {cpu_transition_stack_top}(%r14), %rsp
+    movq $boot_pml4, %rax
+    movq %rax, %cr3
+    leaq {cpu_entry_stack_top}(%r14), %rax
+    movq %rax, {cpu_tss_rsp0}(%r14)
+    call ap_operator_parked
+    ud2
 .global ap_enter_user_idle
 ap_enter_user_idle:
     ap_local %r14

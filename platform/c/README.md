@@ -1,5 +1,7 @@
 # The ABSD C application kit
 
+For the staged prebuilt SDK workflow, start with [the host SDK guide](../docs/HOST-SDK.md).
+
 A C program built with this kit is a static x86-64 ELF that runs on ABSD
 over the native runtime, with Picolibc as its C library. What a program
 may rely on, and what it is refused, is the contract
@@ -168,3 +170,19 @@ system interface, which are the contract's subject. A change to
 made together with the amendment to `docs/C-INTERFACE.md` (and to the
 campaign spec where it names the option), and the kit is requalified with
 `run-c-kit.sh`.
+
+## Private native PCM experiment (#96)
+
+Off by default. `ABSD_NATIVE_PCM_EXPERIMENT=1 sh scripts/build-c-kit.sh`
+enables the matching runtime and broker feature. Use a separate
+`ABSD_CKIT_BUILD` directory for this kit. Only that kit's `kit/BUILT-FROM`
+carries a `native-pcm-experiment 1` line. Default builds do not recognize the private startup role.
+
+Experimental role 0xf0 names one explicitly delegated playback handle. The
+parser still refuses duplicate roles, duplicate positions and console/startup
+positions. `absd_runtime::playback_handle()` borrows that handle or returns zero
+when absent; it does not mint authority. The application bridge uses the private
+PCM calls supplied by the paired experimental kernel. Neither this role nor
+these calls are a supported platform ABI. The headless fixture explicitly mounts
+its block device without formatting, keeps game data read-only at file level,
+and syncs separate frame outputs before exit.

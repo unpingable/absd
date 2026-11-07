@@ -17,14 +17,12 @@ set -eu
 # byte order on every host, as scripts/build-cports.sh does.
 export LC_ALL=C
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/inputs.sh"
 python3 -B "$root/scripts/test-c-kit-confirmation.py"
 camp=$(dirname "$root")
 kernel=${ABSD_KERNEL_RUN:?set ABSD_KERNEL_RUN to a disposable kernel clone}
 [ -d "$kernel" ] || { echo "run-c-kit: ABSD_KERNEL_RUN $kernel is not a directory" >&2; exit 1; }
-forbidden=/data/git/absd-kernel
-[ -d "$forbidden" ] && forbidden=$(CDPATH= cd -- "$forbidden" && pwd -P)
-[ "$(CDPATH= cd -- "$kernel" && pwd -P)" != "$forbidden" ] ||
-    { echo "run-c-kit: ABSD_KERNEL_RUN must not be /data/git/absd-kernel" >&2; exit 1; }
+absd_not_kernel_source "$kernel"
 ckit=${ABSD_CKIT_BUILD:-$camp/ckit-build}
 export ABSD_CKIT_BUILD=$ckit    # build-c-kit.sh builds into the same directory
 kit=$ckit/kit
@@ -64,9 +62,7 @@ fi
 stamp=$kit/BUILT-FROM
 [ -f "$stamp" ] || { echo "run-c-kit: $stamp missing: rebuild the kit with scripts/build-c-kit.sh" >&2; exit 1; }
 built=$(awk '$1 == "commit" { print $2 }' "$stamp")
-head=$(git -C "$root" rev-parse HEAD 2>/dev/null || echo none)
-[ "$built" = "$head" ] ||
-    { echo "run-c-kit: the kit in $kit was built from $built, this tree is $head: rebuild it" >&2; exit 1; }
+python3 -I "$root/scripts/c_kit_source.py" kit "$root" "$kit"
 awk '$1 ~ /^lib\// { print $2 "  " $1 }' "$stamp" | (cd "$kit" && sha256sum -c --quiet) ||
     { echo "run-c-kit: the kit's archives differ from $stamp" >&2; exit 1; }
 printf '%s\n' "C KIT BUILT-FROM OK commit=$built dirty=$(awk '$1 == "dirty" { print $2 }' "$stamp")"

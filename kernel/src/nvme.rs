@@ -22,6 +22,7 @@
 
 use core::sync::atomic::{Ordering, fence};
 
+use absd_kernel::dma_policy;
 use absd_kernel::nvme_ready;
 use absd_kernel::syscall::BLOCK_SECTOR_BYTES;
 
@@ -76,6 +77,10 @@ pub enum Refusal {
         error: mmio::MapError,
         bar: u64,
     },
+    /// The DMA seam refused bus mastering.
+    Dma(crate::dma::Refused),
+    /// No ABSD domain contains the function now (#116 `read_raw`).
+    NotContained,
     /// CAP.CSS lacks the NVM command set.
     NoNvmCommandSet,
     /// The controller cannot use 4 KiB memory pages.
@@ -111,15 +116,35 @@ pub enum NvmeError {
 #[repr(C, align(4096))]
 struct Page([u8; PAGE]);
 
-static mut ADMIN_SQ: Page = Page([0; PAGE]);
-static mut ADMIN_CQ: Page = Page([0; PAGE]);
-static mut IO_SQ: Page = Page([0; PAGE]);
-static mut IO_CQ: Page = Page([0; PAGE]);
-static mut IDENTIFY: Page = Page([0; PAGE]);
-static mut BOUNCE: Page = Page([0; PAGE]);
+/// The driver's whole DMA surface, per buffer set: admin SQ, admin CQ, I/O
+/// SQ, I/O CQ, the identify page and the PRP bounce page. Set 0 is the one
+/// every boot uses; set 1 exists only for a restart after a revocation in
+/// the AMD-Vi two-device boot (#111 DESIGN §4: a restart never reuses a
+/// revoked set). Nothing else is ever handed to the controller.
+pub const DMA_PAGES: usize = 6;
+pub const DMA_SETS: usize = 2;
+const ADMIN_SQ: usize = 0;
+const ADMIN_CQ: usize = 1;
+const IO_SQ: usize = 2;
+const IO_CQ: usize = 3;
+const IDENTIFY: usize = 4;
+const BOUNCE: usize = 5;
+
+static mut DMA: [[Page; DMA_PAGES]; DMA_SETS] =
+    [const { [const { Page([0; PAGE]) }; DMA_PAGES] }; DMA_SETS];
+
+fn page(set: usize, index: usize) -> *mut Page {
+    unsafe { core::ptr::addr_of_mut!(DMA[set][index]) }
+}
 
 fn address(page: *mut Page) -> u64 {
     page as u64
+}
+
+/// The physical (= bus) addresses of buffer set `set`, in the order above:
+/// the driver's declared grant (#116).
+pub fn dma_pages(set: usize) -> [u64; DMA_PAGES] {
+    core::array::from_fn(|index| address(page(set, index)))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -193,6 +218,8 @@ struct Controller {
     /// positions are no longer known, so every later command fails at once.
     failed: bool,
     ready_limit: u64,
+    /// The buffer set this controller instance uses.
+    set: usize,
 }
 
 static mut CONTROLLER: Option<Controller> = None;
@@ -290,7 +317,7 @@ impl Controller {
     /// A refused initialization never leaves new DMA enabled. Keep the
     /// static queue/identify pages dedicated for this boot even if stop
     /// cannot be confirmed: BME-off is not cancellation of pending DMA.
-    fn abandon_probe(&self, ready_limit: u64) {
+    fn abandon_probe(&self, ready_limit: u64) -> bool {
         // EN=1/RDY=0 may be enable-in-progress; clearing EN then has undefined
         // results. Only request a reset after observing RDY=1. Otherwise
         // contain new DMA and report that controller stop is unconfirmed.
@@ -315,6 +342,7 @@ impl Controller {
         } else {
             " dma=off\n"
         });
+        stopped
     }
 
     /// Submits one command on `io` (or the admin queue) and polls for its
@@ -406,12 +434,12 @@ impl Controller {
         let mut command = [0u32; 16];
         command[0] = u32::from(ADMIN_IDENTIFY);
         command[1] = namespace;
-        let data = address(core::ptr::addr_of_mut!(IDENTIFY));
+        let data = address(page(self.set, IDENTIFY));
         command[6] = data as u32;
         command[7] = (data >> 32) as u32;
         command[10] = structure;
         self.execute(false, command)?;
-        Ok(unsafe { &(*core::ptr::addr_of!(IDENTIFY)).0 })
+        Ok(unsafe { &(*page(self.set, IDENTIFY)).0 })
     }
 
     /// One I/O command over `sectors` logical blocks from `lba`, staged in
@@ -424,7 +452,7 @@ impl Controller {
             if sectors == 0 || sectors * BLOCK_SECTOR_BYTES > PAGE {
                 return Err(NvmeError::OutOfRange);
             }
-            let data = address(core::ptr::addr_of_mut!(BOUNCE));
+            let data = address(page(self.set, BOUNCE));
             command[6] = data as u32;
             command[7] = (data >> 32) as u32;
             command[10] = lba as u32;
@@ -460,13 +488,30 @@ pub fn prepare_qualification_mapping() -> Result<(), NvmeError> {
         .map_err(|error| NvmeError::Refused(Refusal::Map { error, bar }))?;
     Ok(())
 }
+fn dma_refused(refused: crate::dma::Refused) -> NvmeError {
+    NvmeError::Refused(Refusal::Dma(refused))
+}
+
 /// Driver ownership still begins with probe's PCI claim.
 pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
+    probe_set(write_serial, 0)
+}
+
+/// [`probe`] on buffer set `set`. A later set re-probes a controller this
+/// driver already claimed (a restart after a revocation, #116).
+pub fn probe_set(write_serial: Option<&[u8]>, set: usize) -> Result<Identity, NvmeError> {
     crate::kernel_lock::assert_bsp_device_access();
+    if set >= DMA_SETS {
+        return Err(NvmeError::OutOfRange);
+    }
     let function =
         pci::find(CLASS_MASS_STORAGE, SUBCLASS_NVM, INTERFACE_NVME).ok_or(NvmeError::Absent)?;
     let (vendor, device) = pci::ids(function);
-    pci::claim(function, "nvme").map_err(|error| NvmeError::Refused(Refusal::Claim(error)))?;
+    match pci::claim(function, "nvme") {
+        Ok(()) => {}
+        Err(pci::ClaimError::Owned("nvme")) if set > 0 => {}
+        Err(error) => return Err(NvmeError::Refused(Refusal::Claim(error))),
+    }
     let bar =
         pci::memory_bar0(function).map_err(|error| NvmeError::Refused(Refusal::Bar(error)))?;
     let map = |length| {
@@ -483,14 +528,14 @@ pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
         stride: 4,
         admin: Queue::new(
             0,
-            address(core::ptr::addr_of_mut!(ADMIN_SQ)),
-            address(core::ptr::addr_of_mut!(ADMIN_CQ)),
+            address(page(set, ADMIN_SQ)),
+            address(page(set, ADMIN_CQ)),
             QUEUE_ENTRIES,
         ),
         io: Queue::new(
             IO_QUEUE,
-            address(core::ptr::addr_of_mut!(IO_SQ)),
-            address(core::ptr::addr_of_mut!(IO_CQ)),
+            address(page(set, IO_SQ)),
+            address(page(set, IO_CQ)),
             QUEUE_ENTRIES,
         ),
         next_command: 1,
@@ -508,6 +553,7 @@ pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
         },
         failed: false,
         ready_limit: 500,
+        set,
     };
     let capabilities = found.read64(REG_CAP);
     if (capabilities >> 37) & 1 == 0 {
@@ -536,13 +582,8 @@ pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
     // Reset: firmware may have left the controller enabled with its own
     // queues. Everything below is rebuilt from scratch.
     found.disable_before_probe(limits)?;
-    for page in [
-        core::ptr::addr_of_mut!(ADMIN_SQ),
-        core::ptr::addr_of_mut!(ADMIN_CQ),
-        core::ptr::addr_of_mut!(IO_SQ),
-        core::ptr::addr_of_mut!(IO_CQ),
-    ] {
-        zero(page);
+    for index in [ADMIN_SQ, ADMIN_CQ, IO_SQ, IO_CQ] {
+        zero(page(set, index));
     }
     found.write32(REG_INTMS, u32::MAX);
     let size = u32::from(entries - 1);
@@ -553,7 +594,7 @@ pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
     // One Result boundary owns every post-enable refusal, including ? and
     // early returns. Publish only after initialization has succeeded.
     let initialized = (|| -> Result<(), NvmeError> {
-        pci::enable_polled_dma(function);
+        crate::dma::arm(function, &dma_policy::NVME).map_err(dma_refused)?;
         found.write32(REG_CC, CC_QUEUE_ENTRY_SIZES | CC_ENABLE);
         found.wait_ready(true, ready_limit)?;
 
@@ -612,7 +653,7 @@ pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {
         create[7] = (found.io.completion >> 32) as u32;
         create[10] = queue_size | u32::from(IO_QUEUE);
         // Physically contiguous; interrupts disabled.
-        create[11] = 1;
+        create[11] = 1 | iocq_interrupt();
         found.execute(false, create)?;
         create[0] = u32::from(ADMIN_CREATE_SQ);
         create[6] = found.io.submission as u32;
@@ -647,6 +688,92 @@ pub fn withdraw_failed_probe() {
     }
 }
 
+/// Revocation, R1 (#116, DESIGN §4): the controller is withdrawn, so
+/// nothing more is submitted to it. The caller clears Bus Master Enable
+/// (R2) and blocks the domain (R3) before [`Withdrawn::reset`] (R4). `None`
+/// when there was no controller. Its buffer set stays retained.
+pub fn withdraw() -> Option<Withdrawn> {
+    crate::kernel_lock::assert_bsp_device_access();
+    let previous = unsafe { (*core::ptr::addr_of_mut!(CONTROLLER)).take() }?;
+    crate::serial::write("NVME CONTROLLER WITHDRAWN reason=revoke\n");
+    Some(Withdrawn(previous))
+}
+
+/// A controller taken out of service by [`withdraw`] (R1): nothing more is
+/// submitted to it. [`Withdrawn::reset`] is its R4.
+pub struct Withdrawn(Controller);
+
+impl Withdrawn {
+    /// Requests the controller's disable (CC.EN=0) when it is ready, waits
+    /// bounded for RDY=0, and keeps Bus Master Enable clear. Returns
+    /// whether the stop was confirmed. Register evidence only.
+    pub fn reset(self) -> bool {
+        self.0.abandon_probe(self.0.ready_limit)
+    }
+}
+
+/// Vector for the I/O completion queue's interrupt, if any (the AMD-Vi
+/// two-device oracle boot, #116 ADD-7: MSI-X enabled with the function mask
+/// set, the queue created IEN=1, the driver still polling). `u32::MAX`: no
+/// interrupt (every other boot).
+static IOCQ_VECTOR: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
+
+/// Creates later I/O completion queues with interrupts enabled on `vector`
+/// (never unmasked by ABSD), or disabled with `None`.
+pub fn iocq_interrupt_on(vector: Option<u16>) {
+    IOCQ_VECTOR.store(vector.map_or(u32::MAX, u32::from), Ordering::Relaxed);
+}
+
+/// Create-I/O-CQ dword 11 bits: IEN (bit 1) and IV (31:16), or none.
+fn iocq_interrupt() -> u32 {
+    match IOCQ_VECTOR.load(Ordering::Relaxed) {
+        u32::MAX => 0,
+        vector => (1 << 1) | ((vector & 0xffff) << 16),
+    }
+}
+
+/// The live I/O queue pair: its ID and entry count.
+pub fn io_queue() -> Option<(u16, u16)> {
+    controller().map(|found| (found.io.id, found.io.entries))
+}
+
+/// One READ of `blocks` (1..=8) logical blocks from `lba` through the real
+/// queues, with PRP1 = `prp1` (`None`: this set's bounce page), for the
+/// AMD-Vi two-device boot's oracle (#116). The address is not checked here:
+/// only a function an ABSD domain contains right now may use it, and that
+/// domain alone decides what the device reaches. Returns PRP1 and the
+/// completion status (`SCT << 8 | SC`, 0 = success).
+pub fn read_raw(lba: u64, blocks: usize, prp1: Option<u64>) -> Result<(u64, u16), NvmeError> {
+    let found = controller().ok_or(NvmeError::Absent)?;
+    if crate::dma::contained(found.identity.pci).is_none() {
+        return Err(NvmeError::Refused(Refusal::NotContained));
+    }
+    if blocks == 0 || blocks * BLOCK_SECTOR_BYTES > PAGE {
+        return Err(NvmeError::OutOfRange);
+    }
+    let data = prp1.unwrap_or_else(|| address(page(found.set, BOUNCE)));
+    // PRP1 alone, PRP2 zero: the transfer must not cross PRP1's page, and
+    // PRP1 must be dword aligned (NVMe base specification, PRP entry).
+    if data & 3 != 0
+        || (data & (PAGE as u64 - 1)) + (blocks * BLOCK_SECTOR_BYTES) as u64 > PAGE as u64
+    {
+        return Err(NvmeError::OutOfRange);
+    }
+    let mut command = [0u32; 16];
+    command[0] = u32::from(IO_READ);
+    command[1] = found.identity.namespace;
+    command[6] = data as u32;
+    command[7] = (data >> 32) as u32;
+    command[10] = lba as u32;
+    command[11] = (lba >> 32) as u32;
+    command[12] = (blocks - 1) as u32;
+    match found.execute(true, command) {
+        Ok(_) => Ok((data, 0)),
+        Err(NvmeError::Command { status, .. }) if status != 0xffff => Ok((data, status)),
+        Err(other) => Err(other),
+    }
+}
+
 /// The controller, once `bytes` worth of whole sectors from `lba` are
 /// checked to lie inside the namespace; returns it with the sector count.
 fn ready(lba: u64, bytes: usize) -> Result<(&'static mut Controller, usize), NvmeError> {
@@ -670,7 +797,7 @@ pub fn read_sector(lba: u64, buffer: &mut [u8; BLOCK_SECTOR_BYTES]) -> Result<()
 pub fn read_sectors(lba: u64, buffer: &mut [u8]) -> Result<(), NvmeError> {
     let (found, sectors) = ready(lba, buffer.len())?;
     found.transfer(IO_READ, lba, sectors)?;
-    let bounce = unsafe { &*core::ptr::addr_of!(BOUNCE) };
+    let bounce = unsafe { &*page(found.set, BOUNCE) };
     buffer.copy_from_slice(&bounce.0[..buffer.len()]);
     Ok(())
 }
@@ -686,7 +813,7 @@ pub fn write_sectors(lba: u64, buffer: &[u8]) -> Result<(), NvmeError> {
     if !found.identity.writable {
         return Err(NvmeError::ReadOnly);
     }
-    let bounce = unsafe { &mut *core::ptr::addr_of_mut!(BOUNCE) };
+    let bounce = unsafe { &mut *page(found.set, BOUNCE) };
     bounce.0[..buffer.len()].copy_from_slice(buffer);
     found.transfer(IO_WRITE, lba, sectors)
 }

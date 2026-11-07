@@ -258,3 +258,32 @@ mod tests {
         refused(b"port 22\n\x7f\n", "line 2: byte 0x7f");
     }
 }
+
+
+pub const TIME_PATH:&str="/etc/time.conf";
+#[derive(Clone,Copy,Debug,Eq,PartialEq)]
+pub struct Time {pub enabled:bool,pub server:Option<[u8;4]>,pub server_port:u16,pub local_port:u16,pub interval_seconds:u64,pub max_step_seconds:u64,pub max_age_seconds:u64}
+impl Time {pub const DEFAULT:Self=Self{enabled:false,server:None,server_port:123,local_port:49123,interval_seconds:3600,max_step_seconds:86400,max_age_seconds:21600};}
+pub fn parse_time(text:&[u8])->Result<Time,String>{
+    let mut t=Time::DEFAULT;
+    for(line,key,value)in lines(text,&["enabled","server","server-port","local-port","interval-seconds","max-step-seconds","max-age-seconds"])?{
+        match key {
+            "enabled"=>t.enabled=match value {"yes"=>true,"no"=>false,_=>return Err(format!("line {line}: enabled must be yes or no"))},
+            "server"=>{let ip=ipv4(line,key,value)?;if ip[0]==0||ip[0]>=224||ip==[255;4]{return Err(format!("line {line}: server must be unicast IPv4"));}t.server=Some(ip);},
+            "server-port"=>t.server_port=number(line,key,value,1,65535)?as u16,
+            "local-port"=>t.local_port=number(line,key,value,1024,65535)?as u16,
+            "interval-seconds"=>t.interval_seconds=number(line,key,value,60,86400)?,
+            "max-step-seconds"=>t.max_step_seconds=number(line,key,value,1,315360000)?,
+            "max-age-seconds"=>t.max_age_seconds=number(line,key,value,60,86400)?,
+            _=>unreachable!(),
+        }
+    }
+    if t.enabled&&t.server.is_none(){return Err("enabled time synchronization requires server".into());}
+    if t.max_age_seconds<t.interval_seconds{return Err("max-age-seconds must be at least interval-seconds".into());}
+    Ok(t)
+}
+#[cfg(test)]mod time_tests {
+    use super::*;
+    #[test]fn default_disabled_and_explicit_peer(){assert!(!parse_time(b"").unwrap().enabled);assert!(!parse_time(include_bytes!("../../operator/etc/time.conf")).unwrap().enabled);let t=parse_time(b"enabled yes\nserver 10.0.2.2\n").unwrap();assert_eq!(t.server,Some([10,0,2,2]));assert_eq!(t.server_port,123);assert_eq!(parse_time(b"enabled yes\nserver 10.0.2.2\nserver-port 40123\n").unwrap().server_port,40123);}
+    #[test]fn invalid_config_is_not_replaced_by_default(){for input in [&b"enabled yes\n"[..],b"server 0.0.0.0\n",b"server 224.1.2.3\n",b"interval-seconds 1\n",b"server-port 0\n",b"server-port 65536\n",b"max-age-seconds 60\n",b"enabled yes\nenabled no\n",b"trusted yes\n"]{assert!(parse_time(input).is_err(),"{input:?}");}}
+}

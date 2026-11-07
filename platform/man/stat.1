@@ -1,0 +1,36 @@
+.Dd November 3, 2026
+.Dt STAT 1
+.Os ABSD
+.Sh NAME
+.Nm stat
+.Nd display native object identity and metadata
+.Sh SYNOPSIS
+.Nm
+.Ar path ...
+.Sh DESCRIPTION
+For each path print kind, byte size, object read-only flag, filesystem id,
+non-reused object serial, link count, and modification time in UTC, or
+.Ql unknown
+when absent.
+These are ABSD fields; there are no owners, groups or mode bits.
+.Pp
+With an active file-server channel also print the covering mount and this
+session's read-write or read-only access.
+An ancestor leading to session mounts may have no covering mount and is
+reported read-only.
+The object flag and mount access are distinct restrictions.
+.Pp
+Paths resolve through this process's view and no metadata is modified.
+Errors go to standard error; later paths are attempted.
+There is no option parsing: dash-leading operands are paths.
+.Sh EXIT STATUS
+0 for successful inspection; 1 for any metadata or timestamp error;
+2 if no paths are supplied.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+stat /etc/network.conf /home/operator
+.Ed
+.Sh SEE ALSO
+.Xr df 1 ,
+.Xr ls 1 ,
+.Xr filesystem 7

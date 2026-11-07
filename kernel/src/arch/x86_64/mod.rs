@@ -127,7 +127,7 @@ mod tests {
     }
 }
 
-use crate::process::MAX_USER_PAGE_TABLES;
+use crate::layout::USER_DIRECTORIES;
 pub const ELF_MACHINE: u16 = 62;
 pub type ExecutionContext = [u64; 20];
 pub const EMPTY_CONTEXT: ExecutionContext = [0; 20];
@@ -146,20 +146,27 @@ impl PageTableSlot {
 
 /// Physical frames exclusively owned by one process's page-table hierarchy.
 /// `root` also references the shared kernel PDPT, which is never owned here.
+/// Leaf tables are found through the owned directories themselves (`vm`),
+/// so this record stays small when the region spans several directories.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AddressSpace {
     pub root: u64,
     pub pdpt: u64,
-    pub directory: u64,
-    pub page_tables: [PageTableSlot; MAX_USER_PAGE_TABLES],
+    /// One page directory per GiB of the user region; 0 until first use.
+    pub directories: [u64; USER_DIRECTORIES],
+    /// Leaf tables currently owned, bounded by `MAX_LEAF_TABLES`.
+    pub tables: usize,
+    /// Every heap-window page below this address is mapped (0: none known).
+    pub heap_hint: u64,
 }
 
 impl AddressSpace {
     pub const EMPTY: Self = Self {
         root: 0,
         pdpt: 0,
-        directory: 0,
-        page_tables: [PageTableSlot::EMPTY; MAX_USER_PAGE_TABLES],
+        directories: [0; USER_DIRECTORIES],
+        tables: 0,
+        heap_hint: 0,
     };
 }
 

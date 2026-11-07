@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Receive-setup ordering and deadline controls. No QEMU or network sockets."""
 import importlib.util
+import ast
+import inspect
 import io
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +19,18 @@ import ssh_absd
 NIC = b'NETWORK LINK OK rx_descriptors=32 tx_descriptors=16 buffer_bytes=2048\n'
 DOWN = b'NIC LINK DOWN AT PROBE rx_descriptors=32 tx_descriptors=16 buffer_bytes=2048\n'
 BOOT = b'ABSD KERNEL BOOT\n'
+
+
+def ssh_ready_output():
+    # Consume the exact current driver's expression without changing its
+    # frozen source or duplicating its mounts/capacity. Refuse ambiguity.
+    function = ast.parse(inspect.getsource(ssh_absd.file_server_storage)).body[0]
+    [expression] = [node.value for node in function.body if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == 'expected'
+                            for target in node.targets)]
+    marker = eval(compile(ast.Expression(expression), __file__, 'eval'), vars(ssh_absd))
+    return ('SSH LISTENING\nSSH HOST KEY LOADED ssh-ed25519 AAAA SHA256:abc\n'
+            + marker + '\n')
 
 
 def load(name):
@@ -214,9 +228,7 @@ class CallSiteTests(unittest.TestCase):
         target.system_objects = lambda: []
         target.host_public_from_image = lambda: 'ssh-ed25519 AAAA'
         target.serial = lambda: (BOOT + NIC + b'FSD HOST KEY PRESENT \nFSD READY\n').decode()
-        target.output = lambda: ('SSH LISTENING\nSSH HOST KEY LOADED ssh-ed25519 AAAA SHA256:abc\n'
-                                'SSH STORAGE VIA FILE SERVER OK block=none '
-                                'control=/ssh:ro,/bin:ro,/etc:ro,/var/log:rw,/var/state:ro,/var/state/facts:rw slots=8\n')
+        target.output = ssh_ready_output
         prepared = []
         def setup(read, running, deadline):
             self.assertEqual(deadline, 304)
@@ -246,9 +258,7 @@ class CallSiteTests(unittest.TestCase):
                 raw=(BOOT+NIC+b'FSD HOST KEY PRESENT \nFSD READY\n').decode()
                 if injected:raw+='NIC RING FAULT INJECTED rdh=35\n'
                 target.serial=lambda:raw
-                target.output=lambda:('SSH LISTENING\nSSH HOST KEY LOADED ssh-ed25519 AAAA SHA256:abc\n'
-                    'SSH STORAGE VIA FILE SERVER OK block=none control=/ssh:ro,/bin:ro,/etc:ro,'
-                    '/var/log:rw,/var/state:ro,/var/state/facts:rw slots=8\n')
+                target.output=ssh_ready_output
                 ended=Process();ended.returncode=0
                 try:
                     with patch.object(ssh_absd.subprocess,'Popen',return_value=ended), \

@@ -1,0 +1,60 @@
+.Dd November 3, 2026
+.Dt SEQ 1
+.Os ABSD
+.Sh NAME
+.Nm seq
+.Nd generate a numeric sequence
+.Sh SYNOPSIS
+.Nm
+.Op Fl w
+.Op Fl s Ar separator
+.Op Fl t Ar terminator
+.Op Fl f Ar format
+.Op Ar first Op Ar increment
+.Ar last
+.Sh DESCRIPTION
+Print numbers from first through last, advancing by increment while
+within the selected endpoint.
+With one number, first and increment default to 1; with two, increment
+defaults to 1.
+A descending sequence requires a negative increment.
+Floating-point operands are accepted; this is not a general exact-decimal
+calculator.
+Zero increments and malformed numbers are refused.
+.Pp
+The default separator and final terminator are newlines.
+.Fl s Ar separator
+changes only the separator between numbers.
+.Fl t Ar terminator
+changes the final terminator.
+.Fl w
+pads numbers to equal width with leading zeroes.
+.Fl f Ar format
+selects the upstream printf-style numeric format; it cannot be combined
+with equal-width output.
+No input stream or filesystem object is read or changed.
+.Sh EXIT STATUS
+0 on successful generation or a broken output pipe.
+On ABSD the pinned utility diagnoses a broken pipe on standard error but
+returns success; its Unix-only ignored-SIGPIPE status adjustment is absent.
+Invalid arguments and other output failures return nonzero status and
+are diagnosed on standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+seq 3
+seq -s , 1 2 7
+.Ed
+.Sh ABSD PROFILE
+This is the unmodified uutils 0.12.0 utility pinned by the platform build.
+The reference describes selected source-supported options; use
+.Fl Fl help
+for the complete upstream interface.
+File access uses the process's ABSD filesystem view, output uses its
+inherited stream, and the command acquires no additional authority.
+There are no native Unix processes, signals or permission bits underneath
+this port.
+The command matrix exercises the example forms below; other options
+listed here are source-checked, not separately guest-qualified.
+.Sh SEE ALSO
+.Xr printf 1 ,
+.Xr intro 1

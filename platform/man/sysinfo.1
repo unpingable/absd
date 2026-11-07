@@ -76,3 +76,8 @@ runtime's refusal, status 104, before anything is printed.
 .Xr release 1 ,
 .Xr uptime 1 ,
 .Xr afterboot 8
+.Pp
+The limits line reports kernel process, per-process handle, spawn-transfer,
+pipe and cell capacities. If the capacity query is unavailable, this line says
+unknown and the command exits with status 1. The existing kernel line reports
+current occupancy.

@@ -407,10 +407,12 @@ fn ascii(key: u8, modifiers: u8, caps: bool) -> Option<u8> {
     }
     let shift = modifiers & 0x22 != 0;
     if modifiers & 0x11 != 0 {
-        return if (4..=29).contains(&key) {
-            Some(key - 3)
-        } else {
-            None
+        return match key {
+            4..=29 => Some(key - 3),
+            47 => Some(0x1b), // Ctrl-[
+            48 => Some(0x1d), // Ctrl-], the local console prefix
+            49 => Some(0x1c), // Ctrl-\
+            _ => None,
         };
     }
     if (4..=29).contains(&key) {
@@ -888,6 +890,12 @@ mod tests {
                 .bytes(),
             b"a"
         );
+    }
+
+    #[test]
+    fn local_console_prefix_is_available_on_physical_usb_keyboards() {
+        let mut state = Reports::new();
+        assert_eq!(state.translate(&report(1, &[48])).unwrap().bytes(), &[0x1d]);
     }
 
     #[test]

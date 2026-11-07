@@ -6,3 +6,14 @@ description = "Definitions shared by the ABSD kernel and its userspace programs"
 
 [lib]
 doctest = false
+
+[features]
+# Explicit #115 self-host builder profile: 384 MiB heap, 16-page kernel
+# stacks, doubled admission range (see layout.rs). Never a default.
+builder-profile = []
+# Isolated #115 builder experiment: 3 GiB user region, 2 GiB heap window.
+# x86_64 only; not a supported ABI or resource promotion.
+builder-large-envelope = ["builder-profile"]
+# #115 builder class heap: a 512 MiB heap window for the durable self-host
+# worker's subtree only (see layout.rs). Never a default.
+builder-class-heap = ["builder-profile"]

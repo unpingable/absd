@@ -93,7 +93,7 @@ the warm boot that ran the cases: they run immediately before the first
 stopping scenario (or at the end when none runs), and each stopping
 scenario's leak check is its round-against-round census equality.
 Census ruling (b) (steward, as clarified and ratified by the rule's owner on
-2026-10-13). It applies to every CportsMatrix harness: cports, and tcc,
+2026-10-13). It applies to every CportsMatrix harness: cports, and
 clang and userland, whose censuses are CportsMatrix.census and carry the
 file server's keys (draining, opens, heap peak from its last FSD CAPACITY
 line, printed at READY and at each channel settle; draining=0 means 0 at the
@@ -195,12 +195,20 @@ A17): `excl-contention deny` (B refused in under 5 s while A is in a
 transaction, still refused after A's COMMIT, granted after A's .quit),
 `kill-holder` (B granted after A's session is killed; directory listing
 compared with Linux, a difference a CPORTS SCENARIO NOTE), `crash-recover`
-(QEMU stopped at SPILLED, the image copied, next boot B recovers the hot
-journal), `power-cut` (form a: committed rows survive, uncommitted absent),
-`excl-concurrency-loss` (Linux unix reader succeeds, unix-excl readers on
-both systems refused). A stopped boot is followed by
-AbsdTarget.start(expect_sweep=True). Databases copied out of an image (the
-copy before recovery: database and journal; the live image after it) go to
+(QEMU stopped at SPILLED, the image copied; the host's read-only reader
+recovers the hot journal from the copy), `power-cut` (form a: committed rows
+survive, uncommitted absent, read the same way), `excl-concurrency-loss`
+(Linux unix reader succeeds, unix-excl readers on both systems refused).
+Under the owner's storage fence (coordination record #63 (b), docs/WRITABLE-ENTRY.md)
+a stopped boot is never reopened writable: the same image booted again
+must be refused before any write (storage_fence_guest.refused_cold_boot:
+status 7, the named refusal, zero block writes and flushes, the image
+unchanged, and the host reader's tree unchanged), and the crash state is
+verified only by read-only extraction (fence (d)). The fenced image is
+never booted again; a later case runs on a freshly constructed image
+(CPORTS FRESH IMAGE). There is no restarted boot, so the restart census,
+restart rounds and restart repeats print NOT_RUN for these cases. Databases
+copied out of the image at the cut (database and journal) go to
 <work>/host-reader/<label>/ and are read by Python's sqlite3 module
 (`python3 -I`). A deny that does not deny, a kill that does not release, or
 a recovery outside the expected one prints CPORTS SQLITE LOCK FAILED (power
@@ -272,6 +280,7 @@ import ssh_absd  # noqa: E402
 import cports_warm as cw  # noqa: E402
 import types
 import absd_fs  # noqa: E402
+import storage_fence_guest as fence_guest  # noqa: E402
 import importlib.util  # noqa: E402
 
 
@@ -477,12 +486,15 @@ def sha(data):
 
 
 class CportsTarget(ssh_absd.AbsdTarget):
+    def product_files(self):
+        return [(f"/bin/{p.name}", p.read_bytes()) for p in self.products]
+
     def files(self, authorized):
         files = super().files(authorized)
         have = {path for path, _ in files}
         files += [(f"/bin/{name}", (self.root / "commands" / name).read_bytes()) for name in EXTRA
                   if f"/bin/{name}" not in have]
-        files += [(f"/bin/{p.name}", p.read_bytes()) for p in self.products]
+        files += self.product_files()
         files += self.case_files
         return files
 
@@ -500,6 +512,8 @@ class CportsMatrix(ck.KitMatrix):
     # An ordinary census starts only after all sessions of this boot have
     # been reclaimed; the deliberate held-session probe still uses ssh().
     QUIESCENT_READINGS = True
+    # The case whose cut fenced the current image (never reopened writable).
+    fenced = None
 
     def __init__(self, target, work, args):
         self.repo = here.parent
@@ -683,7 +697,7 @@ class CportsMatrix(ck.KitMatrix):
     @staticmethod
     def fsd_keyed(census):
         """A census CportsMatrix.census took (every CportsMatrix harness's:
-        cports, tcc, clang, userland), as opposed to a census without the
+        cports, clang, userland), as opposed to a census without the
         file server's keys, which keeps the earlier rule."""
         return "fsd_draining" in census
 
@@ -985,7 +999,7 @@ class CportsMatrix(ck.KitMatrix):
         allowed = self.allowed(case)
 
         def kept(census):
-            return [o for o in census["objects"] if o[0] not in allowed and not o[0].startswith("/var/log/")]
+            return [o for o in census["objects"] if o[0] not in allowed]
 
         if kept(before) != kept(after):
             return False
@@ -1042,7 +1056,7 @@ class CportsMatrix(ck.KitMatrix):
         bk, ak = self.comparison_kernels(before, after, lowered)
 
         def kept(census):
-            return [o for o in census["objects"] if o[0] not in allowed and not o[0].startswith("/var/log/")]
+            return [o for o in census["objects"] if o[0] not in allowed]
 
         b, a = kept(before), kept(after)
         same = ((before["images"], before["memory"], bk, before["fsd"])
@@ -1760,11 +1774,15 @@ class CportsMatrix(ck.KitMatrix):
         return data
 
     def cut(self, case, p, label):
-        """Section 8 form (a): QEMU stops while A holds the database; the
-        image is copied as the stop left it; the next boot recovers
-        (expect_sweep: the boot ended with a session bound); the census
-        baseline is retaken on the new boot and printed."""
-        stopped_at = time.monotonic()
+        """Section 8 form (a) under the owner's storage fence (coordination record
+        #63 (b)): QEMU stops while A holds the database, an unclean end; the
+        image is copied as the stop left it. The same image booted again (as
+        this matrix boots: plain `net fsd`) must be refused before any write:
+        status 7, the named refusal, zero block writes, flushes and errors,
+        the image's SHA-256 unchanged and equal to the copy, and the host
+        reader's tree unchanged (docs/WRITABLE-ENTRY.md read-only
+        extraction). No writable reopen: self.fenced names the case, and the
+        image is never booted again."""
         self.t.stop()
         p.kill(); p.wait(); self.close_pipes(p)
         label = label + ("" if self.restart_round == 1 else f"-round{self.restart_round}")
@@ -1772,21 +1790,44 @@ class CportsMatrix(ck.KitMatrix):
         shutil.copy(self.t.image, pre)
         print(f"CPORTS CUT {case.name} :: QEMU stopped at {label}; image copied to {pre.name} "
               f"({pre.stat().st_size} bytes); serial {self.t.log.name}", flush=True)
-        info = self.t.start(expect_sweep=True)
-        self.connections = 0  # The restarted server has a new session counter.
-        self.check(f"{case.name}: the restart loaded the same host key", not info["generated"] and info["public"] == self.host_key,
-                   str(info))
-        rebased = self.take_rest(f"{case.name} after restart")
-        self.steps = 0          # ruling 2: the per-boot allowance restarts with the new baseline
-        old = self.case_before
-        print(f"CPORTS RESOURCES REBASE {case.name} :: boot {self.t.boots} ({self.t.log.name}, restart "
-              f"{time.monotonic() - stopped_at:.1f} s, image_changed={info['image_changed']}) | before the cut "
-              f"{old['memory']} | {old['kernel']} images={old['images']} -> after restart {rebased['memory']} | "
-              f"{rebased['kernel']} images={rebased['images']} (frames {self.allocated(old['memory'])} -> "
-              f"{self.allocated(rebased['memory'])}); the case is compared against the new baseline", flush=True)
-        self.check(f"{case.name}: no image process alive after the restart", rebased["images"] == 0, self.t.census_detail())
-        self.rebased = rebased
+        self.fenced = case.name
+        what = (f"{case.name}: the writable reopen after the cut is refused (status 7, named refusal, "
+                f"block_writes=0 block_flushes=0, image unchanged)")
+        try:
+            before = self.t.tree()
+            refusal = fence_guest.refused_cold_boot(self.t, os.environ.get("ABSD_BLOCK_ATTACH", "ata"),
+                                                    f"{label}-refused", served=False)
+            after = self.t.tree()
+        except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            self.check(what, False, str(e))
+        self.check(what, refusal["status"] == "7", repr(refusal))
+        with open(self.t.image, "rb") as image, open(pre, "rb") as copy:
+            same = hashlib.file_digest(image, "sha256").digest() == hashlib.file_digest(copy, "sha256").digest()
+        self.check(f"{case.name}: the refused image equals the copy taken at the cut", same)
+        self.check(f"{case.name}: the host reader's tree is unchanged by the refusal", before == after,
+                   str(sorted(set(before) ^ set(after))))
+        print(f"CPORTS CUT REFUSED {case.name} :: writable reopen refused status=7 block_writes=0 block_flushes=0 "
+              f"image_unchanged=true refusal={refusal['refusal']!r} serial={pathlib.Path(refusal['log']).name}",
+              flush=True)
         return pre
+
+    def fresh_image(self, authorized, case):
+        """An image a cut fenced is never reopened writable: the next case
+        runs on a freshly constructed image with the same import, as each
+        core-fsd-recovery interruption case does."""
+        t = self.t
+        work = self.work / f"fresh-{case.name}"
+        work.mkdir()
+        t.setup(work, authorized)
+        first = t.start(fresh=True)
+        self.client = sm.Client(work, t.port)
+        self.client.trust(first["public"])
+        self.host_key = first["public"]
+        self.connections, self.steps = 0, 0
+        print(f"CPORTS FRESH IMAGE {case.name} :: the image {self.fenced} fenced is not reopened; boot {t.boots} "
+              f"on {t.image}", flush=True)
+        self.fenced = None
+        self.take_rest(f"fresh image for {case.name}")
 
     def limit_case(self, case, e, start, before):
         """A LIMIT_ON_TIMEOUT case past its timeout: a named limit with the
@@ -2044,20 +2085,15 @@ class CportsMatrix(ck.KitMatrix):
         if f"{db}-journal" not in pre_names:
             print(f"CPORTS SQLITE LOCK FAILED {case.name} :: no {db}-journal on the image at the cut: {pre_names}", flush=True)
             self.check(f"{case.name}: a hot journal is on the image at the cut", False, str(pre_names))
-        r = self.sqlite_absd(case, db, sql)
-        after = self.names(case.cwd)
+        # Fence (d): the crash state is recovered only from the read-only
+        # extraction of the refused image; no guest reopens it.
         pre_read = self.host_reader(pre.stem, pre_tree, case.cwd, [db, f"{db}-journal"],
                                     ["PRAGMA integrity_check", "SELECT count(*) FROM t"])
-        live_read = self.host_reader(pre.stem.replace("-pre", "-after"), self.t.tree(), case.cwd, [db],
-                                     ["PRAGMA integrity_check", "SELECT count(*) FROM t"])
-        if r[:3] != want or f"{db}-journal" in after:
-            self.lock_failed(case, "the hot journal was not recovered on the next boot",
-                             f"{r!r} directory {after}; image {pre}; serials {self.t.log.name} and the one before it")
-        if pre_read != b"ok\n3\n" or live_read != b"ok\n3\n":
-            self.lock_failed(case, "the host reader disagrees (pre-recovery database + journal, or the recovered "
-                             "database)", f"pre {pre_read!r} after {live_read!r}; image {pre}; serials "
-                             f"{self.t.log.name} and the one before it")
-        self.restart_repeat(case, db, sql, r)
+        if pre_read != want[1]:
+            self.lock_failed(case, "the host's read-only recovery of the database and journal at the cut disagrees",
+                             f"pre {pre_read!r}; image {pre}; serial {self.t.log.name}")
+        print(f"CPORTS RESOURCES RESTART REPEAT NOT_RUN {case.name} :: reason=storage_fence_refuses_writable_restart",
+              flush=True)
         # The Linux twin: A killed with SIGKILL instead of a machine stop.
         la = self.hold_linux_sqlite(case, db)
         lw = self.feed(la, self.spill_input())
@@ -2072,14 +2108,15 @@ class CportsMatrix(ck.KitMatrix):
         self.check(f"{case.name}: the Linux twin (A killed) prints the same and removes the journal",
                    l1 == want and f"{db}-journal" in linux_spilled and f"{db}-journal" not in linux_after,
                    f"{l1!r} at the kill {linux_spilled} after {linux_after}")
-        self.a17["hot_journal_recovered"] = "yes"
+        self.a17["hot_journal_recovered"] = "read_only_host"
         if all(self.a17.values()) and not self.a17_printed:
             self.a17_line()
-        print(f"CPORTS SCENARIO OK {case.name} hot_journal_recovered=yes host_reader_agrees=yes :: at SPILLED the guest "
-              f"directory was {spilled}, the image at the cut held {pre_names}; next boot B printed ok and 3 and "
-              f"{db}-journal is gone ({after}); Linux equal; native truth: the journal's synced bytes survive the stop "
-              f"(fsync returns after the file server's commit) and the next connection's exclusive lock (no other "
-              f"holder after a boot) lets it roll the journal back", flush=True)
+        print(f"CPORTS SCENARIO OK {case.name} writable_reopen=refused hot_journal_recovered=read_only_host :: at "
+              f"SPILLED the guest directory was {spilled}, the image at the cut held {pre_names}; the same image was "
+              f"refused before any write; the host's sqlite3 on the extracted database and journal printed ok and 3; "
+              f"Linux equal; native truth: the journal's synced bytes survive the stop (fsync returns after the file "
+              f"server's commit); guest-side journal rollback after the stop is not shown (no writable reopen)",
+              flush=True)
 
     def scenario_power_cut(self, case):
         db, n, m = case.args[0], int(case.args[1]), int(case.args[2])
@@ -2110,27 +2147,24 @@ class CportsMatrix(ck.KitMatrix):
         pre = self.cut(case, a, "power-cut")
         pre_tree = self.image_tree(pre)
         pre_names = self.names(case.cwd, pre_tree)
-        r = self.sqlite_absd(case, db, sql)
-        after = self.names(case.cwd)
+        # Fence (d): read-only extraction of the refused image only.
         pre_read = self.host_reader(pre.stem, pre_tree, case.cwd, [db, f"{db}-journal"],
                                     ["PRAGMA integrity_check", "SELECT count(*), sum(k) FROM t"])
-        live_read = self.host_reader(pre.stem.replace("-pre", "-after"), self.t.tree(), case.cwd, [db],
-                                     ["PRAGMA integrity_check", "SELECT count(*), sum(k) FROM t"])
-        ok = (r[:3] == (0, want, b"") and f"{db}-journal" not in after and f"{db}-journal" in pre_names
-              and pre_read == want and live_read == want)
+        ok = f"{db}-journal" in pre_names and pre_read == want
         if not ok:
-            print(f"CPORTS SQLITE POWER-CUT FAILED {case.name} :: B {r!r}; directory at the cut {pre_names}, after {after}; "
-                  f"host reader pre {pre_read!r} after {live_read!r}; image {pre}; serial {self.t.log.name} and the one "
-                  f"before it", flush=True)
-        self.check(f"{case.name}: after the cut the committed rows survive, the uncommitted are absent, the journal is "
-                   f"gone (and it was on the image at the cut), and the host reader agrees", ok,
-                   f"{r!r} {pre_names} {after} pre {pre_read!r} after {live_read!r}")
-        self.restart_repeat(case, db, sql, r)
-        print(f"CPORTS SCENARIO OK {case.name} committed_survives=yes uncommitted_absent=yes host_reader_agrees=yes :: "
-              f"at UNCOMMITTED-WRITTEN the guest directory was {written}, the image at the cut held {pre_names}; next "
-              f"boot B printed ok and {n}|{total}; {db}-journal gone; native truth: COMMIT's journal deletion and "
-              f"fsyncs return after the file server's commit, and the synced hot journal restores the spilled pages",
+            print(f"CPORTS SQLITE POWER-CUT FAILED {case.name} :: directory at the cut {pre_names}; host reader pre "
+                  f"{pre_read!r}; image {pre}; serial {self.t.log.name}", flush=True)
+        self.check(f"{case.name}: at the cut the journal is on the image, and the host's read-only recovery of the "
+                   f"extracted database and journal shows the committed rows and none of the uncommitted", ok,
+                   f"{pre_names} pre {pre_read!r}")
+        print(f"CPORTS RESOURCES RESTART REPEAT NOT_RUN {case.name} :: reason=storage_fence_refuses_writable_restart",
               flush=True)
+        print(f"CPORTS SCENARIO OK {case.name} writable_reopen=refused committed_survives=yes uncommitted_absent=yes "
+              f"read_only_host=yes :: at UNCOMMITTED-WRITTEN the guest directory was {written}, the image at the cut "
+              f"held {pre_names}; the same image was refused before any write; the host's sqlite3 on the extracted "
+              f"database and journal printed ok and {n}|{total}; native truth: COMMIT's journal deletion and fsyncs "
+              f"return after the file server's commit, and the synced hot journal restores the spilled pages; "
+              f"guest-side recovery after the stop is not shown (no writable reopen)", flush=True)
 
     def scenario_excl_concurrency_loss(self, case):
         db = case.args[0]
@@ -2257,7 +2291,10 @@ class CportsMatrix(ck.KitMatrix):
                 self.steps = 0
             else:
                 print('CPORTS WARM NOT_ESTABLISHED reason=no-nonstopping-workload R23=PARTIAL', flush=True)
+        fenced_cases = []
         for case in self.cases:
+            if self.fenced:
+                self.fresh_image(authorized, case)
             self.ensure_dir(case.cwd)
             if case.route == "probe":
                 rc, out, err, _, pids = self.shell_ssh(self.text(case), timeout=case.timeout)
@@ -2324,6 +2361,15 @@ class CportsMatrix(ck.KitMatrix):
                     self.integrity(case)
                 verdict = None
             took = time.monotonic() - start
+            if self.fenced == case.name:
+                # No restarted boot exists to census: the cut's image is fenced.
+                print(f"CPORTS RESOURCES NOT_RUN {case.name} :: census after the case, restart rounds "
+                      f"reason=storage_fence_refuses_writable_restart", flush=True)
+                fenced_cases.append(case.name)
+                counts[verdict] += 1
+                self.ran[case.name] = case
+                timings.append((case.name, took))
+                continue
             after = self.stable(case.name, "after")
             restart = self.rebased is not None
             if restart:
@@ -2351,7 +2397,11 @@ class CportsMatrix(ck.KitMatrix):
                   f"objects={len(after['objects'])} seconds={took:.1f}", flush=True)
         if any(v is not None for v in self.a17.values()) and not self.a17_printed:
             self.a17_line()
-        self.alive("the cports cases")
+        if self.fenced:
+            print(f"CPORTS ALIVE NOT_RUN after the cports cases :: the last case ({self.fenced}) fenced the image",
+                  flush=True)
+        else:
+            self.alive("the cports cases")
         if self.cports_warm and not self.warm_finished:
             self.cports_warm.finish()
             self.warm_finished = True
@@ -2365,7 +2415,8 @@ class CportsMatrix(ck.KitMatrix):
               flush=True)
         self.rest_recorded()
         print(f"CPORTS RESOURCES OK cases={resources} highwater={len(self.highwater)} "
-              f"repeat={'ok' if self.highwater else 'none'}", flush=True)
+              f"repeat={'ok' if self.highwater else 'none'} "
+              f"restart_census_not_run={','.join(fenced_cases) or 'none'}", flush=True)
         print(f"CPORTS MATRIX OK seconds={time.monotonic() - started:.0f}", flush=True)
 
 

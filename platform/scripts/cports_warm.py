@@ -51,7 +51,7 @@ def selected(m, module):
 
 def target_state(m, module):
     # Use the existing whole-system object inventory, which already excludes
-    # only the four declared log files and boot recovery state. No CWD prefix
+    # only declared mutable log files and boot recovery state. No CWD prefix
     # filter: unrelated file effects must never become an accepted initial state.
     # Serial numbers are implementation generations, not logical reset identity.
     return {o[0]: (o[1], o[2], o[4]) for o in m.t.system_objects()}

@@ -5,3 +5,6 @@ edition = "2024"
 description = "Wire codecs for ABSD init-brokered spawning: startup record, requests, replies"
 
 [dependencies]
+
+[features]
+native-pcm-experiment = []

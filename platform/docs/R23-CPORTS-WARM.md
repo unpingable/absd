@@ -12,7 +12,7 @@ every selected non-stopping case in its original order, the existing held-sessio
 warmup before the first scenario, then liveness. Cold reset may be a no-op;
 subsequent groups remove only listed generated regular files on both the target
 and Linux reference. The target uses the existing whole-system object inventory, with only its existing
-four-log and recovery-state exclusions; effects outside /cports are not ignored.
+declared mutable-log and recovery-state exclusions; effects outside /cports are not ignored.
 The Linux reference uses its complete fixture tree. Both logical input states must match their captured
 initial state (names, kinds, read-only/mode flags, file digests). Unknown objects,
 input mutation, generated directories or symlinks refuse. Files are not restored

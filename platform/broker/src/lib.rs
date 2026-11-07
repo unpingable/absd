@@ -29,7 +29,7 @@ pub const MAX_SLOTS: usize = 8;
 /// File server channels a startup record may name (kernel
 /// `docs/PROCESS-STARTUP.md`, "File server"): a server's control channel
 /// and its client slots, or a client's own channel and its spares.
-pub const MAX_CHANNELS: usize = 16;
+pub const MAX_CHANNELS: usize = 24;
 /// Largest argv a request or startup record may carry.
 pub const MAX_ARGC: usize = 32;
 /// Largest request, in bytes.
@@ -47,6 +47,9 @@ pub const REPLY_BYTES: usize = 24;
 pub const REQUEST_SPAWN: u8 = 1;
 
 pub mod role {
+    /// Private #96 experiment; not a supported startup role.
+    #[cfg(feature = "native-pcm-experiment")]
+    pub const PLAYBACK: u8 = 0xf0;
     pub const STDIN: u8 = 1;
     /// The stdout pipe's write end, the same pipe the console handle is.
     pub const STDOUT: u8 = 2;
@@ -88,6 +91,14 @@ pub mod role {
     /// `docs/service-lifecycle-20261008/LIVENESS.md`). At most once, and no
     /// process passes it on.
     pub const LIVENESS: u8 = 18;
+    /// Private terminal metadata experiment: read-only size Cell.
+    pub const TERMINAL: u8 = 21;
+    /// Experimental read-only kernel diagnostics; no terminal input/output rights.
+    pub const DIAGNOSTICS: u8 = 20;
+    /// Exact served NIC/time owner only; ordinary commands never inherit it.
+    pub const CLOCK_OWNER: u8 = 22;
+    /// Dedicated write-only local terminal stream. Never delegated to session children.
+    pub const LOCAL_TERMINAL: u8 = 19;
 }
 
 pub mod reply {
@@ -129,6 +140,8 @@ pub struct ChannelIndexes {
 /// A validated startup record. Indexes are positions in the startup vector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Startup<'a> {
+    #[cfg(feature = "native-pcm-experiment")]
+    pub playback: Option<usize>,
     pub stdin: Option<usize>,
     pub stdout: Option<usize>,
     pub stderr: Option<usize>,
@@ -142,6 +155,10 @@ pub struct Startup<'a> {
     pub session_events: Option<usize>,
     pub session_requests: Option<usize>,
     pub liveness: Option<usize>,
+    pub terminal: Option<usize>,
+    pub diagnostics: Option<usize>,
+    pub clock_owner: Option<usize>,
+    pub local_terminal: Option<usize>,
     pub slots: [SlotIndexes; MAX_SLOTS],
     pub slot_count: usize,
     pub channels: [ChannelIndexes; MAX_CHANNELS],
@@ -252,6 +269,8 @@ pub fn parse_startup(record: &[u8], handle_count: usize) -> Result<Startup<'_>, 
         return Err(Malformed);
     }
     let mut startup = Startup {
+        #[cfg(feature = "native-pcm-experiment")]
+        playback: None,
         stdin: None,
         stdout: None,
         stderr: None,
@@ -265,6 +284,10 @@ pub fn parse_startup(record: &[u8], handle_count: usize) -> Result<Startup<'_>, 
         session_events: None,
         session_requests: None,
         liveness: None,
+        terminal: None,
+        diagnostics: None,
+        clock_owner: None,
+        local_terminal: None,
         slots: [SlotIndexes::default(); MAX_SLOTS],
         slot_count: 0,
         channels: [ChannelIndexes::default(); MAX_CHANNELS],
@@ -288,6 +311,8 @@ pub fn parse_startup(record: &[u8], handle_count: usize) -> Result<Startup<'_>, 
         }
         assigned |= 1 << index;
         let single = match role {
+            #[cfg(feature = "native-pcm-experiment")]
+            role::PLAYBACK => &mut startup.playback,
             role::STDIN => &mut startup.stdin,
             role::STDOUT => &mut startup.stdout,
             role::STDERR => &mut startup.stderr,
@@ -299,6 +324,10 @@ pub fn parse_startup(record: &[u8], handle_count: usize) -> Result<Startup<'_>, 
             role::NIC => &mut startup.nic,
             role::MACHINE => &mut startup.machine,
             role::LIVENESS => &mut startup.liveness,
+            role::TERMINAL => &mut startup.terminal,
+            role::DIAGNOSTICS => &mut startup.diagnostics,
+            role::CLOCK_OWNER => &mut startup.clock_owner,
+            role::LOCAL_TERMINAL => &mut startup.local_terminal,
             role::SESSION_EVENTS => &mut startup.session_events,
             role::SESSION_REQUESTS => &mut startup.session_requests,
             role::SLOT_STDIN | role::SLOT_STDOUT | role::SLOT_STDERR => {

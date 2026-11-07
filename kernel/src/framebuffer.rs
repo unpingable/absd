@@ -42,6 +42,26 @@ static mut STATE: Option<State> = None;
 /// the report still reaches serial.
 static mut DRAWING: bool = false;
 
+#[cfg(feature = "mwm-experiment")]
+fn mirror_suppressed() -> bool {
+    absd_kernel::display::mirror_suppressed()
+}
+
+#[cfg(not(feature = "mwm-experiment"))]
+fn mirror_suppressed() -> bool {
+    false
+}
+
+#[cfg(feature = "mwm-experiment")]
+fn emergency_active() -> bool {
+    absd_kernel::display::emergency_active()
+}
+
+#[cfg(not(feature = "mwm-experiment"))]
+fn emergency_active() -> bool {
+    false
+}
+
 fn state() -> Option<&'static mut State> {
     unsafe { (*core::ptr::addr_of_mut!(STATE)).as_mut() }
 }
@@ -126,6 +146,9 @@ fn parse(tag: &[u8]) -> Result<(u64, Geometry), Unavailable> {
 
 /// Draws one console byte, if the framebuffer is active.
 pub fn put(byte: u8) {
+    if mirror_suppressed() && !emergency_active() {
+        return;
+    }
     let Some(state) = state() else {
         return;
     };
@@ -146,11 +169,50 @@ pub fn put(byte: u8) {
 
 /// Later text is drawn in the failure colours.
 pub fn fault_colors() {
+    #[cfg(feature = "mwm-experiment")]
+    absd_kernel::display::set_emergency();
     if let Some(state) = state() {
         state
             .console
             .set_colors(fbcon::FAULT_FOREGROUND, fbcon::FAULT_BACKGROUND);
     }
+}
+
+pub fn clear() {
+    if let Some(state) = state() {
+        let frame = frame(state);
+        state.console.clear(frame);
+    }
+}
+
+#[cfg(feature = "mwm-experiment")]
+pub fn write_rect(
+    geometry: Geometry,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    pitch: u32,
+    payload: &[u8],
+) -> Result<(), i64> {
+    absd_kernel::display::validate_rectangle(geometry, x, y, width, height, pitch, payload.len())?;
+    let Some(state) = state() else {
+        return Err(-5);
+    };
+    let frame = frame(state);
+    for row in 0..height as usize {
+        let destination =
+            (y as usize + row) * geometry.pitch + x as usize * geometry.bytes_per_pixel;
+        let source = row * pitch as usize;
+        let count = width as usize * geometry.bytes_per_pixel;
+        frame[destination..destination + count].copy_from_slice(&payload[source..source + count]);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "mwm-experiment")]
+pub fn drawing_active() -> bool {
+    unsafe { core::ptr::read_volatile(core::ptr::addr_of!(DRAWING)) }
 }
 
 /// A line only the screen shows: serial logs stay byte-for-byte unchanged.

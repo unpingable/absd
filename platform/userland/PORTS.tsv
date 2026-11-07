@@ -1,8 +1,9 @@
-# Current catalog: platform 3d68de77, including accepted mtime e0bf657c.
-# The metadata refactor changes linked V1 fstat (all), stat and readdir code; all 12 ports move.
-# Exact ca13/b217/C11/P12 comparisons: c11-cport-pin-diagnosis-20261017/f92c55e4.
-# Raw and stripped hashes change; installed lengths and C V1 layout stay fixed.
-# Host catalog update; fresh native qualification remains a separate result.
+# Current catalog: composed operability source f01a9ef9 (diagnostics, Time, logging,
+# SSH priority, local console, SFTP and the provenance follow-up; #148).
+# The C kit links the accepted Rust runtime: all 18 raw and stripped digests change.
+# Fresh host discovery: USERLAND BUILD OK ports=18 reproducible=2 gate=18
+# unresolved=0 host_cases=183. The pin commit is rebuilt and sealed separately.
+# Fresh native qualification is separate.
 # The base userland's ports installed under /bin (userland/README.md,
 # "Installed"). scripts/install-userland-ports.sh, run by
 # scripts/build-ports.sh, copies each into ports/NAME; scripts/operator_image.py
@@ -18,15 +19,21 @@
 # A digest that changes (the kit, the adapter, a patch or the pin changed) is
 # refused by the install; record the new rows (install-userland-ports.sh
 # --print) only with that change, once it is reviewed.
-printf	sbase-0.1	printf.c	absd/printf	b23b08d26fdeb6e804a20ded73105e58ead01f34f4a562586062f21e31fb0217	42fc554b25717fc08ef5cb40826a0d73fc2c300eaa298cb67867e753c3fc789e	176632
-test	sbase-0.1	test.c	absd/test	7edb2f44ceafa0d67ca30933585963f22fb8ae93cea2674e146e2e1f9bb50d0e	e49278923c88493c4d1ad8a58e3f1296614c356d3b89ff83e6630ca6b197364d	197112
-grep	sbase-0.1	grep.c	absd/grep	8d15d2c2f1baf48845319d629bac913c8091fddd4ff46112bea7e09b9dd59790	c8b96cb40d3808a37b5d7e42c071acfa7cfeec507c828b756e7b233982cd69c1	225928
-sort	sbase-0.1	sort.c	absd/sort	4e341676cd56f6c993eda2acc0a536be06c897b346a03984f4523510d4761857	be8e810da20bef4efffdda6b7a2595b90c6a85ba6ac85b006ead42e6dff97416	213656
-sed	sbase-0.1	sed.c	absd/sed	6eb594d930b82031238b4bfeb044125524b51fcaef5d9fe24359d4ca50ec41a7	2313fe7ee5c683eea7a8310127ec550f112025feb670700620ed3f2f769047fd	250504
-od	sbase-0.1	od.c	absd/od	44f582dccbf9375d4e8d35fff9f2fd938ab02764d89f077114b78a190b17c8a0	c6bc54ae93dcb93030b3f25ebed8231574b8459420f6379d3a144d95b08f386e	197160
-cmp	sbase-0.1	cmp.c	absd/cmp	3dda8cab5a32398d796ece6059e41149eaae0a2cf0f86d7e6a6286288234c656	6bde08fa4d1827979377ee00298e7eb78863f5b3c2779687f2e23163c9094a57	193160
-ed	sbase-0.1	ed.c	absd/ed	36693a98cdc54c90cf10185d5196d1ca81bd55983a17ac0d4c67e8ebfbb013e4	dd2cab5ef8e46dded67d5af263548668f4edbe3e72fc1122560952a1139a23a8	258712
-find	sbase-0.1	find.c	absd/find	e72dedac6405d92eb0d435468830cf531ce2e1d93e6892a1c51b12840766b666	c4d3e8cb21c5f25e5b40e1253ac6a6dd0308876485c05cfb935b77c5741b7f75	218672
-diff	toybox-0.8.15	toys/pending/diff.c	absd/diff	dabeaddaa28fa6f145a44010112cfeb47edee5f69ccdb9aa99bd107cfc9ea697	3f169fcbc29b2c85d9583ea032bdf13bab101658b82121dca65c295abc0b33f0	197056
-hexdump	toybox-0.8.15	toys/pending/hexdump.c	absd/hexdump	73fe8e2e2497a03d7dd2095a4315ba75c1641ece24988491fec9bab63aa7065b	eb5db4049bdb1c710184e90ee32380368b32793b1e450838500b0047c53b6ea5	188880
-tar	sbase-0.1	tar.c	absd/tar	d4fc29013dbf7b12dd137a26aa157f121ead95cd4de0b4afadf6a06a28f8f3fa	3969d81900e1b7f51bc81082729d906451e8490ab470d54598aaa652dd5c336f	217592
+printf	sbase-0.1	printf.c	absd/printf	d491b188ce07af39a7daed3d65e9f52691f64917201f3798a6f644263560db25	3f0383e357ef7c23f6e0700e26934ed59ddf07e5ff7c937600391ea0943f787b	176648
+test	sbase-0.1	test.c	absd/test	076d3033782c54eef4eb4e0f4c35f322fb2fcbe1a018f53804f4bfafb70d8238	6c88f42083dbcbb1a05b723a527fae62a5ca669a86587b14649c10945339cc89	201224
+grep	sbase-0.1	grep.c	absd/grep	d1a6cd9999d565fd83a51f0743db8905289f92b220a02c7ea8d831c6b96dfd1e	b078ed55249cc03591fb4ace129de45f7a71288d950afbeb7bb23692229c4dbc	225944
+sort	sbase-0.1	sort.c	absd/sort	f2462d7b2eb91dc520a89073616069476bc3a897b67599b23980fe7221e9f321	3914d0d43b50b397d363946395bdf33f01538db1d8dd081de7fe4a0ff7dd961e	217768
+sed	sbase-0.1	sed.c	absd/sed	378f34bcfd1ef3cfb41396ed03fc2bdd8c225a8d2b64ef48977262f7574b1b7c	b661ae2330645ee82121918594828b7571c019b22e3b97b5a72937a3b22224fc	254616
+od	sbase-0.1	od.c	absd/od	1135a9fcfb9e9ff9363a051948fd60ff0ab4fda61b0751830d5f01033363c5f7	ae9fd4051ea5c8cbf2895f2f36387c11ed9140e92cc95c58f8bb737dc001416f	197160
+cmp	sbase-0.1	cmp.c	absd/cmp	24bf29d76a5d544f7982531e44990adaf910769b982f88fc5b6472b6e6e72f06	46aff72858f964db41c52ca55ba4d0b51d96fd23c50f5fc2921ddadc7a10e0ce	193176
+ed	sbase-0.1	ed.c	absd/ed	8a0687907e891f0c8a85287f122ce684e7a93296bfa4a46df6e2cde32559a7c3	a00ab822fbe1a548151f9daf097bcddf3456ea3e8c36a6886f25372b622fbd1c	258712
+find	sbase-0.1	find.c	absd/find	e3159ba953e5bcd1ae9582bdfe646776d7cb86c791e72f2d86a05a9653217347	9384f349310964b672078e8cecee0f346fdbd17c9e585284082a0b4871c518ca	222768
+diff	toybox-0.8.15	toys/pending/diff.c	absd/diff	37e309b0c6bb139df2d48ceb034bc801e52005879aedb638747b9988488f984c	d6b01675c85947e6c42e9e68c3f4b2d1a1a178aa723f0c3b7cb3285bddab1b21	201168
+hexdump	toybox-0.8.15	toys/pending/hexdump.c	absd/hexdump	67a3d66876a5c87c859ef0778c87025e64df567661274da471e1dbfa09cce2b1	0cf62d726b68776137b15a7e65f99f3116bb225a66723efbba3c967c9a9d2ed1	188880
+tar	sbase-0.1	tar.c	absd/tar	76364d240550bc86fb336e413a1cefba16631dc5ad368dab184d69c45dd8b61a	5c64f026400b5b96026e3783710033c6415520474f5f7c737e1275df1a357379	217608
+tr	sbase-0.1	tr.c	absd/tr	5ed8b7d742a84a0f485c5778dba5a233430aa32e0990895564918e234d716487	52864ff84ecebd1b2c33b36d5f3a78a804bb5224c7199aab7133064c1d684509	189072
+dirname	sbase-0.1	dirname.c	absd/dirname	faa17a80eb4226daf043f4c38db7a95828ba3436710e74a75b2ba610ba5960e8	6f25cc099e868d01a86a7a5c2bbb0e6bc9d5c0cae2b67105592310e2d1094891	168456
+tee	sbase-0.1	tee.c	absd/tee	457b1361adaeadaee113e304ecd55d16276ca859a80ffac814f9aa6f6f15d59e	b393e529f6b56e2e4536b83dad829f4310edc24c90b7411dd0a5046d4e4b6215	192888
+sleep	sbase-0.1	sleep.c	absd/sleep	1b770e3b69a13c80435bc3af27a0e1ed2857414083c9233fd78003f06f079f4d	8bb414e2b31b3e4bf8d3d607c48d48fd10e74f9ac2bba882e5fa4853135388db	168312
+rmdir	sbase-0.1	rmdir.c	absd/rmdir	0b57548f54bdb465b7107866e3f1fcc55fbb9f59fee233a2c9c4f75cf20f6b78	d0a68aa1739b70b95fb036cbb0214e1fa70986ba8feb087c9374740bf5deae50	188792
+paste	sbase-0.1	paste.c	absd/paste	6def714c889857dfbf8eeda68411d24cbf84aa0ba05bb3a03f908e3265186ad8	8e2f3d662d1b0990b6f46565ac64e463738c6a31b3e311507d5fd9fdd73c2435	197272

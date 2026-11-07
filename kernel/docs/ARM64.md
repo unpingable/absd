@@ -11,7 +11,9 @@ qualification of its exact combined source before acceptance.
 requires matching `absd-arm-smp=2` or `absd-arm-smp=4` boot arguments. Production
 x86 AP guards and existing canonical authority targets remain intact.
 `ABSD_ARM_BUILD` selects compiler output; qualification outputs use admitted
-bulk storage. `make arm64-weak-memory-test` runs the existing bounded model.
+bulk storage. `ABSD_ARM_INIT_ELF` names another init image for the ARM
+build; unset, it is the portability task. `make arm64-weak-memory-test` runs
+the existing bounded model.
 `make portability-x86-test` and `make semantic-differential X86_TRACE=...
 ARM_TRACE=... DIFF_RESULT=...` exercise the same fixed-width semantic workload.
 

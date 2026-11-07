@@ -13,10 +13,11 @@ Not everything in this tree is ABSD's own:
   files.
 - Libraries downloaded at build time keep theirs. Each component lists them
   per built image under `provenance/inventory/`.
-- `docs/rc1/notices/` carries verbatim third-party notice texts separately
+- `docs/preview2/notices/` carries verbatim third-party notice texts separately
   from ABSD's license: Picolibc's complete copyright aggregate, FreeBSD's
   `if_em.c` BSD-2-Clause notice, libm's LICENSE and retained per-file notices,
-  and the LLVM compiler-rt notice/Apache text. TEXT-PROVENANCE.json records
+  the LLVM compiler-rt notice/Apache text, and the retained upstream texts
+  for the SIMD, fluent-langneg and plural-rules dependencies. TEXT-PROVENANCE.json records
   exact upstream identities and extraction scope. This directory also
   contains ABSD's generated inventory and correspondence receipts.
 

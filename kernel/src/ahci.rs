@@ -1,5 +1,5 @@
 //! AHCI census: what SATA controllers and devices a machine has, learnt
-//! with IDENTIFY DEVICE alone (AHCI census, slice 1).
+//! with IDENTIFY DEVICE alone (coordination record #45, slice 1).
 //!
 //! A separate boot entry (`ahci-census`), before storage or userspace. For
 //! every PCI mass-storage function: an AHCI controller (class 01.06.01) that
@@ -34,63 +34,65 @@ use absd_kernel::survey_facts as facts;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{mmio, pci, serial};
+use absd_kernel::dma_policy;
 
-const CLASS_MASS_STORAGE: u8 = 0x01;
-const SUBCLASS_RAID: u8 = 0x04;
-const SUBCLASS_SATA: u8 = 0x06;
-const INTERFACE_AHCI: u8 = 0x01;
-const ABAR: u8 = 5;
+pub(crate) const CLASS_MASS_STORAGE: u8 = 0x01;
+pub(crate) const SUBCLASS_RAID: u8 = 0x04;
+pub(crate) const SUBCLASS_SATA: u8 = 0x06;
+pub(crate) const INTERFACE_AHCI: u8 = 0x01;
+pub(crate) const ABAR: u8 = 5;
 /// Intel Rapid Storage RAID-mode device ids: refused by id as well as by
 /// class, in case a firmware setting presents one as 01.06.
-const RST_RAID_IDS: [(u16, u16); 3] = [(0x8086, 0x2822), (0x8086, 0x282a), (0x8086, 0x2826)];
+pub(crate) const RST_RAID_IDS: [(u16, u16); 3] =
+    [(0x8086, 0x2822), (0x8086, 0x282a), (0x8086, 0x2826)];
 
-const REG_CAP: u64 = 0x00;
-const REG_GHC: u64 = 0x04;
-const REG_PI: u64 = 0x0c;
-const REG_VS: u64 = 0x10;
-const REG_CAP2: u64 = 0x24;
-const REG_BOHC: u64 = 0x28;
-const PORT_BASE: u64 = 0x100;
-const PORT_STRIDE: u64 = 0x80;
-const PX_CLB: u64 = 0x00;
-const PX_CLBU: u64 = 0x04;
-const PX_FB: u64 = 0x08;
-const PX_FBU: u64 = 0x0c;
-const PX_IS: u64 = 0x10;
-const PX_CMD: u64 = 0x18;
-const PX_TFD: u64 = 0x20;
-const PX_SIG: u64 = 0x24;
-const PX_SSTS: u64 = 0x28;
-const PX_SERR: u64 = 0x30;
-const PX_CI: u64 = 0x38;
-const PX_FBS: u64 = 0x40;
+pub(crate) const REG_CAP: u64 = 0x00;
+pub(crate) const REG_GHC: u64 = 0x04;
+pub(crate) const REG_PI: u64 = 0x0c;
+pub(crate) const REG_VS: u64 = 0x10;
+pub(crate) const REG_CAP2: u64 = 0x24;
+pub(crate) const REG_BOHC: u64 = 0x28;
+pub(crate) const PORT_BASE: u64 = 0x100;
+pub(crate) const PORT_STRIDE: u64 = 0x80;
+pub(crate) const PX_CLB: u64 = 0x00;
+pub(crate) const PX_CLBU: u64 = 0x04;
+pub(crate) const PX_FB: u64 = 0x08;
+pub(crate) const PX_FBU: u64 = 0x0c;
+pub(crate) const PX_IS: u64 = 0x10;
+pub(crate) const PX_CMD: u64 = 0x18;
+pub(crate) const PX_TFD: u64 = 0x20;
+pub(crate) const PX_SIG: u64 = 0x24;
+pub(crate) const PX_SSTS: u64 = 0x28;
+pub(crate) const PX_SERR: u64 = 0x30;
+pub(crate) const PX_CI: u64 = 0x38;
+pub(crate) const PX_FBS: u64 = 0x40;
 
-const GHC_AE: u32 = 1 << 31;
-const CAP_SSS: u32 = 1 << 27;
-const CAP2_BOH: u32 = 1;
-const BOHC_BOS: u32 = 1;
-const CMD_ST: u32 = 1;
-const CMD_SUD: u32 = 1 << 1;
-const CMD_FRE: u32 = 1 << 4;
-const CMD_FR: u32 = 1 << 14;
-const CMD_CR: u32 = 1 << 15;
-const FBS_EN: u32 = 1;
-const TFD_ERR: u32 = 1;
-const TFD_DRQ: u32 = 1 << 3;
-const TFD_BSY: u32 = 1 << 7;
-const IS_TFES: u32 = 1 << 30;
-const SIG_ATA: u32 = 0x0000_0101;
-const SIG_ATAPI: u32 = 0xeb14_0101;
-const ATA_IDENTIFY_DEVICE: u8 = 0xec;
+pub(crate) const GHC_AE: u32 = 1 << 31;
+pub(crate) const CAP_SSS: u32 = 1 << 27;
+pub(crate) const CAP2_BOH: u32 = 1;
+pub(crate) const BOHC_BOS: u32 = 1;
+pub(crate) const CMD_ST: u32 = 1;
+pub(crate) const CMD_SUD: u32 = 1 << 1;
+pub(crate) const CMD_FRE: u32 = 1 << 4;
+pub(crate) const CMD_FR: u32 = 1 << 14;
+pub(crate) const CMD_CR: u32 = 1 << 15;
+pub(crate) const FBS_EN: u32 = 1;
+pub(crate) const TFD_ERR: u32 = 1;
+pub(crate) const TFD_DRQ: u32 = 1 << 3;
+pub(crate) const TFD_BSY: u32 = 1 << 7;
+pub(crate) const IS_TFES: u32 = 1 << 30;
+pub(crate) const SIG_ATA: u32 = 0x0000_0101;
+pub(crate) const SIG_ATAPI: u32 = 0xeb14_0101;
+pub(crate) const ATA_IDENTIFY_DEVICE: u8 = 0xec;
 /// Ticks (~1 ms) for a port engine to stop, and for IDENTIFY (a drive may
 /// spin up before it answers).
-const STOP_TICKS: u64 = 600;
-const COMMAND_TICKS: u64 = 10_000;
+pub(crate) const STOP_TICKS: u64 = 600;
+pub(crate) const COMMAND_TICKS: u64 = 10_000;
 /// TSC cycles allowed per tick of bound when the PIT itself is dead: about
 /// ten milliseconds at 3.4 GHz, so the backstop is roughly ten times the
 /// tick bound.
-const TSC_PER_TICK_BACKSTOP: u64 = 1 << 25;
-const MAX_PORTS: u64 = 32;
+pub(crate) const TSC_PER_TICK_BACKSTOP: u64 = 1 << 25;
+pub(crate) const MAX_PORTS: u64 = 32;
 
 #[repr(C, align(1024))]
 struct CommandList([u8; 1024]);
@@ -419,7 +421,15 @@ fn controller(function: pci::Function, totals: &mut Totals) {
     totals.controllers += 1;
     // Bus mastering only now, for the one IDENTIFY DMA per port into
     // kernel memory; off again after the walk.
-    pci::enable_polled_dma(function);
+    if let Err(refused) = crate::dma::arm(function, &dma_policy::AHCI) {
+        out("AHCI DMA REFUSED state=");
+        out(refused.state.name());
+        out(" profile=");
+        out(refused.profile.name());
+        out(": ports not probed\n");
+        totals.refused += 1;
+        return;
+    }
     for index in 0..MAX_PORTS {
         if pi & (1 << index) == 0 {
             continue;

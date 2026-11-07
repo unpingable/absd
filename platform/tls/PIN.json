@@ -100,5 +100,9 @@
       "license": "MIT OR Apache-2.0",
       "metadata_url": "https://crates.io/api/v1/crates/libc/0.2.186"
     }
-  ]
+  ],
+  "application": {
+    "target": "https_document",
+    "policy": "Opt-in Preview 2 direct-issuer-SPKI document application. Same pinned dependencies and features; trust/configuration/time are runtime inputs, not fixture constants."
+  }
 }

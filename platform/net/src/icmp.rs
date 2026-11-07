@@ -278,7 +278,7 @@ fn unicast(ip: &[u8]) -> bool {
     ip[0] != 0 && ip[0] != 127 && ip[0] < 224
 }
 
-fn ethernet_ipv4(frame: &[u8]) -> Option<&[u8]> {
+pub(super) fn ethernet_ipv4(frame: &[u8]) -> Option<&[u8]> {
     if frame.len() < 34 || frame[12..14] != [8, 0] {
         return None;
     }

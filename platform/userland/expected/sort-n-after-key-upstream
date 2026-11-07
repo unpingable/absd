@@ -1,0 +1,9 @@
+status 0
+--- stdout
+card,12
+card,18
+pens,24
+tape,3
+cups,48
+markers,6
+--- stderr

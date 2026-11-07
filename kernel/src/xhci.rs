@@ -90,13 +90,21 @@ pub enum KeyboardRecoveryTest {
 }
 
 pub fn initialize_keyboard(
+    controller: Result<Option<pci::Function>, pci_selection::Error>,
     observe: bool,
     masked: bool,
     test_race: bool,
     recover: bool,
     recovery_test: KeyboardRecoveryTest,
 ) {
-    keyboard::initialize(observe, masked, test_race, recover, recovery_test);
+    keyboard::initialize(
+        controller,
+        observe,
+        masked,
+        test_race,
+        recover,
+        recovery_test,
+    );
 }
 
 pub fn keyboard_progress() {
@@ -109,10 +117,7 @@ pub fn keyboard_stop_before_finish() -> bool {
 
 use crate::{mmio, pci, serial, xhci_interrupt};
 use absd_kernel::xhci_irq;
-
-const CLASS_SERIAL_BUS: u8 = 0x0c;
-const SUBCLASS_USB: u8 = 0x03;
-const INTERFACE_XHCI: u8 = 0x30;
+use absd_kernel::{dma_policy, pci_selection};
 
 const CAP_CAPLENGTH: u64 = 0x00;
 const CAP_HCSPARAMS1: u64 = 0x04;
@@ -245,6 +250,7 @@ impl Fault {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Plan {
+    pub controller: Result<Option<pci::Function>, pci_selection::Error>,
     pub interrupts: bool,
     pub rounds: u32,
     pub fault: Fault,
@@ -282,6 +288,8 @@ pub enum Refusal {
     Capabilities(WalkError),
     /// The USB Legacy Support handoff did not give ABSD the controller.
     Handoff(HandoffError),
+    /// The DMA seam refused bus mastering.
+    Dma(crate::dma::Refused),
     /// The scratchpad pool cannot provide what the controller asks for.
     Scratchpads(PoolError),
     /// A DMA page failed its address check.
@@ -304,6 +312,7 @@ pub enum Refusal {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum XhciError {
     Absent,
+    Selection(pci_selection::Error),
     Keyboard(absd_kernel::usb_keyboard::Error),
     Interrupt(xhci_irq::Error),
     Refused(Refusal),
@@ -609,9 +618,10 @@ impl Controller {
         }
     }
 
-    fn bus_master_on(&self) {
+    fn bus_master_on(&self) -> Result<(), XhciError> {
         self.changing("pci bus master on", 4);
-        pci::enable_polled_dma(self.function);
+        crate::dma::arm(self.function, &dma_policy::XHCI)
+            .map_err(|refused| XhciError::Refused(Refusal::Dma(refused)))
     }
 
     fn bus_master_off(&self) {
@@ -885,7 +895,7 @@ impl Controller {
         // Bus mastering may already be on (firmware's, or round 1's); what
         // kept the controller from the pages until now is halt + HCRST.
         self.armed_this_round = true;
-        self.bus_master_on();
+        self.bus_master_on()?;
         self.power_ports(port_local)?;
         for which in &pages()[..8] {
             zero(*which);
@@ -1873,6 +1883,14 @@ impl Failure {
     }
 }
 
+fn report_bdf(function: pci::Function) {
+    serial::hex_digits(u64::from(function.bus), 2);
+    serial::write(":");
+    serial::hex_digits(u64::from(function.device), 2);
+    serial::write(".");
+    serial::hex_digits(u64::from(function.function), 1);
+}
+
 /// Finds, claims, sizes and maps the controller, checks its register
 /// layout, walks its extended capabilities, settles ownership, and checks
 /// its requirements. Until ownership is settled it only reads (BAR sizing
@@ -1883,10 +1901,45 @@ impl Failure {
 #[allow(clippy::result_large_err)]
 fn probe(plan: Plan) -> Result<Controller, Failure> {
     let fault = plan.fault;
-    let function = pci::find(CLASS_SERIAL_BUS, SUBCLASS_USB, INTERFACE_XHCI)
-        .ok_or(Failure::unclaimed(XhciError::Absent))?;
-    pci::claim(function, "xhci")
-        .map_err(|error| Failure::unclaimed(XhciError::Refused(Refusal::Claim(error))))?;
+    let function = pci_selection::select(
+        plan.controller,
+        |visit| pci::each(|function| visit(function, pci::read32(function, 0x08))),
+        |function| {
+            serial::write("XHCI CANDIDATE bdf=");
+            report_bdf(function);
+            serial::write("\n");
+        },
+        |function| {
+            serial::write("XHCI SELECTED bdf=");
+            report_bdf(function);
+            serial::write(if plan.controller == Ok(None) {
+                " source=default\n"
+            } else {
+                " source=explicit\n"
+            });
+            pci::claim(function, "xhci").map(|()| function)
+        },
+    )
+    .map_err(|error| {
+        match error {
+            pci_selection::Error::Missing(function)
+            | pci_selection::Error::WrongClass(function) => {
+                serial::write("XHCI SELECTION REFUSED bdf=");
+                report_bdf(function);
+                serial::write(if matches!(error, pci_selection::Error::Missing(_)) {
+                    " reason=missing\n"
+                } else {
+                    " reason=wrong-class\n"
+                });
+            }
+            _ => {}
+        }
+        Failure::unclaimed(match error {
+            pci_selection::Error::Absent => XhciError::Absent,
+            error => XhciError::Selection(error),
+        })
+    })?
+    .map_err(|error| Failure::unclaimed(XhciError::Refused(Refusal::Claim(error))))?;
     serial::write("XHCI CLAIMED pci_command=");
     serial::hex_digits(u64::from(pci::command(function)), 4);
     serial::write("\n");

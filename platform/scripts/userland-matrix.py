@@ -84,8 +84,7 @@ after R16, userland/README.md).
 Demo rehearsal (RECORD.md, T5 list): in /home/operator, ed -p '* ' writes
 hello.c from a script (its byte count printed, the file's bytes on the image,
 no ed.* left), od -t x1 (its dump read back to the bytes), cmp, grep -n,
-find . -name 'ed.*' (empty), tcc only if /bin/tcc is on the image (else
-USERLAND DEMO TCC NOT_RUN reason=no /bin/tcc), rm, then man sbase (every
+find . -name 'ed.*' (empty), rm, then man sbase (every
 line of userland/sbase.LICENSE, as cmds-matrix.py's licence_lines renders
 it) and ls /bin naming the nine (USERLAND DEMO SBASE PRESENT; the command
 matrix's own COMMAND SBASE PRESENT is that matrix's guest route, not this
@@ -106,10 +105,11 @@ RESOURCES <ID> :: ...; USERLAND INTERRUPT OK <util> ms=; USERLAND DEMO ...;
 USERLAND NOT_RUN <item> reason=...; USERLAND PINS PROVENANCE ...; last line
 ABSD USERLAND GUEST OK cases= agree= diverge= defects=0 demo=ok|not_run
 notrun=<list|none> (with defects: ABSD USERLAND GUEST DEFECTS ..., exit 1)."""
-import argparse, hashlib, pathlib, re, shlex, sys, time
+import argparse, hashlib, pathlib, re, shlex, subprocess, sys, time
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
 import ssh_absd  # noqa: E402
+import operator_image as oi  # noqa: E402
 import importlib.util  # noqa: E402
 
 
@@ -191,9 +191,11 @@ def predicted(status, stderr):
     return cu.format_result(status, b"", stderr.encode() + b"\n", dict(FIXTURES))
 
 
-def parse_pin(data):
+def parse_pin(data, directories=False):
     """(status, stdout, stderr, {name: bytes or None for removed}): the
     inverse of check-userland's format_result for the pins in expected/."""
+    if directories:
+        data = data.rsplit(b"--- directories\n", 1)[0]
     m = re.match(rb"status (-?\d+)\n--- stdout\n", data)
     sm.require(m is not None, f"not a pin: {data[:40]!r}")
     rest = data[m.end():]
@@ -219,7 +221,7 @@ def parse_pin(data):
 
 def d04(case, got):
     """The candidate disposition D-04 a defect may fall under, or None."""
-    _, _, err, files = parse_pin(got)
+    _, _, err, files = parse_pin(got, directories=case.util == "rmdir")
     if case.util == "ed" and (any(SCRATCH.fullmatch(n) for n in files) or b"scratch file" in err):
         return "ed's scratch file (TMPDIR else the working directory)"
     if case.util == "find" and {"-exec", "-ok"} & set(case.args) and b"cannot run commands" in err:
@@ -244,6 +246,26 @@ def summary(n, counts, demo, notrun):
 
 
 class UserlandTarget(cm.CportsTarget):
+    def product_files(self):
+        # The parent calls this at consumption, including after construction.
+        # Both the target tree's seal/table and this harness's pins constrain
+        # the very buffers returned; no inherited product path is reopened.
+        try:
+            buffers = oi.c_ports_installed(pathlib.Path(self.root))
+        except oi.Failed as error:
+            raise sm.Failed(str(error)) from error
+        rows = {f[0]: f for f in table_rows(REPO / "userland" / "PORTS.tsv")}
+        sm.require(sorted(rows) == sorted(utils()), f"userland/PORTS.tsv names {sorted(rows)}, not {utils()}")
+        files = []
+        for name in utils():
+            sm.require(name in buffers, f"{self.root}/ports: missing verified C port {name}")
+            data = buffers[name]
+            digest = hashlib.sha256(data).hexdigest()
+            sm.require(digest == rows[name][5] and len(data) == int(rows[name][6]),
+                       f"{self.root}/ports/{name}: bytes or length differ from userland/PORTS.tsv")
+            files.append((f"/bin/{name}", data))
+        return files
+
     def files(self, authorized):
         files = super().files(authorized)
         have = {path for path, _ in files}
@@ -261,17 +283,7 @@ class UserlandMatrix(cm.CportsMatrix):
         self.repo = REPO
         self.pins = pathlib.Path(args.pins).resolve()
         self.load_tables(args.only)
-        root = pathlib.Path(target.root)
-        rows = {f[0]: f for f in table_rows(REPO / "userland" / "PORTS.tsv")}
-        sm.require(sorted(rows) == sorted(utils()), f"userland/PORTS.tsv names {sorted(rows)}, not {utils()}")
-        products = []
-        for name in utils():
-            path = root / "ports" / name
-            sm.require(path.is_file(), f"no {path}: ABSD_USERLAND_PLATFORM must be a built platform tree")
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            sm.require(digest == rows[name][5], f"{path} sha256 {digest} is not userland/PORTS.tsv's {rows[name][5]}")
-            products.append(path)
-        target.products = products
+        target.product_files()  # early refusal; files() revalidates at use
         target.case_files = [(f"{TEMPLATE}/{n}", d) for n, d in FIXTURES.items()]
         sm.Matrix.__init__(self, target, work)
 
@@ -334,6 +346,8 @@ class UserlandMatrix(cm.CportsMatrix):
     def fresh_dir(self, case):
         self.check(f"{case.name}: no {RUN} left from before", RUN not in self.objects())
         self.plain(BASE, ["cp", "-r", "fixtures", "run"], f"{case.name}: fresh directory copied from the fixtures")
+        if case.util == "rmdir":
+            self.plain(BASE, ["mkdir", "-p", "run/empty-tree/child"], f"{case.name}: nested empty directories made")
         objects = self.objects()
         got = self.below(RUN)
         self.check(f"{case.name}: the fresh directory holds FIXTURES byte for byte (bin.dat included) and its "
@@ -378,7 +392,9 @@ class UserlandMatrix(cm.CportsMatrix):
                 with rawpath.open("xb") as stream:
                     stream.write(data)
             print(f"USERLAND TAR RAW {occurrence} bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()} path={rawpath}", flush=True)
-        got = cu.format_result(rc, out, err, after, case_id=case.result_id)
+        directories = {name[len(RUN) + 1:] for name, observation in self.objects().items()
+                       if observation[1] and name.startswith(RUN + "/")}
+        got = cu.format_result(rc, out, err, after, case_id=case.result_id, directories=directories)
         self.remove_dir(case)
         return got
 
@@ -451,18 +467,18 @@ class UserlandMatrix(cm.CportsMatrix):
         term, _ = t.open_shell(self)
         done = []
         try:
-            t.step(self, term, f"cd {RUN}\r".encode(), f"cd {RUN}\r\n".encode() + t.pty_prompt, "cd to the fresh directory")
+            t.step(self, term, f"cd {RUN}\r".encode(), f"cd {RUN}\r\n\x1b[?2004l".encode() + t.pty_prompt, "cd to the fresh directory")
             for util, args in INTERRUPT:
                 line = " ".join([util, *args]).encode()
                 spawned = t.spawn_count()
-                t.step(self, term, line + b"\r", line + b"\r\n", f"{util} runs, reading the terminal")
+                t.step(self, term, line + b"\r", line + b"\r\n\x1b[?2004l", f"{util} runs, reading the terminal")
                 t.await_spawns(spawned, 1)
                 ms = t.interrupt(self, term, f"^C ends {util}; the shell prompts")
                 t.await_live(self, baseline + 1, f"{util} was killed and reaped")
-                t.step(self, term, b"status\r", b"status\r\n130\r\n" + t.pty_prompt, f"{util}: the line's status is 130")
+                t.step(self, term, b"status\r", b"status\r\n\x1b[?2004l130\r\n" + t.pty_prompt, f"{util}: the line's status is 130")
                 print(f"USERLAND INTERRUPT OK {util} ms={ms:.0f}", flush=True)
                 done.append(util)
-            t.step(self, term, b"exit\r", b"exit\r\n", "the shell exits when asked")
+            t.step(self, term, b"exit\r", b"exit\r\n\x1b[?2004l", "the shell exits when asked")
             rc = term.wait(timeout=60)
         finally:
             term.close()
@@ -483,7 +499,7 @@ class UserlandMatrix(cm.CportsMatrix):
 
     def demo(self):
         demo = Case("demo", "-", "-", [])
-        demo.allowed = {f"{HOME}/hello.c", f"{HOME}/a.out"}
+        demo.allowed = {f"{HOME}/hello.c"}
         before = self.stable("demo", "before")
 
         def run(words, stdin=b""):
@@ -509,17 +525,6 @@ class UserlandMatrix(cm.CportsMatrix):
         self.check("demo: grep -n main hello.c", (rc, out, err) == (0, b"1:" + DEMO_LINE, b""), f"{rc} {out!r} {err!r}")
         rc, out, err = run(["find", ".", "-name", "ed.*"])
         self.check("demo: find . -name 'ed.*' finds nothing", (rc, out, err) == (0, b"", b""), f"{rc} {out!r} {err!r}")
-        notrun = []
-        if self.t.physical("/bin/tcc") in tree:
-            rc, out, err = run(["tcc", "-o", "a.out", "hello.c"])
-            self.check("demo: tcc compiles hello.c", rc == 0 and err == b"", f"{rc} {out!r} {err!r}")
-            rc, out, err = run(["./a.out"])
-            self.check("demo: ./a.out returns 0", (rc, out, err) == (0, b"", b""), f"{rc} {out!r} {err!r}")
-            self.plain(HOME, ["rm", "a.out"], "demo: rm a.out")
-            print("USERLAND DEMO TCC OK", flush=True)
-        else:
-            print("USERLAND DEMO TCC NOT_RUN reason=no /bin/tcc", flush=True)
-            notrun.append("demo-tcc")
         self.plain(HOME, ["rm", "hello.c"], "demo: rm hello.c")
         rc, out, err = run(["man", "sbase"])
         shown = " ".join(out.decode(errors="replace").split())
@@ -532,7 +537,6 @@ class UserlandMatrix(cm.CportsMatrix):
               f"matrix's, scripts/run-cmds-matrix.sh)", flush=True)
         self.compare_census(demo, before, self.stable("demo", "after"))
         print("USERLAND DEMO OK", flush=True)
-        return notrun
 
     # -- the run ----------------------------------------------------------------------
 
@@ -570,7 +574,7 @@ class UserlandMatrix(cm.CportsMatrix):
                 notrun.append(f"interrupt-{util}")
         print(f"USERLAND NOT_RUN exhaustion reason={EXHAUSTION_REASON}", flush=True)
         notrun.append("exhaustion")
-        notrun += self.demo()
+        self.demo()
         for item, reason in OWED:
             print(f"USERLAND NOT_RUN {item} reason={reason}", flush=True)
             notrun.append(item)

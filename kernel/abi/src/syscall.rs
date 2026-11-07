@@ -18,6 +18,9 @@ pub const SYS_READ: u64 = 15;
 pub const SYS_PIPE_CREATE: u64 = 16;
 pub const SYS_TIME: u64 = 17;
 pub const SYS_SLEEP: u64 = 18;
+/// Private paired-image root-init presentation control, not an application API.
+/// `(owned Console WRITE, mode 0=kernel/1=managed, reserved=0)`.
+pub const SYS_CONSOLE_PRESENTATION: u64 = 0x7fc4;
 /// Complete the current RT instance and wait for its next phase release.
 /// Refused unless already admitted by kernel configuration; grants no priority.
 pub const SYS_RT_NEXT: u64 = 39;
@@ -123,10 +126,21 @@ impl FrameStats {
 /// only how full the pipe is and how many handles can read and write it.
 /// `-9` for a stale handle or one that is not a pipe, `-14` for a record
 /// that is not writable user memory. A server that holds one end of many
-/// pipes polls them with it (there is no wait on many), and learns when
+/// pipes can inspect them with it or wait using `wait_readable`, and learns when
 /// every other holder of an end is gone even while it, or a keeper of
 /// spare ends, still holds a copy (docs/PROCESS-STARTUP.md, "File server").
 pub const SYS_PIPE_INFO: u64 = 36;
+/// Additive ABI 1 call; older kernels return -38.
+/// `wait_readable(handles_ptr, count, timeout_ticks)` consumes no bytes and
+/// returns positional readiness bits for 1..11 readable Pipe/Console handles.
+/// Pipe data or EOF is level-ready. All members are revalidated, including
+/// full handle and object generations. Readiness is notification, not a
+/// promise that a subsequent read cannot block or fail. Timeout 0 waits
+/// indefinitely; u64::MAX polls (zero mask when idle); finite expiry is -110.
+/// See docs/WAIT-READABLE.md. The ABI generation remains 1.
+pub const SYS_WAIT_READABLE: u64 = 0x7fa8;
+pub const WAIT_READABLE_MAX: usize = 11;
+pub const WAIT_READABLE_POLL: u64 = u64::MAX;
 /// Size of the [`PipeInfo`] record in userspace memory.
 pub const PIPE_INFO_BYTES: usize = 32;
 
@@ -340,9 +354,12 @@ pub const SPAWN_CONSOLE: u64 = 1 << 32;
 pub const SPAWN_NO_SPAWN: u64 = 1 << 33;
 pub const SPAWN_PROGRAM_MASK: u64 = (1 << 32) - 1;
 /// Maximum number of handles copied by one `spawn_many_copy` operation.
-/// This deliberately matches one complete child handle table so the kernel
-/// can exercise and reject destination-capacity exhaustion atomically.
+/// This wire-vector bound is independent of per-process handle occupancy.
 pub const MAX_SPAWN_HANDLES: usize = 64;
+/// Per-process occupancy bound. Independent of the unchanged spawn vector.
+pub const MAX_PROCESS_HANDLES: usize = 128;
+/// Occupied process records, including retained terminal outcomes.
+pub const MAX_PROCESS_SLOTS: usize = 32;
 /// Size of one [`SpawnHandleCopy`] record in userspace memory.
 pub const SPAWN_HANDLE_COPY_BYTES: usize = 24;
 /// The copied handle replaces the child's default console. At most one
@@ -588,6 +605,9 @@ mod tests {
         // runtime refuses to start (status 103) when the kernel answers
         // anything else; change both together or not at all.
         assert_eq!(crate::KERNEL_ABI, 1);
+        assert_eq!(SYS_WAIT_READABLE, 0x7fa8);
+        assert_eq!(WAIT_READABLE_MAX, 11);
+        assert_eq!(WAIT_READABLE_POLL, u64::MAX);
     }
 
     #[test]
@@ -761,6 +781,13 @@ mod tests {
 /// Fixed PID-owned frame admission, available only to bootstrap init before READY.
 pub const SYS_FRAME_ADMIT_SELF: u64 = 45;
 pub const SYS_SPAWN_RESERVED_COPY: u64 = 46;
+// The #115 builder profile doubles the numeric range so a served image with
+// its 384 MiB heap stays admissible; wire encoding is unchanged and it is not
+// a supported ABI. The default definition stays last: it is the pairing value
+// scripts/check-frame-admission.py compares with abi/frame-admission-v0.toml.
+#[cfg(feature = "builder-profile")]
+pub const MAX_FRAME_ADMISSION_FRAMES: u64 = 131072;
+#[cfg(not(feature = "builder-profile"))]
 pub const MAX_FRAME_ADMISSION_FRAMES: u64 = 65536;
 pub const SPAWN_RESERVED_REQUEST_BYTES: usize = 32;
 pub const SPAWN_RESERVED_PROGRAM_OFFSET: usize = 0;
@@ -820,7 +847,15 @@ mod frame_wire_tests {
                 SYS_SPAWN_RESERVED_COPY,
                 MAX_FRAME_ADMISSION_FRAMES
             ],
-            [45, 46, 65536]
+            [
+                45,
+                46,
+                if cfg!(feature = "builder-profile") {
+                    131072
+                } else {
+                    65536
+                }
+            ]
         );
     }
 }

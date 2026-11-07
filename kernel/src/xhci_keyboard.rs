@@ -559,6 +559,7 @@ impl Runtime {
 }
 
 pub(super) fn initialize(
+    controller: Result<Option<pci::Function>, pci_selection::Error>,
     observe: bool,
     masked: bool,
     test_race: bool,
@@ -569,6 +570,7 @@ pub(super) fn initialize(
     assert!(!crate::kernel_lock::active());
     assert!(unsafe { (*core::ptr::addr_of!(RUNTIME)).is_none() });
     let plan = Plan {
+        controller,
         interrupts: true,
         rounds: 1,
         fault: if masked {

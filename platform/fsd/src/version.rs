@@ -1,9 +1,10 @@
 //! The client's side of `op::VERSION` (`docs/RELEASE.md` section 3, item
 //! 5): what the reply says and whether this build may talk to the server
-//! that sent it. The runtime asks once per process, on its own channel,
-//! before `main`, and refuses the process (status 104) with
-//! [`Refusal::line`] on the console; sshd asks the same on its control
-//! channel and also requires the server's release to be its own.
+//! that sent it. The runtime admits its installed own channel before any
+//! filesystem operation, normally before `main`. logs defers admission so
+//! kernel-only diagnostics do not depend on FSD, and its optional health
+//! sample uses a bounded checked probe. Mandatory refusal exits 104 with
+//! [`Refusal::line`]; sshd also requires the server's release to be its own.
 
 use alloc::format;
 use alloc::string::String;
@@ -11,10 +12,23 @@ use alloc::vec::Vec;
 
 use crate::proto::Reader;
 
-/// How long a client waits for the answer, in ticks (about 5 s). A server
-/// that cannot parse the frame never answers, so only that case waits the
-/// whole bound; a busy server of this protocol answers well within it.
-pub const ANSWER_TICKS: u64 = 5000;
+/// How long a client waits for the answer, in ticks (about 60 s). The wait
+/// is measured from the client's own start, and init starts the served
+/// worker and every other client at the same time as the file server, so
+/// the bound has to cover the file server's whole startup, not only a
+/// serving server's turnaround: the request waits in the channel until the
+/// server's loop takes it, and that loop begins only after the mount, the
+/// arming write, the recovery charge, the directories, the host key and a
+/// sync, whose duration the host's storage sets. A file server of this
+/// build starts in about 0.6 s on an idle disk and took 11.2 s during a
+/// storage latency episode (acceptance-7, 2026-10-31: 0.9 s mean write
+/// latency on the host), where the earlier 5 s bound refused the worker
+/// pre-ready and failed the boot. Sixty seconds is three times the
+/// kernel's per-operation device bound (ata POLL_LIMIT, 20 s) and the
+/// shell host's bound on sshd (sh_host ANSWER_TICKS). Only a server that
+/// cannot parse the frame, and so never answers, waits the whole bound; a
+/// server that dies ends the wait at once (`Refusal::NoServer`).
+pub const ANSWER_TICKS: u64 = 60_000;
 /// Exit status of a process refused here.
 pub const REFUSED_STATUS: i32 = 104;
 /// The kernel's timeout code: what a bounded wait that ran out returns.

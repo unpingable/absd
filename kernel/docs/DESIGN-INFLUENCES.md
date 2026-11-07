@@ -1065,3 +1065,53 @@ Related notes: "Process authority reduction", "Namespace restriction",
 separation", and the delegation and revocation research tripwires.
 Terminology: Constellation's AG uses "principal" (issuer principal chains)
 with its own meaning; an ABSD principal must be defined independently.
+
+### W1 experimental playback disposition — 2026-10-28
+
+The private `native-pcm-experiment` feature introduces an eighth object kind,
+Playback, for #96. Its four private calls accept only this kind (except root
+creation, which accepts no handle). Existing transfer/duplicate/close paths keep
+their ordinary table semantics; write-reference retirement cancels playback.
+A separate typed resolver in syscalls/pcm.rs checks identity and rights. A generic
+registry would add dispatch machinery without reducing any multi-kind operation.
+The experiment therefore keeps direct matching, with an explicit eighth witness
+in the tripwire test. No supported ABI or default-build kind is added. Independent
+review of this disposition and last-writer cleanup is required before acceptance.
+
+
+### W1 experimental diagnostics disposition — 2026-11-05
+
+The #148 branch adds Diagnostics as an eighth default-build object kind for
+read-only boot/runtime inspection. The real child spawn path replaces and
+closes its default Console when stdout becomes a pipe. Reusing that Console
+would require transferring input/display authority that an ordinary diagnostic
+reader does not need. The separate object accepts RIGHT_READ only, is minted
+only by root init (PID1, kernel parent, INIT image) through experimental
+0x7fc3 after checking its Console WRITE, and follows explicit startup role20.
+Read0x7fc0 and machine-inspection0x7fc1 use one shared typed authorization seam:
+Diagnostics READ, with Console WRITE fallback restricted to root init. No
+operation accepts three unrelated kinds, and no registry or supported ABI is
+introduced. The exhaustive kind test now includes Diagnostics and optional
+Playback/Display independently. Diagnostics has no BSP hardware ownership,
+reference-counted backing resource, input ownership, or terminal write rights.
+Transfer/duplicate/close retain ordinary narrowed handle semantics. This is a
+source-level W1 disposition; whole-image observation and independent review
+remain required for integration acceptance.
+
+
+### W1 experimental civil-clock disposition — 2026-11-05
+
+The time42 branch adds Clock as a ninth default object kind. It is a narrow
+WRITE-only authority to change boot-local software civil state, not a console,
+Diagnostics reader, Machine action or raw RTC writer. Root init alone mints it
+after validating its existing Console WRITE and exact root role; startup role22
+copies it only to the served NIC/time-owner worker. Ordinary runtime children
+never inherit it. One typed authorize_update seam checks the exact live object
+and right; public civil reads need no handle. Existing explicit narrowed
+handle copy/close semantics remain, so this is not a second non-delegable kind
+or a new rights vocabulary. No operation accepts three unrelated object kinds
+and no generic registry is introduced. The exhaustive kind tripwire includes
+Clock plus optional Playback/Display independently. Its global software state
+has no device backing and is serialized by the existing BKL. No supported ABI,
+trusted UTC, hardware timekeeping or live-transfer graduation is claimed.
+See CIVIL-TIME.md for the exact state, failure and consumer boundaries.

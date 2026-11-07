@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate for the AHCI census entry (docs/hardware/SATA-AHCI-CENSUS.md).
+"""Gate for the AHCI census entry (coordination record #45, docs/hardware/SATA-AHCI-CENSUS.md).
 
 Boots the census ISO under QEMU q35 (ich9-ahci 8086:2922 at 00:1f.2):
  1. two raw disks on ports 0 and 2, a CD-ROM on port 1 and the boot ISO on

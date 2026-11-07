@@ -1,6 +1,6 @@
 # Bounded native USB: stage 1 controller design
 
-Tracked internally.
+Issue: coordination record #37.
 Owner request, 2026-10-15: begin this work. This first increment prepares the
 stage 1 controller implementation. The runtime has passed host tests and
 both architecture builds; guest qualification is in progress.

@@ -28,6 +28,71 @@ pub(crate) struct Filter {
     pub(super) fault: Option<Error>,
 }
 
+/// The latest checksum-validated peer-tuple refusal at the server filter.
+/// Addresses describe this observation, not authenticated or stable identity.
+/// No packet bytes, handles, authority or unbounded history are retained.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeerRefusal {
+    pub source: Address,
+    pub destination: Address,
+    pub expected_peer: Address,
+    pub tcp_flags: u8,
+    pub tcp_sequence: u32,
+    pub frame_bytes: usize,
+}
+
+/// Classify only a narrow, well-formed subset of discarded frames. This does
+/// not decide admission: callers invoke it only after `ingress` returned false.
+/// IPv4 options/fragments, bad lengths/checksums/TCP options, wrong local IP,
+/// and an observed clock/link/expiry fault produce no peer-refusal record.
+pub(crate) fn peer_refusal(
+    frame: &[u8],
+    filters: &[Option<Filter>; MAX_ENDPOINTS],
+) -> Option<PeerRefusal> {
+    use smoltcp::wire::{Ipv4Packet, TcpPacket};
+    if frame.len() < 54 || frame[12..14] != [8, 0] || frame[14] != 0x45 || frame[23] != 6 {
+        return None;
+    }
+    let ip = Ipv4Packet::new_checked(&frame[14..]).ok()?;
+    let total = usize::from(ip.total_len());
+    if u16::from_be_bytes([frame[20], frame[21]]) & !0x4000 != 0
+        || !ip.verify_checksum()
+        || (frame.len() != 14 + total
+            && !(frame.len() == 60 && total < 46 && frame[14 + total..].iter().all(|b| *b == 0)))
+    {
+        return None;
+    }
+    let tcp = TcpPacket::new_checked(ip.payload()).ok()?;
+    if ip.payload()[12] & 15 != 0
+        || !tcp.verify_checksum(&ip.src_addr().into(), &ip.dst_addr().into())
+        || tcp.options_summary().is_err()
+    {
+        return None;
+    }
+    let rule = filters
+        .iter()
+        .flatten()
+        .find(|r| r.port == tcp.dst_port())?;
+    let source = Address {
+        ip: ip.src_addr().octets(),
+        port: tcp.src_port(),
+    };
+    if rule.fault.is_some() || ip.dst_addr().octets() != rule.local || source == rule.peer {
+        return None;
+    }
+    Some(PeerRefusal {
+        source,
+        destination: Address {
+            ip: rule.local,
+            port: rule.port,
+        },
+        expected_peer: rule.peer,
+        tcp_flags: ip.payload()[13],
+        tcp_sequence: u32::from_be_bytes(ip.payload()[4..8].try_into().ok()?),
+        frame_bytes: frame.len(),
+    })
+}
+
 /// Restrict only reserved server ports. Other listeners/outbound flows keep
 /// their existing policy. IPv4 fragments are unsupported by this engine;
 /// a truncated header cannot form a valid TCP SYN or consume a listen slot.
@@ -285,6 +350,7 @@ impl Session {
                 endpoint: stack.stream_server_grant(grant)?,
                 peer: grant.peer,
                 inbound: true,
+                mtu_refusal: false,
             },
             terminal_ack: false,
         })

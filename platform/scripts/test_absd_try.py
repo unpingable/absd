@@ -21,12 +21,14 @@ import os
 import pathlib
 import re
 import shutil
+import shlex
 import socket
 import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
@@ -161,7 +163,11 @@ def fake_qemu(argv):
     text = f"SSH HOST KEY {state} ssh-ed25519 {key} SHA256:abcdef\nSSH LISTENING port=22 authorized_keys=1\n"
     with open(console, "ab") as log:
         log.write(b"ABSD KERNEL BOOT\n" + framed(text))
-    return 3
+    if mode == "wait-shutdown":
+        import time
+        while not pathlib.Path(os.environ["FAKE_SHUTDOWN"]).exists():
+            time.sleep(0.01)
+    return int(os.environ.get("FAKE_QEMU_HALT_STATUS", "3"))
 
 
 # -- fixtures ----------------------------------------------------------------------
@@ -210,7 +216,7 @@ class AbsdTry(unittest.TestCase):
         absd_try.read_state = fake_state
         self.saved_env = dict(os.environ)
         wrapper = self.work / "qemu"
-        wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} -I {pathlib.Path(__file__).resolve()} --fake-qemu \"$@\"\n")
+        wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -I -B -X {shlex.quote('pycache_prefix=' + (sys.pycache_prefix or ''))} {shlex.quote(str(pathlib.Path(__file__).resolve()))} --fake-qemu \"$@\"\n")
         wrapper.chmod(0o755)
         os.environ["ABSD_TRY_QEMU"] = str(wrapper)
         os.environ.pop("FAKE_QEMU_MODE", None)
@@ -370,6 +376,17 @@ class AbsdTry(unittest.TestCase):
         assets = make_assets(self.work / "assets", disk_files=files)
         self.refused("disk_not_blank", "create", str(self.work / "m"), "--assets", str(assets), "--key", str(self.key))
 
+    def test_create_refuses_a_distributed_local_login_verifier(self):
+        for descriptor in (b'', b'ABSD-LOCAL-1 operator ' + b'0' * 64 + b'\n'):
+            with self.subTest(descriptor=descriptor):
+                root = self.work / ('empty-verifier' if not descriptor else 'verifier')
+                files = {'/absd/selected': f'{RELEASE}\n'.encode(),
+                         '/ssh/authorized_keys': b'', '/ssh/local-login': descriptor}
+                assets = make_assets(root / 'assets', disk_files=files)
+                self.refused('disk_not_blank', 'create', str(root / 'machine'),
+                             '--assets', str(assets), '--key', str(self.key))
+                self.assertIn('/ssh/local-login', self.out.getvalue())
+
     def test_create_refuses_a_disk_with_someone_elses_key(self):
         files = {"/absd/selected": f"{RELEASE}\n".encode(), "/ssh/authorized_keys": ed25519_line(b"other")}
         assets = make_assets(self.work / "assets", disk_files=files)
@@ -420,6 +437,36 @@ class AbsdTry(unittest.TestCase):
         self.refused("enroll_failed", "create", str(machine), "--assets", str(assets), "--key", str(self.key),
                      "--accel", "tcg")
 
+    def test_enroll_refuses_a_pending_resume_authorization_on_the_disk(self):
+        # coordination record #63 M1: the enrollment tool enters the mutators' boundary.
+        machine = self.created()
+        record = (b"absd-resume v1 id=" + b"a" * 32 + b" fs=0000000000000007 seq=11 image=" + b"e3" * 32
+                  + b" ledger_seq=3 ledger_boot=" + b"0" * 32 + b" previous=failed time=1 fnv=0000000000000000\n")
+        update_disk(machine / absd_try.DISK, lambda f, m: f.__setitem__(absd_try.RESUME_PATH, record.ljust(512, b"\0")))
+        new = self.work / "new.pub"
+        new.write_bytes(b"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGpT2Ro6RqS5rT4kVf2ZgEoqbXaYgA3+Q8gJUnQPz0Oi other\n")
+        self.refused("recovery_pending", "enroll", str(machine), "--key", str(new), "--accel", "tcg")
+        update_disk(machine / absd_try.DISK, lambda f, m: f.__setitem__(absd_try.RESUME_PATH, b"torn".ljust(512, b"\0")))
+        self.refused("resume_slot_corrupt", "enroll", str(machine), "--key", str(new), "--accel", "tcg")
+        update_disk(machine / absd_try.DISK, lambda f, m: f.__setitem__(absd_try.RESUME_PATH, absd_try.RESUME_NONE))
+        self.assertTrue((machine / "recovery" / "lock").is_file())
+        # The other half of the boundary: an unsuperseded published
+        # authorization (active.toml) with slot none refuses; an archive of
+        # its id supersedes it; an unparsable active is a corrupt receipt.
+        active = machine / "recovery" / "active.toml"
+        active.write_text('[active]\nid = "' + "b" * 32 + '"\nstate = "authorized"\n')
+        self.refused("recovery_pending", "enroll", str(machine), "--key", str(new), "--accel", "tcg")
+        for kind in absd_try.ARCHIVE_KINDS:
+            archive = machine / "recovery" / f"{kind}-{'b' * 32}.toml"
+            archive.write_text('[archive]\nid = "' + "b" * 32 + f'"\nkind = "{kind}"\n')
+            self.assertEqual(self.run_main("enroll", str(machine), "--key", str(new), "--accel", "tcg"), 0, kind)
+            archive.unlink()
+        (machine / "recovery" / f"consumed-{'c' * 32}.toml").write_text("[archive]\nid = \"" + "c" * 32 + "\"\n")
+        self.refused("recovery_pending", "enroll", str(machine), "--key", str(new), "--accel", "tcg")
+        active.write_text("[active\n")
+        self.refused("corrupt_receipt", "enroll", str(machine), "--key", str(new), "--accel", "tcg")
+        active.unlink()
+
     def test_enroll_refuses_a_console_gap(self):
         assets, machine = self.machine("gap")
         self.refused("console_gap", "create", str(machine), "--assets", str(assets), "--key", str(self.key),
@@ -458,17 +505,155 @@ class AbsdTry(unittest.TestCase):
         self.refused("console_malformed", "boot", str(machine), "--accel", "tcg", "--port", str(free_port()))
         self.assertFalse(alive(int(pidfile.read_text())))
 
-    def test_boot_waits_out_a_partial_line_and_stops_on_interrupt(self):
-        machine = self.created()
-        pidfile = self.work / "qemu.pid"
-        os.environ.update(FAKE_QEMU_MODE="partial", FAKE_QEMU_PIDFILE=str(pidfile))
+    def interrupted_boot(self, mode="clean", early=False, login_key=False, startup=False):
+        """Real child processes and SIGINT; only QEMU and SSH executables are fixtures."""
         import signal
         import threading
-        threading.Timer(3.0, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
-        self.refused("interrupted", "boot", str(machine), "--accel", "tcg", "--port", str(free_port()))
-        self.assertNotIn("HOST KEY", self.out.getvalue())
-        self.assertFalse((machine / absd_try.KNOWN_HOSTS).exists())
-        self.assertFalse(alive(int(pidfile.read_text())))
+        machine = self.created()
+        renamed = machine.with_name("machine with spaces")
+        machine.rename(renamed)
+        machine = renamed
+        pidfile, request = self.work / "qemu.pid", self.work / "ssh-request.json"
+        halt = self.work / "halt"
+        os.environ.update(FAKE_QEMU_MODE="partial" if early else "wait-shutdown",
+                          FAKE_QEMU_PIDFILE=str(pidfile), FAKE_SHUTDOWN=str(halt),
+                          FAKE_SSH_REQUEST=str(request), FAKE_SSH_MODE=mode,
+                          FAKE_QEMU_HALT_STATUS="0" if mode == "bad-exit" else "3")
+        ssh = self.work / "ssh"
+        ssh.write_text("#!/usr/bin/env python3\n"
+                       "import json, os, pathlib, sys, time\n"
+                       "pathlib.Path(os.environ['FAKE_SSH_REQUEST']).write_text(json.dumps(sys.argv[1:]))\n"
+                       "mode = os.environ['FAKE_SSH_MODE']\n"
+                       "if mode == 'no-identity': sys.exit(255)\n"
+                       "if mode in ('clean', 'bad-exit'): pathlib.Path(os.environ['FAKE_SHUTDOWN']).touch()\n"
+                       "if mode in ('timeout', 'force'): time.sleep(30)\n")
+        ssh.chmod(0o755)
+        os.environ['PATH'] = str(self.work) + os.pathsep + os.environ['PATH']
+        finished = threading.Event()
+        sent = []
+        def interrupt():
+            if startup:
+                return
+            while not finished.wait(0.01):
+                if (early and pidfile.exists()) or 'READY ssh' in self.out.getvalue():
+                    os.kill(os.getpid(), signal.SIGINT)
+                    sent.append('first')
+                    break
+            if mode == 'force':
+                while not finished.wait(0.01):
+                    if request.exists():
+                        os.kill(os.getpid(), signal.SIGINT)
+                        sent.append('second')
+                        break
+        thread = threading.Thread(target=interrupt)
+        children = []
+        popen = subprocess.Popen
+        def spawn(*args, **kwargs):
+            child = popen(*args, **kwargs)
+            children.append(child)
+            if startup and not sent:
+                sent.append('first')
+                os.kill(os.getpid(), signal.SIGINT)  # child exists; caller has not received ownership
+            return child
+        previous_handler = signal.getsignal(signal.SIGINT)
+        thread.start()
+        try:
+            argv = ['boot', str(machine), '--accel', 'tcg', '--port', str(free_port())]
+            if login_key:
+                argv += ['--login-key', str(self.work / 'my private key')]
+            with mock.patch.object(absd_try, 'SHUTDOWN_TIMEOUT', 0.5, create=True), \
+                 mock.patch.object(absd_try.subprocess, 'Popen', side_effect=spawn):
+                try:
+                    status = self.run_main(*argv)
+                except KeyboardInterrupt:
+                    self.fail('first SIGINT escaped during QEMU ownership acquisition')
+            self.assertEqual(signal.getsignal(signal.SIGINT), previous_handler)
+            self.assertEqual(sent[0], 'first')
+            qemu = children[0]
+            text = self.out.getvalue()
+            self.assertTrue((machine / absd_try.DISK).is_file())
+            if mode == 'clean' and not early:
+                self.assertEqual(status, 0, text)
+                self.assertEqual(qemu.poll(), 3)
+                self.assertIn('HALTED cleanly', text)
+            elif mode == 'bad-exit':
+                self.assertEqual(status, 2, text)
+                self.assertEqual(qemu.poll(), 0)
+                self.assertNotIn('HALTED cleanly', text)
+                self.assertIn('without a confirmed clean halt', text)
+            elif mode == 'force':
+                self.assertEqual(status, 2, text)
+                self.assertIsNotNone(qemu.poll())
+                self.assertIn('recovery', text.lower())
+                self.assertIn('forced', text.lower())
+                self.assertEqual(sent, ['first', 'second'])
+            else:
+                self.assertEqual(status, 2, text)
+                self.assertIsNone(qemu.poll(), text)
+                self.assertEqual(os.getsid(qemu.pid), qemu.pid,
+                                 'terminal SIGINT must not reach QEMU directly')
+                self.assertIn('still running', text)
+                self.assertIn(f'PID {qemu.pid}', text)
+                self.assertIn('shutdown', text)
+                self.assertIn(str(machine), text)
+            if early:
+                self.assertFalse(request.exists(), 'no unverified SSH shutdown request')
+                self.assertNotIn('HOST KEY', text)
+                self.assertIn('not ready', text)
+            else:
+                command = json.loads(request.read_text())
+                self.assertEqual(command[-2:], ['operator@127.0.0.1', 'shutdown'])
+                self.assertIn('StrictHostKeyChecking=yes', command)
+                self.assertIn('BatchMode=yes', command)
+                self.assertIn('UserKnownHostsFile="' + str(machine / absd_try.KNOWN_HOSTS) + '"', command)
+                if login_key:
+                    self.assertEqual(command[command.index('-i') + 1], str(self.work / 'my private key'))
+                else:
+                    self.assertNotIn('-i', command)
+        finally:
+            finished.set()
+            thread.join(timeout=2)
+            signal.signal(signal.SIGINT, previous_handler)  # fixture cleanup after the restoration assertion
+            for child in children:
+                if child.poll() is None:
+                    child.kill()  # fixture custody only, after asserting product preservation
+                child.wait()
+
+    def test_failed_qemu_creation_restores_interrupt_handler(self):
+        import signal
+        machine = self.created()
+        previous = signal.getsignal(signal.SIGINT)
+        try:
+            with mock.patch.object(absd_try.subprocess, 'Popen', side_effect=OSError('fixture launch failure')):
+                with self.assertRaisesRegex(OSError, 'fixture launch failure'):
+                    self.run_main('boot', str(machine), '--accel', 'tcg', '--port', str(free_port()))
+            self.assertEqual(signal.getsignal(signal.SIGINT), previous)
+        finally:
+            signal.signal(signal.SIGINT, previous)
+
+    def test_ctrl_c_during_qemu_creation_preserves_owned_child_and_guidance(self):
+        self.interrupted_boot(early=True, startup=True)
+
+    def test_ctrl_c_clean_shutdown_with_explicit_identity(self):
+        self.interrupted_boot(login_key=True)
+
+    def test_ctrl_c_successful_ssh_is_not_a_confirmed_halt(self):
+        self.interrupted_boot('bad-exit')
+
+    def test_ctrl_c_no_identity_preserves_machine(self):
+        self.interrupted_boot('no-identity')
+
+    def test_ctrl_c_ssh_timeout_preserves_machine(self):
+        self.interrupted_boot('timeout')
+
+    def test_ctrl_c_guest_timeout_preserves_machine(self):
+        self.interrupted_boot('no-halt')
+
+    def test_second_ctrl_c_explicitly_forces_stop_with_warning(self):
+        self.interrupted_boot('force')
+
+    def test_ctrl_c_before_listening_preserves_machine(self):
+        self.interrupted_boot(early=True)
 
     def test_boot_refuses_a_guest_address_that_is_not_an_address(self):
         machine = self.created()
@@ -548,10 +733,69 @@ def alive(pid):
     return True
 
 
-REAL_DISK = pathlib.Path(os.environ.get("ABSD_TRY_REAL_DISK", "/nonexistent/absd-reference/absd-operator.img"))
+class ShutdownAllowance(unittest.TestCase):
+    def test_downloaded_helper_matches_media_boot_shutdown_allowance(self):
+        import ast
+        import inspect
+        import media_operator
+        tree = ast.parse(inspect.getsource(media_operator.operator_boot))
+        bounds = []
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+                continue
+            is_request = (call.func.attr == 'run' and call.args and
+                          any(isinstance(node, ast.Constant) and node.value == 'shutdown'
+                              for node in ast.walk(call.args[0])))
+            is_halt_wait = call.func.attr == 'wait'
+            if is_request or is_halt_wait:
+                bounds.extend(ast.literal_eval(option.value) for option in call.keywords
+                              if option.arg == 'timeout')
+        self.assertEqual(len(bounds), 2, 'find the actual SSH request and QEMU halt wait')
+        self.assertEqual(bounds, [absd_try.SHUTDOWN_TIMEOUT] * 2,
+                         'the standalone preview helper must follow the media shutdown allowance')
 
 
-@unittest.skipUnless(REAL_DISK.is_file(), "no real operator disk to read")
+class NoBytecode(unittest.TestCase):
+    """#62 item 7: running the helper from a download directory, as QUICKSTART
+    does, leaves no __pycache__ there, including for its lazily imported host
+    reader (absd_fs, absd_image)."""
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="test-absd-try-bytecode-"))
+        self.addCleanup(shutil.rmtree, self.dir)
+        here = pathlib.Path(__file__).resolve().parent
+        shutil.copy(here / "absd_try.py", self.dir / "absd-try.py")
+        for name in ("served_ram.py", "absd_fs.py", "absd_image.py"):
+            shutil.copy(here / name, self.dir / name)
+        self.env = {k: v for k, v in os.environ.items() if k not in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")}
+
+    def run_here(self, *argv):
+        return subprocess.run([sys.executable, *argv], cwd=self.dir, env=self.env, capture_output=True, text=True)
+
+    def test_control_plain_import_writes_bytecode(self):
+        # Without the helper's setting, this interpreter would write a cache here.
+        self.assertEqual(self.run_here("-c", "import served_ram").returncode, 0)
+        self.assertTrue((self.dir / "__pycache__").is_dir())
+
+    def test_helper_and_host_reader_write_no_bytecode(self):
+        ran = self.run_here("absd-try.py", "--help")
+        self.assertEqual(ran.returncode, 0, ran.stderr)
+        # The host reader is imported lazily; reach it through the script's own namespace.
+        code = ("import runpy\n"
+                "g = runpy.run_path('absd-try.py')\n"
+                "try:\n    g['read_tree']('missing.img')\nexcept Exception:\n    pass\n"
+                "import sys\nassert 'absd_fs' in sys.modules and 'absd_image' in sys.modules\n")
+        ran = self.run_here("-c", code)
+        self.assertEqual(ran.returncode, 0, ran.stderr)
+        self.assertFalse((self.dir / "__pycache__").exists())
+
+
+# Opt-in only: never a default path, and never a protected endurance guest's image.
+# Point ABSD_TRY_REAL_DISK at a built operator disk you own; the test reads a copy.
+REAL_DISK = pathlib.Path(os.environ["ABSD_TRY_REAL_DISK"]) if os.environ.get("ABSD_TRY_REAL_DISK") else None
+
+
+@unittest.skipUnless(REAL_DISK is not None and REAL_DISK.is_file(), "ABSD_TRY_REAL_DISK not set to an operator disk")
 class RealReader(unittest.TestCase):
     """The real host reader on a copy of a built operator disk."""
 

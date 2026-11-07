@@ -3,6 +3,7 @@
 use absd_net::datagram::channel::KernelPipe;
 use absd_net::{Config, NicLink, Stack};
 use absd_net::{datagram as d, stream::server::Channel};
+mod tcp_server_boundary;
 use absd_runtime::{
     RIGHT_READ, RIGHT_WRITE,
     process::{SPAWN_NO_SPAWN, spawn_image_raw},
@@ -64,36 +65,12 @@ impl Drop for Child {
         }
     }
 }
-fn run() -> Result<(), String> {
-    absd_runtime::link_anchor();
-    let nic = NicLink::from_startup().map_err(|e| format!("NIC {e:?}"))?;
-    let config = Config {
-        address: [192, 0, 2, 100].into(),
-        prefix_len: 24,
-        gateway: None,
-        rx_buffer: 1024,
-        tx_buffer: 1024,
+fn spawn_child(negative: bool) -> Result<(Child, KernelPipe, Handle), String> {
+    let args: &[&[u8]] = if negative {
+        &[b"--boundary-negative"]
+    } else {
+        &[]
     };
-    let mut stack = Stack::open(nic, config).map_err(|e| format!("stack {e:?}"))?;
-    let mut channel = Channel::grant(
-        &mut stack,
-        absd_net::stream::server::Grant {
-            local_port: 7005,
-            peer: d::Address {
-                ip: [192, 0, 2, 1],
-                port: 42030,
-            },
-            accept_timeout_ms: 5000,
-            lifetime_ms: 10000,
-        },
-    )
-    .map_err(|e| format!("grant {e:?}"))?;
-    let start = absd_runtime::boot_millis();
-    let until = start.checked_add(10_000).ok_or("deadline overflow")?;
-    let mut last = start;
-    println!(
-        "TCP SERVER GRANT READY local=192.0.2.100:7005 peer=192.0.2.1:42030 lifetime_ms=10000"
-    );
     let (child_in, parent_out) = pipe()?;
     let (parent_in, child_out) = pipe()?;
     let (result_in, result_out) = pipe()?;
@@ -112,7 +89,7 @@ fn run() -> Result<(), String> {
             (absd_broker::role::STDOUT, 2),
             (absd_broker::role::STDERR, 3),
         ],
-        [],
+        args.iter().copied(),
         [],
         b"/",
         b"tcp-server-echo",
@@ -127,7 +104,7 @@ fn run() -> Result<(), String> {
         copies.as_ptr() as u64,
         copies.len() as u64,
     ];
-    let mut child = Child(handle(spawn_image_raw(
+    let child = Child(handle(spawn_image_raw(
         request.as_ptr() as u64,
         SPAWN_NO_SPAWN,
         0,
@@ -138,17 +115,72 @@ fn run() -> Result<(), String> {
     drop(startup_out);
     absd_runtime::write_within(parent_out.0, &[3, 192, 0, 2, 1, 0xa4, 0x2e], 1000)
         .map_err(|e| format!("bootstrap {e}"))?;
-    let mut pipe = KernelPipe {
+    let pipe = KernelPipe {
         request_reader: parent_in.0,
         reply_writer: parent_out.0,
     };
     // KernelPipe takes ownership of exactly these two handles.
     core::mem::forget((parent_in, parent_out));
+    Ok((child, pipe, result_in))
+}
+fn run() -> Result<(), String> {
+    absd_runtime::link_anchor();
+    let whole_start = absd_runtime::boot_millis();
+    let whole_end = whole_start
+        .checked_add(20_000)
+        .ok_or("whole deadline overflow")?;
+    let nic = NicLink::from_startup().map_err(|e| format!("NIC {e:?}"))?;
+    let config = Config {
+        address: [192, 0, 2, 100].into(),
+        prefix_len: 24,
+        gateway: None,
+        rx_buffer: 1024,
+        tx_buffer: 1024,
+    };
+    let mut stack = Stack::open(nic, config).map_err(|e| format!("stack {e:?}"))?;
+    println!("TCP SERVER NEG BEGIN v=1 whole_start_ms={whole_start} whole_until_ms={whole_end}");
+    tcp_server_boundary::run(&mut stack, whole_end)?;
+    if absd_runtime::boot_millis()
+        .checked_add(10_000)
+        .is_none_or(|end| end > whole_end)
+    {
+        return Err("insufficient whole-fixture time for original positive grant".into());
+    }
+    let initial_stats = stack.stats();
+    if initial_stats.tcp_server_peer_dropped != 0
+        || initial_stats.last_tcp_server_peer_refusal.is_some()
+    {
+        return Err("initial refusal observation".into());
+    }
+    println!("TCP SERVER PEER REFUSAL BASELINE v=1 count=0 last=none");
+    let mut channel = Channel::grant(
+        &mut stack,
+        absd_net::stream::server::Grant {
+            local_port: 7005,
+            peer: d::Address {
+                ip: [192, 0, 2, 1],
+                port: 42030,
+            },
+            accept_timeout_ms: 5000,
+            lifetime_ms: 10000,
+        },
+    )
+    .map_err(|e| format!("grant {e:?}"))?;
+    let start = absd_runtime::boot_millis();
+    let until = start.checked_add(10_000).ok_or("deadline overflow")?;
+    let mut last = start;
+    println!(
+        "TCP SERVER POSITIVE CLOCK v=1 owner_start_ms={start} owner_until_ms={until} accept_ms=5000 grant_ms=10000 child_ms=8000 whole_until_ms={whole_end}"
+    );
+    println!(
+        "TCP SERVER GRANT READY local=192.0.2.100:7005 peer=192.0.2.1:42030 lifetime_ms=10000"
+    );
+    let (mut child, mut pipe, result_in) = spawn_child(false)?;
     let mut output = Vec::new();
     let mut listen_announced = false;
     loop {
         let now = absd_runtime::boot_millis();
-        if now < last || now >= until {
+        if now < last || now >= until || now >= whole_end {
             stack.stream_server_fence();
             return Err("owner clock/deadline".into());
         }
@@ -163,7 +195,7 @@ fn run() -> Result<(), String> {
         // EOF before CLOSE cancels immediately; explicit CLOSE may drain FIN.
         stack.poll();
         let after = absd_runtime::boot_millis();
-        if after < last || after >= until {
+        if after < last || after >= until || after >= whole_end {
             stack.stream_server_fence();
             return Err("owner clock/deadline after I/O".into());
         }
@@ -206,7 +238,8 @@ fn run() -> Result<(), String> {
             let drain = absd_runtime::boot_millis()
                 .checked_add(1000)
                 .ok_or("drain overflow")?
-                .min(until);
+                .min(until)
+                .min(whole_end);
             while stack.socket_count() != 0 {
                 let now = absd_runtime::boot_millis();
                 if now < last || now >= drain {
@@ -219,6 +252,27 @@ fn run() -> Result<(), String> {
             stack.stream_server_fence();
             if stack.socket_count() != 0 {
                 return Err("sockets retained".into());
+            }
+            let stats = stack.stats();
+            if let Some(last) = stats.last_tcp_server_peer_refusal {
+                let source = std::net::Ipv4Addr::from(last.source.ip);
+                let destination = std::net::Ipv4Addr::from(last.destination.ip);
+                let expected = std::net::Ipv4Addr::from(last.expected_peer.ip);
+                println!(
+                    "TCP SERVER PEER REFUSAL FINAL v=1 count={} source={}:{} destination={}:{} expected_peer={}:{} flags={} seq={} frame_bytes={}",
+                    stats.tcp_server_peer_dropped,
+                    source,
+                    last.source.port,
+                    destination,
+                    last.destination.port,
+                    expected,
+                    last.expected_peer.port,
+                    last.tcp_flags,
+                    last.tcp_sequence,
+                    last.frame_bytes
+                );
+            } else {
+                println!("TCP SERVER PEER REFUSAL FINAL v=1 count=0 last=none");
             }
             println!("TCP SERVER DONE child=exited sockets=0");
             return Ok(());

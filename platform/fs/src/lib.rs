@@ -224,6 +224,8 @@ pub struct Fs<D: Device> {
     geometry: Geometry,
     fs_id: u64,
     seq: u64,
+    /// The selected superblock's digest of the committed metadata image.
+    digest: [u8; 32],
     next_serial: u64,
     objects: BTreeMap<u64, Object>,
     children: BTreeMap<(u64, Vec<u8>), u64>,
@@ -409,6 +411,7 @@ impl<D: Device> Fs<D> {
             geometry,
             fs_id: superblock.fs_id,
             seq: superblock.seq,
+            digest: superblock.digest,
             next_serial: image.next_serial,
             objects: BTreeMap::new(),
             children: BTreeMap::new(),
@@ -460,6 +463,14 @@ impl<D: Device> Fs<D> {
 
     pub fn sequence(&self) -> u64 {
         self.seq
+    }
+
+    /// The SHA-256 the selected superblock carries for the committed
+    /// metadata image (the one `mount` checked): with `fs_id` and
+    /// `sequence`, the identity of the committed state an operator's
+    /// resume authorization names (`absd-fsd`'s `resume` module).
+    pub fn image_digest(&self) -> [u8; 32] {
+        self.digest
     }
 
     pub fn geometry(&self) -> Geometry {
@@ -644,6 +655,7 @@ impl<D: Device> Fs<D> {
         self.stats.image_bytes += bytes.len().next_multiple_of(SECTOR) as u64;
         self.stats.superblock_sectors += 1;
         self.seq = seq;
+        self.digest = sha256(&bytes);
         // Geometry is fixed for this mount. Rebuild only after the disk
         // commit succeeds, reusing the bitmap's existing backing storage.
         self.durable.clear();
@@ -667,6 +679,43 @@ impl<D: Device> Fs<D> {
         }
         let result = self.device.flush();
         self.device_result(result)
+    }
+
+    /// Transitions a preallocated one-sector owner marker without writing
+    /// filesystem metadata. The caller must keep the file's allocation and
+    /// name fixed for its lifetime. No allocation, resize or mtime update
+    /// occurs; the exact old sector must match before the write. This is
+    /// for the file server's startup guard, not ordinary file I/O.
+    /// Public because the owner protocol lives in the separate fsd crate;
+    /// it requires an existing full-write Fs and grants no new device or
+    /// session authority. Callers must reserve a private fixed owner file
+    /// and follow that protocol. It is not an atomic ordinary-file update.
+    pub fn transition_sector_marker(
+        &mut self,
+        path: &[u8],
+        expected: &[u8; SECTOR],
+        next: &[u8; SECTOR],
+    ) -> Result<(), Error> {
+        self.mutable()?;
+        if self.dirty {
+            return Err(Error::Invalid);
+        }
+        let object = &self.objects[&self.resolve(path)?];
+        if object.kind != Kind::File || object.readonly
+            || object.size != SECTOR as u64 || object.blocks.len() != 1 {
+            return Err(Error::Invalid);
+        }
+        let sector = self.geometry.block_sector(object.blocks[0]);
+        let mut current = [0u8; SECTOR];
+        let read = self.device.read(sector, &mut current);
+        self.device_result(read)?;
+        if &current != expected {
+            return Err(Error::Invalid);
+        }
+        let write = self.device.write(sector, next);
+        self.device_result(write)?;
+        let flush = self.device.flush();
+        self.device_result(flush)
     }
 
     fn handle(&self, handle: u64) -> Result<Open, Error> {

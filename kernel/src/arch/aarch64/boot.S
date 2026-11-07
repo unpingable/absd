@@ -6,7 +6,10 @@ _start:
  .long 0
  .quad 0x80000
  .quad __kernel_size
- .quad 0
+ // flags: little-endian, 4 KiB pages, placement anywhere (bit 3): a
+ // loader keeps the image where it was loaded instead of moving it to
+ // the base of DRAM (the link address is fixed).
+ .quad 0xa
  .quad 0,0,0
  .long 0x644d5241
  .long 0

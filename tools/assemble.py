@@ -305,22 +305,31 @@ def private_scan(config, out, prov):
         if rel == MARKER:
             continue
         data = path.read_bytes()
-        if prov.is_binary(data):
-            kinds = ["credential"] if prov.KEY_NAMES.search(rel) else []
+        binary = prov.is_binary(data)
+        if binary:
             lines = data.decode("latin-1").split("\n")
         else:
             text = data.decode("utf-8", "replace")
-            kinds = ["credential"] if prov.SECRETS.search(text) else []
             lines = text.splitlines()
-        counts, line_hashes = {}, {}
+        matching_lines = {}
         for kind, pattern in patterns:
-            matching = [line for line in lines if pattern.search(line)]
-            n = len(matching)
-            if n:
-                counts[kind] = n
-                line_hashes[kind] = [hashlib.sha256(line.encode("utf-8")).hexdigest() for line in matching]
-        for kind in kinds:
-            counts[kind] = counts.get(kind, 0) + 1
+            matching_lines.setdefault(kind, set()).update(
+                index for index, line in enumerate(lines) if pattern.search(line))
+        if binary and prov.KEY_NAMES.search(rel):
+            # A filename-only binary match has no text-line identity.
+            matching_lines["credential"] = {None}
+        elif not binary:
+            spans = list(prov.SECRETS.finditer(text))
+            offset = 0
+            for index, raw_line in enumerate(text.splitlines(keepends=True)):
+                end = offset + len(raw_line)
+                if any(match.start() < end and match.end() > offset for match in spans):
+                    matching_lines.setdefault("credential", set()).add(index)
+                offset = end
+        counts = {kind: len(indices) for kind, indices in matching_lines.items() if indices}
+        line_hashes = {kind: [hashlib.sha256(lines[index].encode("utf-8")).hexdigest()
+                             for index in sorted(i for i in indices if i is not None)]
+                       for kind, indices in matching_lines.items() if indices}
         for kind, n in counts.items():
             rule = next((a for a in accepted if kind in a["kinds"] and matches(rel, a["paths"])), None)
             if rule:

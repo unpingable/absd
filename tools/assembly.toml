@@ -12,17 +12,12 @@ held = []
 # Qualification that was not run on this release. It goes into the manifest
 # and the README says the same; an item leaves this list only when a receipt
 # for the exact release revisions exists.
-not_run = [
-  "clean-room rebuild from this proposed public tree compared with the published RC1 operator ISO, enrollment ISO and raw disk",
-  "kernel suite and platform core gate from this assembled source snapshot",
-  "external independent reproduction of the published RC1 binaries",
-  "TinyCC compiler qualification: NOT_RUN, not included in the public source",
-]
+not_run = ["Complete kernel suite and platform core gate from this assembled source snapshot (kernel check fails at the disclosed Clippy step; cloud all/platform checks are not runnable without KVM).", "Whole-image byte-identical reproduction of the Preview 2 operator ISO, enrollment ISO and disk; measured correspondence is bounded.", "Extended integration profile using private other-project sources, excluded from this public tree."]
 
 [release]
-id = "absd-source-rc1"
-date = "2026-10-18"
-status = "proposed corresponding first-party source for the published absd-preview-rc1 binaries; source checks, clean-room reconstruction and publication are separate decisions; no external reproduction claim"
+id = "absd-preview-2"
+date = "2026-11-07"
+status = "first-party source for frozen Preview 2 pair; separate source review and fresh cloud public-recipe construction accepted; canonical kernel check fails at preserved Clippy lint; cloud all/platform checks not runnable without KVM; bounded correspondence, not bit-identical media reproduction; mechanical checks do not authorize publication"
 
 [toolchain]
 rust_kernel = "1.98.0 (kernel/rust-toolchain.toml)"
@@ -35,7 +30,7 @@ groff = "1.23.0 (exact; platform/scripts/verify-inputs.sh)"
 lld_c_kit = "17 (ld.lld-17; clang-18 builtins archive from libclang-rt-18-dev; these host package builds are not fully digest-pinned)"
 
 [notice_check]
-script = "tools/rc1_notices.py"
+script = "tools/preview2_notices.py"
 base_env = "ABSD_RC1_BASE_NOTICES"
 
 [[component]]
@@ -43,7 +38,7 @@ name = "kernel"
 keep_check_inputs = true
 role = "kernel, architecture support, boot, kernel tests"
 source = "absd-kernel (private development repository)"
-commit = "d208b61bcd4826181bf9f401551ab620d4eabba0"
+commit = "919f0676eacbdd06bfa17e1da9d951fb374e3a1b"
 dest = "kernel"
 readiness = true
 # Campaign records, review transcripts, hardware survey receipts and the
@@ -57,7 +52,7 @@ name = "platform"
 keep_check_inputs = true
 role = "native userspace, servers, shell, SSH, Rust standard-library port, image tooling, platform tests"
 source = "absd-rust-std (private development repository)"
-commit = "0fada7ed031bd84e3a469e717c1d0be5dbefedd6"
+commit = "0b002f732b1d11ec503868d99896c6bd5db80757"
 dest = "platform"
 readiness = true
 # Qualification receipts recorded on the development host, agent
@@ -81,8 +76,13 @@ exclude = ["docs/*/*", "cports/demand/*.log", "AGENTS.md",
 # Cross-references between components that must agree with the commits above.
 [[pin]]
 component = "kernel"
-file = "tools/rebuild-rc1.sh"
+file = "tools/rebuild-preview2.sh"
 pattern = 'export ABSD_KERNEL_COMMIT=([0-9a-f]{40})'
+
+[[pin]]
+component = "platform"
+file = "tools/rebuild-preview2.sh"
+pattern = 'export ABSD_PLATFORM_COMMIT=([0-9a-f]{40})'
 
 # Private-material findings accepted with a stated reason and the number of
 # lines the reason was written for. Everything else the scan finds, and any
@@ -96,12 +96,6 @@ paths = ["kernel/scripts/provenance.py", "kernel/scripts/test_provenance.py", "k
          "platform/provenance/obligations.toml", "tools/assemble.py"]
 lines = 9
 reason = "the checking tools' own detection patterns and test data"
-
-[[accept]]
-kinds = ["development-path"]
-paths = ["kernel/scripts/smp-app-matrix.py"]
-lines = 1
-reason = "a guard that refuses to run in the development checkout; one path name"
 
 [[accept]]
 kinds = ["private-address"]
@@ -170,678 +164,2523 @@ component = "platform"
 obligation = "PRIVATE-PROJECT-MATERIAL"
 reason = "owner decision 2026-10-10: no source of the owner's other projects is in a release; what remains are ABSD's own test programs and synthetic fixtures for the extended profile"
 
-[[source_edit]]
-component = "kernel"
-path = "Makefile"
-input_sha256 = "2b13013df4d4cd23671f696f6814542b4c90111ae7e2294eb53f36db36a3944e"
-output_sha256 = "58bae5f0e6d9bf7c13bbad8b53c41a17b807cb765237db9460b9c58816050c64"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 1206
-input_sha256 = "f217dcba488016c6f83197db4fa50786f8698f0564e64e2b8cd86e023b01c049"
-text = "# Host-only frame v0 gate. No emulator or external effects.\n"
+# Every public adaptation below is rebound to the exact component input.
+# Prior RC1 edits are not replayed blindly onto different source.
 
-[[source_edit.change]]
-line = 518
-input_sha256 = "a0aeda03223b6e04057d3d8f1111d1959fd8b3fb748d1714c68a92b41cea1c37"
-text = "# The AHCI census ISO (docs/hardware/SATA-AHCI-CENSUS.md):\n"
-
-[[source_edit]]
-component = "platform"
-path = "c/vectors/startup/README.md"
-input_sha256 = "38b631239108ecd0b40dab90da616cab46861f387f26b6fab2364188f5540c6e"
-output_sha256 = "0bef52f3c4934dbbc11730b1adaa651c88c1c616786f9745a821dfb7c297bbe1"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 34
-input_sha256 = "9b84c3b181b09789592c3dd7013cfb82659f5c5ae44444c840014c8c9a65040d"
-text = "    R=/path/to/c-kit\n"
-
-[[source_edit]]
-component = "platform"
-path = "cports/programs.tsv"
-input_sha256 = "9f03ef17f5e5a9a34b1532950cdbda337d6b158e737f698ca8fdf71fcaa5c626"
-output_sha256 = "f7eeb6a8bf3545bcdcc7346180fdead422e2d6fed353f2d0e60e3269a99fc296"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 8
-input_sha256 = "c505d3b785c65416fe0fefcff562000bcb19a5f303b5347f6b4859e3e1f730d9"
-text = "# the source-download directory selected by the C-port build scripts.\n"
-
-[[source_edit]]
-component = "platform"
-path = "fixtures/native-dhcp/captured-client.json"
-input_sha256 = "3f274ab041cd912e84007cfbcab5e461f942551599f1114289095aced4368d46"
-output_sha256 = "967cf95c8dbef63b629ba7da5057647dd1cbd306aeabc407ae1eee5bb69eae4c"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 3
-input_sha256 = "0bb393388b191f8a5ccad7d3a1c4e21aea284373c1e2b5d90963a3a52994dfce"
-text = "  \"capture\": \"native-dhcp.pcap (development capture not included)\",\n"
-
-[[source_edit]]
-component = "platform"
-path = "fixtures/native-dhcp/captured-offer.json"
-input_sha256 = "7979277ead39c34c54f97d869d0eed31ddfa87976d5d2df6dd4721c87e6c78fd"
-output_sha256 = "2e1a678c9080647005d3779e1d3472a2423c749ebf58b7c39f8c46fcc8aeb462"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 4
-input_sha256 = "0bb393388b191f8a5ccad7d3a1c4e21aea284373c1e2b5d90963a3a52994dfce"
-text = "  \"capture\": \"native-dhcp.pcap (development capture not included)\",\n"
-
-[[source_edit]]
-component = "platform"
-path = "media/z2-usb.toml"
-input_sha256 = "6a786df8e375bde4700f0c45b600bd2c7b4c20029f31bde5307bd0cee21b1135"
-output_sha256 = "131719b7d3f708d3c24315f50927c80523352b0fc0c3ffc1ff8b6b006fd198d5"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 3
-input_sha256 = "edfaaf2be5af27b3131fa8cc0989ea0345bb053cb02ea3ff0e6c376a8dfafc74"
-text = "# bf8c7583/f8184ca, the development checkout).\n"
-
-[[source_edit.change]]
-line = 2
-input_sha256 = "bdd07b99b215bad32f3b76608362a75359698db007e44d01d6db303456e084a5"
-text = "# attended boot (generalised from the S4 recipe for\n"
-
-[[source_edit]]
-component = "platform"
-path = "provenance.toml"
-input_sha256 = "39d097cade9185b80eabd1072bd9f486734cb1038af65628131b6a328374eed3"
-output_sha256 = "51f416b510ada376e8c0192e5d9df248b3d80808e5e72f486b62055543d8eb19"
-reason = "Preserve existing comment curation; correct two labels to the existing recorded upstream terms. The named adapted files are excluded; no source publication election is made by these labels."
-
-[[source_edit.change]]
-line = 64
-input_sha256 = "4ee79e40a294c930a970459f32890c5299e989233e5c56de3b6af2928485672b"
-text = "# The enrollment key cases (slice A): authorized_keys inputs\n"
-
-[[source_edit.change]]
-line = 88
-input_sha256 = "be307b583289f147c992c5d20fa1ce1aaecd41d1120ba137130146a1645e8f41"
-text = "# checkout path the development checkout \u2014 short\n"
-
-[[source_edit.change]]
-line = 196
-input_sha256 = "1f86d7f4d3d8c8126a4df239f6d0099870c29cdaa55956856753c240dcb4c8fc"
-text = "license = \"LGPL-2.1-or-later\"\n"
-
-[[source_edit.change]]
-line = 208
-input_sha256 = "1f86d7f4d3d8c8126a4df239f6d0099870c29cdaa55956856753c240dcb4c8fc"
-text = "license = \"LGPL-2.1-or-later\"\n"
-
-[[source_edit.change]]
-line = 213
-input_sha256 = "336834a999aaa6366cb2c6d7f21bed0cd8ad77a227518b6bd2ce32e3e3fa194f"
-text = "# the development checkout as tool output; no upstream text.\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/build-tcc.sh"
-input_sha256 = "f598e489c54f2a419a846d9aa1e658339acdb3f27d5eb5b7506b290ba3eae05c"
-output_sha256 = "b439c5bdf8d3646f2b02c81b8db046fe4243e10d9d83d4c06c6972d436258e7a"
-reason = "Keep the original script body for existing static checks; public-only entry refuses omitted TinyCC work before environment processing, external commands or output creation."
-
-[[source_edit.change]]
-line = 1
-input_sha256 = "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"
-text = "#!/bin/sh\n# Public snapshot: the omitted TinyCC stage is never a passing test.\nprintf '%s\\n' 'TCC STAGE NOT_RUN: not included in the public source' >&2\nexit 78\n"
-
-[[source_edit.change]]
-line = 51
-input_sha256 = "6c871674ef41c2906e36c113f391acb997645d3ea8689bede25104612de996c2"
-text = "# repository encloses the build directory (here the development checkout), not tinycc's.\n"
-
-[[source_edit.change]]
-line = 66
-input_sha256 = "d46f72732def88c7a74361a2ee718fc7baa581d94fe912796b52520cf9aee9af"
-text = "# A pristine copy of the pinned commit; a plain directory under the development checkout, so\n"
-
-[[source_edit.change]]
-line = 249
-input_sha256 = "fdd21edb4dcc82da527c1099ca5142783fc00da36cfc1bcd0f75f8ae870e031f"
-text = "# Picolibc's assert); the image must carry no the development checkout path of its own.\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/media.py"
-input_sha256 = "fcce6ebb2059efc2f5aa31beb713e689c7b639d96c8a4ffb441af0cc909a2b9e"
-output_sha256 = "d45551aa4ee587343852d9167269ebe728fcc7bcab8115f724f46e2191a86abb"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-
-[[source_edit.change]]
-line = 2
-input_sha256 = "999bdf77179c12f43c24ed987515f61c1a8af063c0547bffe2bc1f532b7575e9"
-text = "\"\"\"Reproducible boot media for one frozen kernel/platform pair.\n"
-
-[[source_edit.change]]
-line = 3
-input_sha256 = "ff1627881a0f2b9b848f3695a08294d23b183c6a772e4f306f858e3efa6e3013"
-text = "Generalises the S4 recipe (the development checkout,\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/native-ipv6-echo-matrix.py"
-input_sha256 = "a94e3291e5e4ec5902e8cd03f12f1b630a9a3fbfbfe97fed421eb7b10f290d58"
-output_sha256 = "15a9eac33dbe76e98298fc53ba35654358ba8285aaf40107f9c908bfb568ae60"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 129
-input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
-text = "# globals, profiles or classifier. Guest execution requires a dedicated VM.\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/native-ipv6-mtu1280-matrix.py"
-input_sha256 = "a7aa2078f532c044c1d5d67fd2157476c978d4448b6af41bb39605f926273cec"
-output_sha256 = "51a8c6b952a7d015537698691b53cc3e398cf77d0425157833a5a59d301bb362"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 84
-input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
-text = "# globals, profiles or classifier. Guest execution requires a dedicated VM.\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/native-ipv6-route-matrix.py"
-input_sha256 = "4b1fd7cd23cd3c0f8325961551c3eb034a3b511bb02ed2d7e3dbe53998cfb8c2"
-output_sha256 = "d561118c6e0e7a45cd9cfc7d21c66692f2b791370ff9582f6acfee080a81102a"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 80
-input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
-text = "# globals, profiles or classifier. Guest execution requires a dedicated VM.\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/native-ipv6-routed-tcp-matrix.py"
-input_sha256 = "0f93d3363dc4c05728cbfc53bf233df84089a116341843695b98a12f7de76a61"
-output_sha256 = "756edf97125bbf06852789ff5ea294f1c81837516aa80ebbdaf590ee0368bf11"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 80
-input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
-text = "# globals, profiles or classifier. Guest execution requires a dedicated VM.\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/native-sntp-matrix-tests.py"
-input_sha256 = "baa07c36c8fba698cd039ec7d302e493acfaa8305812b013b8d2f8b92a0345d7"
-output_sha256 = "0245c39e5fca7e10838bdfd4e62114838fa694914fa07459f5a3f0720533c489"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 4
-input_sha256 = "c4fa7a93e045952d01d0ce4ce733684d3acf5da742552b94e251a13187411319"
-text = "Execute on a dedicated VM; source-only tests do not establish guest behavior.\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/run-agent-exec.sh"
-input_sha256 = "9e6cc62d0304f7e468b72cda6fbbf060cb749ddfe71574efc3d5d667a8e5be02"
-output_sha256 = "e34320bf13745d185bd03247c3c31a5d23a8c868bbebc1a18db705acfbb23d54"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 9
-input_sha256 = "948f966eb410963b20d11ac7129d85b7d1a0c721f4184aa2fe83a0e54197f40b"
-text = "# the protected kernel source or a kernel source checkout); ABSD_QEMU (default\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/run-clang-guest.sh"
-input_sha256 = "90ca42b571da0684b10d166f260311cfeb6911498bbff19c8c7decf03ed2a685"
-output_sha256 = "d85164ea2c56d5653baefd4c5baaa5ee0d306d2c0084c422670c7ec4bb012ef8"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 19
-input_sha256 = "a1326182e7259f37e5182192eda0cc3d6ae957f971edbc66b5f29c6e449ad8df"
-text = "# the protected kernel source); ABSD_CLANG_PLATFORM (required; a built platform\n"
-[[source_edit.change]]
-line = 74
-input_sha256 = "bb29fa44fb44f1d319d91dadcd094a9d6e0f972ec337ce9273bb6333c7d5a267"
-text = "# (the first guest run stamped the protected kernel source HEAD this way; GUEST-RESULT.md).\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/run-cports.sh"
-input_sha256 = "eb93bca3ada0ff4d6ced079c8919bcc0e13f0d84b5121871ce29f981ac142827"
-output_sha256 = "db29342d03a9ab4547bc26f8891b855f4b99679161e964fe1cf6c446ad5b3acf"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 11
-input_sha256 = "25060e9c02af0dfcc4d65edc4272f9bdf914b4e5330c6a647b3ec6bc62b21073"
-text = "# the protected kernel source); ABSD_SKIP_BUILD=1 reuses the adapter archive, the\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/run-perf-matrix.sh"
-input_sha256 = "71f476e180080303c6a686911c2b0a93cb728141cc230464378bdfe650b66c8f"
-output_sha256 = "f0152c4912d3d46968ffe8be5722533b5726538ab91829b5557edf90dbc0ac0a"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 10
-input_sha256 = "3fa5b3431211e992124bd5e6bb7e0f34f1f8e0fb992a84adb4a4e8fb87cb3fa6"
-text = "# ABSD_PERF_RECORD to measure, not as the gate. The baseline is TCG-only.\n"
-[[source_edit.change]]
-line = 11
-input_sha256 = "22a2f8ea028ce5283b4efdae8a9728e65479d1714c10ef049fdb2416f5d8e130"
-text = "#\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/run-tcc.sh"
-input_sha256 = "dd8b62ae51f6f4f8be989e3a97347665a0891ad529d22cb843dfbddfaf795409"
-output_sha256 = "090e3721190a2215015877985a7abe51a18ba4787f34f4fb4efea6b57084983c"
-reason = "Keep the original script body for existing static checks; public-only entry refuses omitted TinyCC work before environment processing, external commands or output creation."
-
-[[source_edit.change]]
-line = 1
-input_sha256 = "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"
-text = "#!/bin/sh\n# Public snapshot: the omitted TinyCC stage is never a passing test.\nprintf '%s\\n' 'TCC STAGE NOT_RUN: not included in the public source' >&2\nexit 78\n"
-
-[[source_edit.change]]
-line = 18
-input_sha256 = "510d074d2473ac7f64278894678e4bdaa24b8655523ba00116264e2294efd0c0"
-text = "# the protected kernel source); ABSD_SKIP_BUILD=1 reuses the staged tree and the\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/run-userland-matrix.sh"
-input_sha256 = "7f8584215f9f15fcdb36e86ec2e9c8b079981b020083795d6b68cf8c7f4ea674"
-output_sha256 = "a0be9fc5bea3328973d9f1c7a742b2b7baeb9a15d9c8a0d469a735dc59c0101a"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 9
-input_sha256 = "259ca43105cb7962b2effb09774f57a7373b135959d8fd13477d6c1a1168453d"
-text = "# the protected kernel source); ABSD_USERLAND_PLATFORM (required);\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/test_absd_try.py"
-input_sha256 = "b07091f8e2f5028e50fb504f07af0826038e12da2557af8300cc1b40f3c70e66"
-output_sha256 = "688b29898fe82ce86d59dca096f8194b27f3a5785cb263662d764efb8a4726eb"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 551
-input_sha256 = "363fa7ae8bf3ee680c9de4de208bd86b01a4349af841ff0547cea424b518b0a0"
-text = "REAL_DISK = pathlib.Path(os.environ.get(\"ABSD_TRY_REAL_DISK\", \"/nonexistent/absd-reference/absd-operator.img\"))\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/test_media.py"
-input_sha256 = "f245856a1cb173088e31675fdd005e1f1943de18fcf4974e0674f7917d2f8981"
-output_sha256 = "1f240f3cebd0cbeaeb09560065b5f50b507552856986cb17b2f9a70e7bd475e4"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 4
-input_sha256 = "e0e7050850d3aa55ad8289a328ef0456d0dfa23829a48972eed4d85be5e90740"
-text = "Against S4's retained candidate (/nonexistent/absd-s4-candidate,\n"
-[[source_edit.change]]
-line = 34
-input_sha256 = "5545c43e8baba0e9fd36952c5e74c85b8d185880cd6d06e4573e8b2f55abd17b"
-text = "S4 = pathlib.Path(os.environ.get(\"ABSD_S4_CANDIDATE\", \"/nonexistent/absd-s4-candidate\"))\n"
-[[source_edit.change]]
-line = 475
-input_sha256 = "9509818287ffce523d29b7f45baa9e045ab5d661ded7a91221f19ec4ae5c7646"
-text = "U1B = pathlib.Path(os.environ.get(\"ABSD_U1B_IMAGE\", \"/nonexistent/absd-u1b-image\"))\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/testdata/candidate8-release-manifest-v1.toml"
-input_sha256 = "edd1dfb59302cb0496f95031ccdecce1262166c34db978f41b996010f14e1e6b"
-output_sha256 = "1d3bae2c1600d1df0e341777dc8fc4117e0399ddefc9d23dc9a9df2a25e6a054"
-reason = "Public source sanitation: comments, test metadata and unavailable development-fixture defaults only; runtime algorithms unchanged."
-[[source_edit.change]]
-line = 3
-input_sha256 = "c8928a869382c052e0c3ae133b7591d47a3729f74e45203aab8d3be1cdcd0a5a"
-text = "# file is /unavailable/development-record\n"
-[[source_edit.change]]
-line = 23
-input_sha256 = "0eb2ace549ccd2b0881669589eea44c0ec2418aa5776388f2b2fdab59f85d85f"
-text = "kernel_repository = \"/unavailable/development-record\"\n"
-[[source_edit.change]]
-line = 24
-input_sha256 = "e88afc5496329b2bf248b1ba93dc2b398181e9a112e1c5ac702eb0b8736378fc"
-text = "kernel_remote = \"/unavailable/development-record\"\n"
-[[source_edit.change]]
-line = 27
-input_sha256 = "a28aeb5e47f5b78557ccb4143553aff596a4f060eabdf88e07287b1ef5508564"
-text = "platform_repository = \"/unavailable/development-record\"\n"
-[[source_edit.change]]
-line = 28
-input_sha256 = "547b8ee36758484d3e6ffed399cdda5c690a107d4e1eb4c6e23b068eecf86b14"
-text = "platform_remote = \"/unavailable/development-record\"\n"
-[[source_edit.change]]
-line = 41
-input_sha256 = "20800a76fadedc38c2a7978c37f484d6ec7dcb7b749a7b77aa73b94e3ec8df93"
-text = "components_toml = \"/unavailable/development-record\"\n"
-
-[[accept]]
-kinds = ["development-path"]
-paths = ["platform/scripts/run-agent-exec.sh", "platform/scripts/run-c-kit.sh", "platform/scripts/run-clang-guest.sh", "platform/scripts/run-cports.sh", "platform/scripts/run-tcc.sh", "platform/scripts/run-userland-matrix.sh"]
-lines = 12
-reason = "literal refusal checks against the protected development kernel source; preserve their behavior in public tests"
-
-[[accept]]
-kinds = ["development-path"]
-paths = ["platform/scripts/build-tcc.sh"]
-lines = 2
-reason = "literal output checks that reject embedded development paths; these are detection needles"
-
+# Carry forward accepted source dispositions against unchanged source bytes.
 [[discharged]]
 component = "kernel"
 obligation = "XHCI-LEGACY-MASKS-ON-MERGE"
-reason = "At d208b61b src/xhci_legacy.rs cites xHCI 1.2 sections 7.1.1/Table 7-4 and 7.1.2/Table 7-5 beside the masks; this source remains unchanged."
-
-[[pin]]
-component = "platform"
-file = "tools/rebuild-rc1.sh"
-pattern = 'export ABSD_PLATFORM_COMMIT=([0-9a-f]{40})'
-
-[[source_edit]]
-component = "platform"
-path = "scripts/media_operator.py"
-input_sha256 = "08d59cfc08fe2fe79f1258e64ea296a6896d81a37e27922cf43d72420cb8ab1a"
-output_sha256 = "dd51030372819dbc5c7529ec6cb4a4796ed9755e848d428d79d129c8fc80c462"
-reason = "Public rebuild tool adaptation: force fresh Python cache prefix and disable bytecode writes for the isolated child builder; no kernel/service algorithm change."
-[[source_edit.change]]
-line = 384
-input_sha256 = "a728bf8a5626ef2d82d859ec5a25c7022913aa24ebfc55e6594fd053c50fccc5"
-text = "    command = [\"/usr/bin/python3\", \"-I\", \"-B\", \"-X\", f\"pycache_prefix={work / 'python-cache'}\", str(platform / \"scripts\" / \"operator_image.py\"), \"build\", \"--kernel\", str(kernel),\n"
+reason = "src/xhci_legacy.rs is byte-identical to accepted public RC1 source and retains xHCI 1.2 sections 7.1.1/Table 7-4 and 7.1.2/Table 7-5 beside the masks."
 
 [[discharged]]
 component = "kernel"
 obligation = "I219-ON-MERGE"
-reason = "The frozen source carries LICENSES/BSD-3-Clause.txt, the Intel driver header and matching provenance rule. Published RC1 notices archive 9d2760276584cebce0dac55cdcc9a5cb75618497e8720c26bd5e45c4960eae4b contains Intel-I219-BSD-3-Clause.txt. The about-page contradiction was corrected in public site main 58126fb07ca19b919ef7e668790cfc7faa8dfcaa, gh-pages 4492679, verified deployed at 2026-10-18T22:10:27Z. Additional if_em/Picolibc/libm texts are separately enforced by NOTICES."
+reason = "The driver, BSD-3-Clause text and matching provenance entry are unchanged from accepted public source. The complete Intel driver header occurs verbatim in Preview 2 NOTICES. Public site 475f533 about/index.html carries the Intel/FreeBSD attribution and no contradictory derivation sentence; current public main was checked. This carries an existing disposition; it grants no general legal clearance."
+
+[[discharged]]
+component = "platform"
+obligation = "LIC-PUBLIC-EXPORT-EXAMINATION"
+reason = "Steward disposition 2026-11-06 records the bounded examination as performed: source commit d94f2bdb57e1de2db3c2fb49474a941c9839f93d, tree 2ea0954115024ff3ae5af089aa0315bd1a07258f, SOURCE-MANIFEST SHA256 42cc740ee8e56be1a8ae1199b82982acb55959fa8ec60d9b86b4c91010a0985b; examination COMPLETE SHA256 d7c70932e75949767ad6991eac83e96d7bf1b3e7ed780b52b09532de199fb17c. All 2379 entries were inventoried, four links resolved, the recognized archive opened, and 342 detected findings dispositioned, with targeted sampling of unflagged categories. No unresolved consequential source-origin concern was identified. Fourteen lock-pinned reference archives were unavailable; matching and sampling are bounded and do not establish universal absence or legal certification. This metadata-only successor requires a separate delta rebind before publication; full-tree review, cleanroom and acceptance remain separate gates."
+
+# Preview 2 curated edits: component and original-line hashes bind every change.
+
+[[source_edit]]
+component = "kernel"
+path = "Makefile"
+input_sha256 = "bcdf934a81855cddfab476d7bdc0f659580ae3374a8b41b2e701f54c0f2a8fd9"
+output_sha256 = "ac08ae64e40c94620e4c61d1faaffa9bd92e3be7a0b14d4ff848d986e9e1071c"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 664
+input_sha256 = "236e052e8da13b7f64002483a451d342d8a90c32f46a71bad596a9008036275c"
+text = "# coordination record #109 (docs/RTL8125.md): the read-only kernel with one RTL8125\n# bring-up mode as its only GRUB entry, for a VFIO guest on reference_host.\n"
+[[source_edit.change]]
+line = 665
+input_sha256 = "d2e61ee502d11176b20b5fba3947a284e9f506d88ecc3169507e806833b320eb"
+text = ""
+[[source_edit.change]]
+line = 682
+input_sha256 = "a0aeda03223b6e04057d3d8f1111d1959fd8b3fb748d1714c68a92b41cea1c37"
+text = "# The AHCI census ISO (coordination record #45, docs/hardware/SATA-AHCI-CENSUS.md):\n"
+[[source_edit.change]]
+line = 1319
+input_sha256 = "972483fd4f9dc85695485fc4f9861b914f25ba88fb1fb7bfaa5d76f4da51d8eb"
+text = "# The optional physical containment bring-up ISO: the read-only\n"
+[[source_edit.change]]
+line = 1323
+input_sha256 = "191cb2244aec454fb699e7d847d03d9891fae2751faada19a342053180e9e325"
+text = "HARDWARE_FIXTURE_AHCI ?=\nHARDWARE_FIXTURE_RTL8125 ?=\nHARDWARE_FIXTURE_ISO := build/absd-hardware_fixture-bringup.iso\n.PHONY: hardware_fixture-iso\nhardware_fixture-iso: physical-build\n\t@test -n \"$(HARDWARE_FIXTURE_AHCI)\" -a -n \"$(HARDWARE_FIXTURE_RTL8125)\" || { echo \"set both explicit hardware BDF inputs\" >&2; exit 1; }\n\trm -rf build/hardware_fixture-iso\n\tmkdir -p build/hardware_fixture-iso/boot/grub\n\tcp $(PHYSICAL_KERNEL) build/hardware_fixture-iso/boot/absd-kernel\n"
+[[source_edit.change]]
+line = 1324
+input_sha256 = "64c505753624ab4ffcd7521dc8d48da2ae6e0e76da141e52715d5690dbe49f5e"
+text = ""
+[[source_edit.change]]
+line = 1325
+input_sha256 = "c65fd5a8d67c279e5ca9ba67e0aa027975a7ec5c2b758ad34d14a95506167732"
+text = ""
+[[source_edit.change]]
+line = 1326
+input_sha256 = "ba79afc5b7c03b8cc9a8653f1a22bdce896a55fc8be311a6ffc587b4e6b3a8f4"
+text = ""
+[[source_edit.change]]
+line = 1327
+input_sha256 = "0785614c2c7ced1394ed8b48920bc700e586a6befa9da8189d1e61d79b86ac5c"
+text = ""
+[[source_edit.change]]
+line = 1328
+input_sha256 = "4adeac986a9603558e83c1121038964210830f22758cd7c995ae857e8adb8f5c"
+text = ""
+[[source_edit.change]]
+line = 1329
+input_sha256 = "1339472dc9e1ce109490a28efc40455b4b8e14110b9b501475a6e5ae8a58a2df"
+text = ""
+[[source_edit.change]]
+line = 1330
+input_sha256 = "7da8e46d6194e6f134915ebab33c85a2f9d69e690766180064142967c0f8a642"
+text = ""
+[[source_edit.change]]
+line = 1333
+input_sha256 = "a8164237226ed8cf11b9be219551044bf6102368188aa7a58a6ab6aaf88a172d"
+text = "\t  'menuentry \"3a First DMA: read the disk serial (no disk selected)\" {' '  multiboot2 /boot/absd-kernel block-probe dma-contain=ahci@$(HARDWARE_FIXTURE_AHCI) ahci-disk=none-selected dma-contain-check halt-on-exit' '  boot' '}' \\\n\t  'menuentry \"3b Forbidden-transfer check: edit SERIAL first\" {' '  multiboot2 /boot/absd-kernel block-probe dma-contain=ahci@$(HARDWARE_FIXTURE_AHCI) ahci-disk=SERIAL dma-contain-check halt-on-exit' '  boot' '}' \\\n\t  'menuentry \"4 Network: needs a peer running the reflector\" {' '  multiboot2 /boot/absd-kernel net-probe dma-contain=rtl8125@$(HARDWARE_FIXTURE_RTL8125) net-rtl8125 halt-on-exit' '  boot' '}' \\\n\t  > build/hardware_fixture-iso/boot/grub/grub.cfg\n\tgrub-mkrescue -o $(HARDWARE_FIXTURE_ISO) build/hardware_fixture-iso >/dev/null 2>&1\n\t@sha256sum $(HARDWARE_FIXTURE_ISO) $(PHYSICAL_KERNEL)\n"
+[[source_edit.change]]
+line = 1334
+input_sha256 = "ec92858199b346dc60262050c5f040a06f5aa1c36db1084d501b9a4f1c5a7786"
+text = ""
+[[source_edit.change]]
+line = 1335
+input_sha256 = "8a165c7a1a1770929df7fd5b03d90e76d1be02c82215750568788729daaaae7c"
+text = ""
+[[source_edit.change]]
+line = 1336
+input_sha256 = "9f392e112ea4722fc59a767d8f0a08da51cd203cb3c62e0dde91a008423dcf45"
+text = ""
+[[source_edit.change]]
+line = 1337
+input_sha256 = "774000f71677ca33b39bdbe7c83eec0112c9a608475160dbdf3a2d562d51cedb"
+text = ""
+[[source_edit.change]]
+line = 1338
+input_sha256 = "81e4bc9fd629395f546f7dee3d7e71e2658b8a03dfdce6218be85df9b5fe0486"
+text = ""
+[[source_edit.change]]
+line = 1510
+input_sha256 = "f217dcba488016c6f83197db4fa50786f8698f0564e64e2b8cd86e023b01c049"
+text = "# Host-only frame v0 gate. No emulator or external effects. Run on build_host\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/GRAPHICS-DIRECTION.md"
+input_sha256 = "3705ea5a45bb273e6ace179894aca1a92765e538a3651e4e097a04bd6f72791f"
+output_sha256 = "59d8ee1c8fa6c710f20cf6ddfb661761de1bf6d4ad14b628f742fedba7653d1f"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 12
+input_sha256 = "22f068faab725694781ac25d4c49d2c635b78cc8dcbc4985fee65bdae9741102"
+text = "G0 contract/reference review in coordination record #127 is complete; its artifacts are\n"
+[[source_edit.change]]
+line = 14
+input_sha256 = "9cb804b92ad9c818c866065fb32910a92018abcdf4c0f6698f730071fa15355b"
+text = "G1 exception in coordination record #128 now has an experimental copied-frame kernel\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/MWM-G1-PRESENTATION.md"
+input_sha256 = "01c2500127f98e07cb372454320521628a9e3bc2d4a204f3c6203a726d7550e8"
+output_sha256 = "74e6958cd06f2302eebcc79b1704ca19d2f071715dc82abc6682d665cfd109b9"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 3
+input_sha256 = "041098a28bdf2a751b6bdcf421d941fa36f61bb61bd30fb33c4d8e34a1ef9b90"
+text = "Status: **private `mwm-experiment` component source is integrated at `412d6eda`; whole-G1 runtime acceptance remains open**. The current observer correction is evidence-apparatus only. This is not supported ABI, a production compositor, or a claim that QEMU, physical hardware, timing, or client composition has been qualified. coordination record #128 owns the experiment. `KERNEL_ABI` and ordinary program routing do not change.\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/NATIVE-PCM-EXPERIMENT.md"
+input_sha256 = "d418b32535f55ef7f7964a291fe645e53deec06dad4f29c63ab26664b3600b9a"
+output_sha256 = "770d5d22ad301e10df01782e3a1f526655becd75424d25dfc8cf2c6632e13e24"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 24
+input_sha256 = "48d5371b553f4289ea89ec6db81b56a84a5aa278ced39e8614e296f05b093d1c"
+text = "Use the canonical experiment runner once available; do not launch on build_host's\n"
+[[source_edit.change]]
+line = 26
+input_sha256 = "944d50e586bc709cea19e953b4aac9359e01774c0384764458447812a39fb41b"
+text = "hearing on client_host. No capture-side stream is exposed to applications.\n"
+[[source_edit.change]]
+line = 144
+input_sha256 = "790c8f9db74a25c696d08764cbd9812e720a2bb5aa0c31ae95e864500442bee2"
+text = "`3b2d182d-be73-4897-9002-c2f299b6e4ca` on execution_host (QEMU 8.2.2/KVM, worklet\n"
 
 [[source_edit]]
 component = "kernel"
 path = "docs/NATIVE-USB-STAGE1.md"
 input_sha256 = "0b6d94f4b9593c97a200831c3c32845e5929f4a7d2df222bfb8465526da95457"
-output_sha256 = "c8cd249a81b861dda9b89efa361a0a89adb24b20c1e416292adcbc9d6140af6f"
-reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+output_sha256 = "de9b346a2adea4e2db8873400dc694f5d7744635c473cb929797f418bf733e26"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 3
 input_sha256 = "3f0b26c2d9f9a57a2624cb96bae579cc1be8beeca4532d9a63783300e156d73c"
-text = "Tracked internally.\n"
+text = "Issue: coordination record #37.\n"
 
 [[source_edit]]
 component = "kernel"
 path = "docs/NETWORK.md"
-input_sha256 = "e7a804b054eca264c3719032d901f8f60a73bafe1b7f706adc687ed26aea911e"
-output_sha256 = "25ba3acdc79a0e63a5aebc260f5c54242d98e9fbf6d7fa92968be74b9b08c0d7"
-reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+input_sha256 = "d0790baff0d13b316f0bad4f115b0c1f6a2b9af272fe2a449312447caa0aef31"
+output_sha256 = "e0568f1768e788602b57af5fb2c2d1a714ea291ff447f76dbb7471927a01b5dc"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
-line = 294
+line = 125
+input_sha256 = "ad8543ca4fb948810c32a4b299982fbe2726aad3f35c7ff6bbacc0a1e0ee0f31"
+text = "arms only inside the declared VM envelope (a KVM guest on q35, reference_host's\n"
+[[source_edit.change]]
+line = 144
+input_sha256 = "c3f95836a1fcace0c76fde890c4b7fc83863c958c35fd49ddcdb5f054e4433f1"
+text = "FCS. This is reference_host-vfio development evidence only, and the transmit-hold\n"
+[[source_edit.change]]
+line = 318
 input_sha256 = "62e6810de7173d6e3211d5a7f2dfc8f780cc894143e5f1cac352c9623d03acd3"
-text = "consumer recorded in the internal tracker.\n"
+text = "consumer in coordination issue 41.\n"
 [[source_edit.change]]
-line = 360
+line = 384
 input_sha256 = "08a027b79b0daffa8ff0d57fe4d89332000497d527f3120ca436b1904d3d6269"
-text = "frames late. Measured (recorded internally, QEMU 8.2.2, Vultr bare metal, three\n"
+text = "frames late. Measured (archived work item, QEMU 8.2.2, Vultr bare metal, three\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/OPERATOR-OBSERVATIONS.md"
+input_sha256 = "76f6f8e413357cb24259bccc2153684b76dace9f9c4ba9f21b074c6a39e44d9d"
+output_sha256 = "1851f024474778c60294935fe51ea45ef706d8b732e70556cf3a8768db2a9a39"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 64
+input_sha256 = "f82f5e30603e0161d8f0b648d287be28bbfdb62bb0fb68eee470359b6205fd61"
+text = "The accepted hardware_fixture RTL8125 driver is preserved byte for byte by this slice.\n"
 
 [[source_edit]]
 component = "kernel"
 path = "docs/OWNERSHIP-BOUNDARIES.md"
 input_sha256 = "f0c0b192a6c99dd504709bddc75576ff1fd0e6d801126fc11e6594ca3e270376"
-output_sha256 = "5205672596a387a3150f3595cde37c38b1826bcf58b7965b10d81ebbdb694233"
-reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
-[[source_edit.change]]
-line = 250
-input_sha256 = "e727a63dbe8cfc49245504807c4e9a29e7e505f1f99d1b71a441ee35624299c3"
-text = "existing native-storage lane, recorded internally;\n"
+output_sha256 = "2e7843ce9246ec77579dd60c3b441852e30667aa53d72e9458aae254d4d76069"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 251
 input_sha256 = "9475850f6ab47d4fe094d182d63f1e20842834ccc4390a25cf5b25ac3fa3f936"
-text = "this note does not admit a second lane.\n"
+text = "item `archived-project-item`; this note does not admit a second lane.\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/PROCESS-STARTUP.md"
+input_sha256 = "acb68ca831e1bada1dda3b2dfce483cc17a6f0246997eb021e35b8407a6882e2"
+output_sha256 = "b7dd95648b2392c48c255ee4a5a176deb5e95e3708253544a1623c6dfd4c3275"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 805
+input_sha256 = "248b4a46b611c0e67d207bbfc4db19a1eaab81660056d31ccbe6b9720d6bb072"
+text = "hardware_fixture input/display, safe hardware transfer or post-effect rollback.\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/RTL8125.md"
+input_sha256 = "b3e0b2f0c4bee5afcc33c5dc084fb55b7e17f7bdc96b5ebea6da43ba6bd746f7"
+output_sha256 = "b906f8d17777036d5a6f06ee702212bb1e2ee8d34f5f4ffc280f1a1dc4374367"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 3
+input_sha256 = "61dddb594f58cae964a8219c4612dec355f433efeb8e641dc2fedb55ae7c2bc6"
+text = "coordination record #109, lane `lane/rtl8125-109`. Development evidence on reference_host's\nsecond RTL8125B passed into a KVM guest (`reference_host-vfio`), not hardware_fixture hardware\n"
+[[source_edit.change]]
+line = 4
+input_sha256 = "e6caa9a33d45be0d69ab1233937037af9fa68d4c64c3e4a78d1e7ebc11a81171"
+text = ""
+[[source_edit.change]]
+line = 11
+input_sha256 = "a627b27c14dbe3b86c1657e27bf411d5c052a4bfac44f3a59b85dc18c7690cdf"
+text = "`archived-occurrence` with SHA-256 sums. The one\n"
+[[source_edit.change]]
+line = 105
+input_sha256 = "28469d4a0fb5ba5f50f58464bec886b527f234a4dedd32605564aff763c1d464"
+text = "  (8086:29c0), which is what reference_host's `absd-vfio-guest` presents. The\n"
+[[source_edit.change]]
+line = 118
+input_sha256 = "ec1bd0a7b0a6a1fcd14cc04edcce46f953c0a68728be4d00ff265fac204f500e"
+text = "  contains it. That containment path has not yet run on any\n"
+[[source_edit.change]]
+line = 134
+input_sha256 = "63e449b9cf92d0b25467176ee57e05eff3a275bbe1b65ce112b69812e8d93413"
+text = "  the external precondition, and the evidence label is reference_host-vfio. No\n"
+[[source_edit.change]]
+line = 144
+input_sha256 = "74aab3ac684dae7b4cfad8424925ce1b788d7489c41ec453886a99018e0cc725"
+text = "  bounded) on COM2 for the run harness: reference_host's `go-agent.py` reads the\n"
+[[source_edit.change]]
+line = 148
+input_sha256 = "b0f4dc9748ee76e8a692beb9ed6c3b61d848691f35a3ef7a3515ed0a5be15783"
+text = "  Control immediately before setting bus mastering. On reference_host the register\n"
+[[source_edit.change]]
+line = 173
+input_sha256 = "af791d6c8afad5ce47bc447b0d45ef19d2255605c7e39c082d3163bb9f220202"
+text = "  quarantines the memory. rge treats both waits as non-fatal; on reference_host a\n"
+[[source_edit.change]]
+line = 213
+input_sha256 = "bf8ca5175bab923be9dbd6ec47bb74ebea8ff6c1654ba087abbc4bb1502abee7"
+text = "  based on hardware_fixture's actual hardware and reviewed independently, before any\n"
+[[source_edit.change]]
+line = 228
+input_sha256 = "aca57b2c98cc783ec096a1097f9e570b4347a62521c0473debae9e23b9058e01"
+text = "chip. The model reproduces what reference_host's 8125B was seen to do (address\n"
+[[source_edit.change]]
+line = 242
+input_sha256 = "9eb021067f843c3580dad96c0da9c3bc556d693807b58b71e2fdc1e6fc14bf07"
+text = "- **Descriptor unavailable (0x10) alone is not trouble.** On reference_host-vfio a burst\n"
+[[source_edit.change]]
+line = 247
+input_sha256 = "7d0fb43479c8f670f372e9fa5f06989d6918c73f777b9082a8cacc52dd8084d7"
+text = "  exhaustion reference_host delivered frames out of order with only this bit set. A slot\n"
+[[source_edit.change]]
+line = 269
+input_sha256 = "84a67b336abbe81192da6d2ca2121a8f67813762558f3ce3d60954aa287bf1d9"
+text = "What the round-1 experiments showed about overrun (x1-x5, reference_host-vfio, n=1\n"
+[[source_edit.change]]
+line = 306
+input_sha256 = "ef72789ef707ba4f8f554a15179d81da9ec67e52ac36003a423e8785ed4c1033"
+text = "On reference_host the untouched PHY advertises 10/100 after an AC power-on and\n"
+[[source_edit.change]]
+line = 311
+input_sha256 = "6a6969d8a7c5d869d4e2bf77ecfaf40934eea8de5e195fda88cdd66484fc233d"
+text = "## Observed on reference_host's 8125B (2026-10-30, reference_host-vfio)\n"
+[[source_edit.change]]
+line = 313
+input_sha256 = "031efe6a311108c28577469d146dfa48ecd1ad1adfbeda1b28076503cc68aefd"
+text = "Run logs are in `archived-occurrence`; the lane's\n"
+[[source_edit.change]]
+line = 350
+input_sha256 = "d9fafe102c6fc30490fa5b2823c2ccd1d42fb7fc28bff119e847dba1fdc8e8cc"
+text = "## Lane 2 observations (2026-10-30, reference_host-vfio)\n"
+[[source_edit.change]]
+line = 382
+input_sha256 = "f477e19d6d5bd6bdc79e0e2e39e5c224560b530bdd31b6eb16560cf5e2bc1e30"
+text = "placed using the capability list of reference_host's other 8125B (01:00.0, the same\n"
+[[source_edit.change]]
+line = 393
+input_sha256 = "ec1a67868f131d5a34fe7dfa2df94211c3387308372ed643a397c9256a4f5414"
+text = "| `rge_hw_init`: CSI 0x108 \\|= 0x00100000. Comment: \"Set PCIe uncorrectable error status\" | AER cap + 0x08: **Uncorrectable Error Mask** (status is +0x04, so the comment names the wrong register) | Bit 20 masks **Unsupported Request**: the function stops reporting URs it detects, through AER logging or error messages | None shown. ABSD has no AER handling. No AER message for either function appeared in reference_host's kernel log during any lane run |\n"
+[[source_edit.change]]
+line = 403
+input_sha256 = "7bbeb470f39f456c2a00f45a2fafb3c84bd9c0dcb364b86be8a836f9f80a25eb"
+text = "- **All three:** they bypass VFIO, so on reference_host the host's view of the\n"
+[[source_edit.change]]
+line = 410
+input_sha256 = "566e00c99b0b34fce50f19f6b03376edc72191423a5e85fd3089469310a47535"
+text = "native AER control on reference_host (`_OSC: OS now controls [... AER ...]`), and no\n"
+[[source_edit.change]]
+line = 419
+input_sha256 = "ee23eb80eb3aab8d5855452bd02afd50cf6bc203dc93807c194d7b65c4fa49b2"
+text = "## Corrective increment observations (2026-10-30, reference_host-vfio)\n"
+[[source_edit.change]]
+line = 421
+input_sha256 = "193715b5587b264f850be4f7bc31dbe04b6eee12a2a50ba1dfc0d1fda187fd14"
+text = "Logs in `archived-occurrence`, record in\n"
+[[source_edit.change]]
+line = 440
+input_sha256 = "b1928325ba4fb36791ead92a499ecdc8d17310706a5db4a4e19a31831fb2f7cf"
+text = "  IOMMU; bare metal is refused; this is reference_host-vfio evidence only), a safe\n"
+[[source_edit.change]]
+line = 467
+input_sha256 = "79f51223dbc38a3cf1d551a12a496344c93182607e15eefdb2c451b46ea9fbb4"
+text = "  order over the fake `Io`. A reference_host run that counts interrupts against\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/SELFHOST-BUILDER-LATEST.md"
+input_sha256 = "bd26a17cf9f3b4e9fd35986b2898cfce26200d140c86e3d8b965c2b2fdd98d8c"
+output_sha256 = "3b4bdf58d1451aa982d472a7dac88afd61e2e63a87f4482a8da4998df4475a13"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 12
+input_sha256 = "3bbbf04416c871b5921c87ae748df7f806202cde1a3046a6e2d10af11397c623"
+text = "`builder-profile` (coordination record #115 rework, owner decision 2026-11-01). The\n"
+[[source_edit.change]]
+line = 81
+input_sha256 = "00627bc35b1b31000fc2cd5c442994725abd836bef89fe830e35bbaa5b98e1e6"
+text = "Evidence: archived-occurrence\n"
+[[source_edit.change]]
+line = 175
+input_sha256 = "3a3983ed49626f5ca755fe57d3b740a2873652420ddecef260b1a81d3a3f6c53"
+text = "Evidence and reviews: archived-runs/selfhost-20261027/toolchain-closure-01/perf-01.\n"
+[[source_edit.change]]
+line = 198
+input_sha256 = "3210fd1d3ccb611ff7554a0f6e01baeb7b961d640f62fae5929c4afbded8717c"
+text = "Evidence (archived-runs/selfhost-20261027/toolchain-closure-01/perf-01 and served-01):\n"
+
+[[source_edit]]
+component = "kernel"
+path = "docs/USABILITY-ROADMAP.md"
+input_sha256 = "9e1510f3580597e26f380ba333eb3a8a093359b21d934ffec295b42db00dd3e3"
+output_sha256 = "695437dd2eb20aceb1872f5fb7842eb23024bcbeb9155fb617da944488012584"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 4
+input_sha256 = "f77aa3e76f359c53b36a9408fdc4e7a0601a6455e590d9eeff92ae46c3712c6b"
+text = "workflow in coordination record #59.\n"
+[[source_edit.change]]
+line = 7
+input_sha256 = "fcaddc1bc493976f538fc9201f65fe1d0acef03899a6cc6ea5dcdb3834b533a8"
+text = "[steward handoff](archived-occurrence)\n"
+[[source_edit.change]]
+line = 42
+input_sha256 = "288cf24d5811a264f3cea05518f644da6a9e144f6999b8775618f6653c3e5324"
+text = "coordination record #125 is\n"
+[[source_edit.change]]
+line = 44
+input_sha256 = "bd6d7ce3473edc6ba9119ddb2a775f1c2a1e738b9ec5fd61153b762498fe7e6b"
+text = "These scopes do not assess\n"
 
 [[source_edit]]
 component = "kernel"
 path = "docs/USB-PPC-LATE-TRIP.md"
 input_sha256 = "8efdd40942a7a1f8da73ad7b79f678aff0f8c8ad06311adba985675fc7025d7c"
-output_sha256 = "48384c14cc552811c920bb6b1e9c4e123c104b2af28b35bc9c93c016e3a3fca3"
-reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+output_sha256 = "7d287da4353881b1eecefbb387bbc2ae30d698f96d96375e8bf4dff83c9ef37c"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 3
 input_sha256 = "4d4f6c29d586881f65bb74c513c9f8bff88b55a0a86079881b27435a906fa60a"
-text = "B-M1 is admitted under the internal USB tracking record, from `26854f60`, for a kernel\n"
+text = "B-M1 is admitted under USB archived work item, from `26854f60`, for a kernel\n"
 
 [[source_edit]]
 component = "kernel"
 path = "docs/USB-PPC-LIVENESS.md"
 input_sha256 = "afda8ae3f7065d2697f56fee1090c4a9d75e79bf1c924d566f210f2c9e33b706"
-output_sha256 = "88e178afe79d3facce733c90f83489f06cf6ca079e40d97cc8450e10a6bfb038"
-reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+output_sha256 = "1032ef2f26253a8e2460bc509eba8865c19636ad7c36f8a78e03437584f4c944"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 3
 input_sha256 = "4862c74f50a02023ae7e3759d1bc891083b7593d675028271ca25f1b0f652104"
-text = "Admitted by the integration steward in the internal tracker on 2026-10-17,\n"
+text = "Admitted by the integration steward under coordination record #37 on 2026-10-17,\n"
 
 [[source_edit]]
 component = "kernel"
 path = "docs/USERSPACE.md"
-input_sha256 = "39085c40065884526c84ecbb1b5a0b685bc21394c0acef58b695ffbf20d0c513"
-output_sha256 = "870d790c79ca1dc06fb94e40bc0ec61853cb7c587fadc9342a701014598b655f"
-reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
+input_sha256 = "c48dcdb99ec5f51440ebd646a487b3e03fd9cf2a672b2e027a71279a5de6ee01"
+output_sha256 = "ee5250e9ad6c9ad703edc054213649f8437ad8e7d61bcfed98a9ed40b602bcc4"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
-line = 75
+line = 117
+input_sha256 = "1d562d7c82884c3cb2b64f464df34e4587fb630b6dc9086b47c8049c47c6d570"
+text = "Formalization consideration (kernel archived work item): the proposition is that\n"
+[[source_edit.change]]
+line = 135
 input_sha256 = "f009769178a82b2c771ef9dbf7f3cfd74a9f81457655fdccb116fce0bab13e92"
-text = "(`make ENROLL_STREAM=1 durable-iso`, configuration decision recorded internally\n"
-[[source_edit.change]]
-line = 76
-input_sha256 = "1e32782c16d6db0ad902bd59d4d64f6af51a0c5d3d591efc021b39db4ce24112"
-text = "on 2026-10-16). The choice is made when the image is built, so no boot option or kernel\n"
-
-[[source_edit]]
-component = "platform"
-path = "docs/ENROLLMENT.md"
-input_sha256 = "2d60d62d84a37746b4c01020a9c6c86428afef90c98015fb47c046352b1a08f1"
-output_sha256 = "940003c07d1ca02cde8cc858bc503ce125b8ecc7f4aba7990097b0995a1b52f5"
-reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
-[[source_edit.change]]
-line = 18
-input_sha256 = "c66bcd6855123a221fc757921775b3299ede019bac1a7a333b1252976214d30c"
-text = "The configuration decision recorded internally on 2026-10-16 makes the enrollment image\n"
-
-[[source_edit]]
-component = "platform"
-path = "docs/NATIVE-ICMPV6-FEEDBACK.md"
-input_sha256 = "c718e6164a50c4b3734dd0d83f5aab31a1ce3965630019b32f009a93e15b6fd2"
-output_sha256 = "1a6eff870f16645f6f01149e4b0dc0e52050d23a9cc2fd8a1f6f0d9a039c4b50"
-reason = "Remove internal tracker identifiers from published Markdown documentation only; preserve source behavior and run UUIDs."
-[[source_edit.change]]
-line = 6
-input_sha256 = "c386fc278a8a34346a26b5e2e0d7dd2c891a49a93308df690cb47e45c08aeb8d"
-text = "and tree. Canonical coordination is recorded internally. This source task\n"
+text = "(`make ENROLL_STREAM=1 durable-iso`, owner ruling 2026-10-16 on coordination record\n"
 
 [[source_edit]]
 component = "kernel"
-path = "src/main.rs"
-input_sha256 = "eef57829e7049d17e6c024851467e53faf8bb998a5df5b42b5dcbe97244e6a92"
-output_sha256 = "f4f6087e597c2e8d5407c9b2437cf67561fe6b928416d345153ba1e0c602605d"
-reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+path = "provenance.toml"
+input_sha256 = "494beb0e7351c2f95107bf6ef27d52d64c855cddce1bcb1b3682d1496406d4e8"
+output_sha256 = "08f69271b410c70ce6e5d681e8cd267a3728db31a7764168033df914638b6227"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
-line = 1035
-input_sha256 = "e3ef9352926884af64187f80972ecff3d64f02643ae0a31d7cbc1bcf2cb376e0"
-text = "        // AHCI census slice 1: a separate census entry, before storage or\n"
+line = 90
+input_sha256 = "dbe4dcbcec9626790a6ec2ab97921457e60396f1db278d2566feb76a9f9c7615"
+text = "# coordination record #109 (docs/RTL8125.md). src/rtl8125.rs carries Kevin Lo's ISC\n"
 
 [[source_edit]]
 component = "kernel"
-path = "src/survey_facts.rs"
-input_sha256 = "2d375da425887ac55bc20eacb33c9765b56d94f445eedb873f0c792efb4ca5e6"
-output_sha256 = "955c41e2e27bdbbce2c7d6c238b49e0c363f1bc7802944112230f58008c05b9e"
-reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+path = "scripts/acpi-reset-observer.py"
+input_sha256 = "7671e1b82f7d5a8f425045a933588cdab16f8c0b26e59455399208aa8b46e9a4"
+output_sha256 = "aec59bb970a4c1b47b3075940a6b8363b06acfc9bf68895905d4ceeba048ad1c"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
-line = 513
-input_sha256 = "b08f324b4002e05d36b0ab0dfcc7a3c5b864486f066c6b9f438b3c0b29dea5d8"
-text = "// ATA IDENTIFY DEVICE decoding (the AHCI census): pure word\n"
+line = 109
+input_sha256 = "f4decf78c91a85c848011ffd6562bd9ed21f59ba4c5900321d7a8abd286221fc"
+text = "    protected_host = os.environ.get('ABSD_PROTECTED_HOST')\n    if True:\n        if protected_host is None:\n            raise ValueError('set ABSD_PROTECTED_HOST explicitly before execution')\n        if protected_host and socket.gethostname().split('.')[0].lower() == protected_host.split('.')[0].lower():\n            raise ValueError('QEMU is prohibited on the configured protected host')\n"
 [[source_edit.change]]
-line = 832
-input_sha256 = "8946cc155e493faa204efc0e421cf07673d5a2e885869e26f6d29c0ff1052c20"
-text = "// AHCI port engine stop handling: what the census may do\n"
+line = 110
+input_sha256 = "7480ff641012c629e0cb94fcf01d3bb58f32b00f3682741eef37687cbb5dd130"
+text = ""
 
 [[source_edit]]
 component = "kernel"
-path = "src/ahci.rs"
-input_sha256 = "2e2fe8bb5c64fe872b45b26b4e2af64934cd10be8f3b92afd2b56ef05831ec1c"
-output_sha256 = "da69845d78a10adc3de6da17754b30ea7b993593b443ca2718cd62f4ccc2c43e"
-reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+path = "scripts/acpi-test.sh"
+input_sha256 = "d3be0aec2a4fee66cb9e2a34edcac5ffed9fa3ea6bd879296c8f4f958b60ce88"
+output_sha256 = "6fcda606b335116fc7ca9075101e7e492406297b4cd62aaafe98ba8188df765f"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 236
+input_sha256 = "f7707de3297062fdfe6125dea159d60a387f67c250a477bdcbaa2e4ebdb955a1"
+text = "# The review's reproducer (coordination record#111 review R1): a capability offset\n"
+
+[[source_edit]]
+component = "kernel"
+path = "scripts/ahci-block-test.py"
+input_sha256 = "f28a93f1ec34379f3ffb03d1150b7526053f1233653bd3b646254fe251f82b8e"
+output_sha256 = "a549b5f66a4447788cc7a40bfe6b30592a66a3c41b4f959a6f75a6ed1002ad2b"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 2
-input_sha256 = "149a9cded60e063ad2f3dc6af019816fa2fe55464156df77197fbf42187f2441"
-text = "//! with IDENTIFY DEVICE alone (AHCI census, slice 1).\n"
+input_sha256 = "f4561767af3e13187afc66d19c42aaf527202c7ce956338ca37419761fba5355"
+text = "\"\"\"QEMU qualification of the AHCI block backend (coordination record #45, #123 step 3).\n"
 
 [[source_edit]]
 component = "kernel"
 path = "scripts/ahci-census-check.py"
 input_sha256 = "cc20c220e7bcca3a5785c3f927f318fe890f187ba8a2f0546aa1d8a3b1036d6d"
-output_sha256 = "4a1b76cad08b50d75368fcd3597be2688acfb16b6a323a578b1368ef7b035369"
-reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+output_sha256 = "f2d7f08331ed9fa643d5d49fd83a22d94ba1652f2aea2e095e8a30ece6665f93"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 2
 input_sha256 = "7968dfe8b26358060bb45d4ad84425128636585ebb01a3fe2e96ba8cb0c96f91"
-text = "\"\"\"Gate for the AHCI census entry (docs/hardware/SATA-AHCI-CENSUS.md).\n"
+text = "\"\"\"Gate for the AHCI census entry (coordination record #45, docs/hardware/SATA-AHCI-CENSUS.md).\n"
 
 [[source_edit]]
-component = "platform"
-path = "ssh/Cargo.toml"
-input_sha256 = "2cd51eed3ccacd73aa344408c6049fe4dfdaa63a9c3b240ab1f3dc2db6c8e033"
-output_sha256 = "106195da818e39b54428abf213b113a5c4a78ade606c777b5db9f92fda24571f"
-reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+component = "kernel"
+path = "scripts/amdvi-enforce-test.sh"
+input_sha256 = "fda254407c25e34a06a568cd1c60ab84d661e380eefd1e1334b1fe7a14411aa7"
+output_sha256 = "6b1bbc451f71f57ffded134c811bac6aeec411582608325efb657630c363fea4"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
-line = 31
-input_sha256 = "5794d5579c7e0674d073ef8a388707e2d8649ab3e8303c5be7275b2f08f33437"
-text = "# The worker of the dedicated enrollment image (slice A,\n"
+line = 6
+input_sha256 = "d53f71c43ea153060d1c26af9912031ac78538bc066cacef10b116d53f1bd375"
+text = "# execution_host), with dma-remap=on: without it QEMU 10.2.1 never translates\n"
+[[source_edit.change]]
+line = 27
+input_sha256 = "b662231099bde9a3659f24d5e91d5bbd62cf6aebed2b8a852bc121b5616c426c"
+text = "# QEMU may be a wrapper whose own stdout does not reach us (execution_host's\n"
 
 [[source_edit]]
-component = "platform"
-path = "ssh/src/enroll_main.rs"
-input_sha256 = "9405a9ff6f5c88b4a67cf033027b7ed017d770084752903dbe832cef75bebe92"
-output_sha256 = "86640a462c3274e48848eb062f77b73a4219e47846faacebacb6e3c3134e8393"
-reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+component = "kernel"
+path = "scripts/amdvi-oracle-smoke.py"
+input_sha256 = "04b55fdfc6c539c6f2cadd3c63a540ae424a5c9bcf3ab5992b4c83b7c76b733b"
+output_sha256 = "29e9fe77cd0b7d13c59a60c66ebc40b1576524d36136e4046be81a2d6454efc5"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 170
+input_sha256 = "dfacc8157b051430beedf5f65eb89668811e4b66885d214f8030e967b376b715"
+text = "# QEMU may be a wrapper whose stdout does not reach us (execution_host's\n"
+[[source_edit.change]]
+line = 208
+input_sha256 = "fb9eada6b3f141bbe7fe061efd09ab31c91a125f9312a3f6e49229b11436473b"
+text = "# The QEMU argument may carry a wrapper (e.g. execution_host's\n"
+
+[[source_edit]]
+component = "kernel"
+path = "scripts/gpt-partition-test.py"
+input_sha256 = "9218f378f6e2a5e78294a79f1501f2cea73160ea1c87dee1e9eb23c11980aebd"
+output_sha256 = "0f2b773fa2c726a58ec0b0195f17108f8c6ff22c1007dda8aca475af8fb09406"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 2
-input_sha256 = "0316012590074378926f34eba27a1e42e11caac1ec84b3b110237f7105f43a28"
-text = "//! `absd-enroll`, the worker of the dedicated enrollment image\n"
+input_sha256 = "11c8121cf67cc6149dd579fd060f88e21abd42c2c45c95ffe27244c966939ef3"
+text = "\"\"\"QEMU qualification of `block-partition=GUID` (coordination record #123;\n"
+
+[[source_edit]]
+component = "kernel"
+path = "scripts/smp-app-matrix.py"
+input_sha256 = "2cc16a39e6c87bcd6a6fd064fe8e545949f74c1b1f6c13a84924fffaf6684328"
+output_sha256 = "f303ce154b334c13b1601f588baf5f89e0bd95f67a0576b37d1b2b1ecb6ae00d"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 69
+input_sha256 = "ee502a073e7149ddecae4409c5171981b65bbe371b192ffdbd2c6622f4acb14b"
+text = "        protected = os.environ.get(\"ABSD_KERNEL_SOURCE\")\n        require(protected, \"set ABSD_KERNEL_SOURCE explicitly to the canonical kernel checkout\")\n        require(self.kernel != Path(protected).resolve(), \"canonical kernel checkout\")\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/ahci.rs"
+input_sha256 = "13877164f488c79b99047852867b2edbbaeee64f7d36b4cd2166a6ca52999a41"
+output_sha256 = "e4456e15b127f31ebb623e67f03e89af731e9cd27802c1e9f5ff63986b9aaf40"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "149a9cded60e063ad2f3dc6af019816fa2fe55464156df77197fbf42187f2441"
+text = "//! with IDENTIFY DEVICE alone (coordination record #45, slice 1).\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/ahci_block.rs"
+input_sha256 = "439a03e190c5b78ee930950ab71c9bd92bfba24e149bfba3ada5b7d27ebbb521"
+output_sha256 = "77dc4acd81482e5cf5f58fe110b89e25c29c6009d6be6af49ac6177693bf00cd"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 1
+input_sha256 = "2afb9da887c9984251c9c65733ee0c42329ecd1da9e369b1b9c86e6bac6bcb4e"
+text = "//! One SATA disk behind one AHCI port as the block device (coordination record #45,\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/ahci_command.rs"
+input_sha256 = "11b8345e741d61b4e25e4af29421be1f518535a5d844e00fd1238ec73e45fb84"
+output_sha256 = "c3e6a78dfd2311dba4a83ea8be39cb14912106e73a91168b69d7fd9b793165f0"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 1
+input_sha256 = "18c387a40846553f6157bcce75e5e82bc57dbf5374544e72c892ebd3c8196f66"
+text = "//! The AHCI block backend's pure rules (coordination record #45, #123 step 3): which\n"
+[[source_edit.change]]
+line = 374
+input_sha256 = "877fd5da39fc06f41b967d6b6f831e284d7e9fb05fc4652cc8281582a208923f"
+text = "/// it by serial (the explicitly selected test disk).\n"
+[[source_edit.change]]
+line = 597
+input_sha256 = "e1ba0cfca929771791748a1edf4eeb36c90855c8038d302d9bdc182cc42e6de9"
+text = "        // hardware_fixture's FCH SATA, a passed-through Intel part.\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/amdvi.rs"
+input_sha256 = "3c650d9036509cab2cc82ab875aab59933ad422bd1e2e46a3a384357051f4bdc"
+output_sha256 = "00c2addd690e283cc56ddd34d3a03529ef10f44cc4e8e6814477f31a3b011b64"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 30
+input_sha256 = "f320bdb573895fdaacb9ae77f7688df5f6076f50c2988f55ddcec4b9d49bbc98"
+text = "//! - Admission (owner decisions on coordination record#111, 2026-10-30): the table\n"
+[[source_edit.change]]
+line = 577
+input_sha256 = "f9d96e29080062c36a13ff9eca823710289613cc555985424e4bc97e39cd11fb"
+text = "/// enabled, before anything is granted (owner, coordination record#111 2026-10-30):\n"
+[[source_edit.change]]
+line = 692
+input_sha256 = "2a624989267e31bf004b95c5337ba8dcb6440c8037ebc3cee7f3944aca795428"
+text = "/// Everything after IommuEn, in order (owner, coordination record#111 2026-10-30:\n"
+[[source_edit.change]]
+line = 865
+input_sha256 = "8b08b763200f61f73fdaaddc610441730a5ebdb6dbc65b2c80b159eba1e46a52"
+text = "/// decision on coordination record#111, 2026-10-30, conditions 1\u20135).\n"
+[[source_edit.change]]
+line = 962
+input_sha256 = "4fa33b0e99645d7e897f87c2e988b24a9a7508494a844a35a801ed336e822c0b"
+text = "/// The alias range over a range's tail (owner decision, coordination record#111,\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/amdvi/scope.rs"
+input_sha256 = "f9c6def8abc593a0a4d0733e040fe59d78f5819edace82d5fd9f72b52012f0cc"
+output_sha256 = "aee83c29d42affef799a314e8f748f4ca485fca7c7943aa4a351a62b9e107a7f"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 8
+input_sha256 = "0e4b02dafeb99e7646600579653c57ab5587c53e68d6bfd159aea9f166352686"
+text = "//! The AHCI sibling entry rests on facts read from reference_host under Linux and on\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/amdvi/tests.rs"
+input_sha256 = "786fb691f44fe9badddea8e5d30550f8a9172d9cdc33862ad46a9b6207ece3bf"
+output_sha256 = "048b2fa2d87d41f5b5209ed051350b9794d030348cd7922781c8ea229031f4a2"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 73
+input_sha256 = "6f21172fbdb6683c521b09db7f607c1ef4016306ee74740835e40576851c28bf"
+text = "/// QEMU 10.2.1's own table for q35 + amd-iommu, observed on execution_host\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/amdvi_hw/contain.rs"
+input_sha256 = "bbfe6de7e349884fc27b53a6c8cfa103d841cdc2fecfe1b3f0b2b9fdcaae3040"
+output_sha256 = "8db7c5548422b3decf04f43c4fccd084119321dce2c2b43fb4a5c688883e660f"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 1163
+input_sha256 = "1b0311fc14ae3d26f1eea583fc166feafbb74f5ecb5c97d49b4188b8055240e7"
+text = "/// hardware_fixture has no UART, so a photograph of the screen is the record. The console\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/dma_policy.rs"
+input_sha256 = "d8724755732a4f849f47fab9346fba7d209c8fd0a2b78b8513d2d45ae2cb889b"
+output_sha256 = "e91b37ffef3ca839332fd3dab230624ca82b4ab80c877bede47358e46e5d321c"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 36
+input_sha256 = "5989ac195f3b562c3656497955bae75e975305310f548f0df95abcb32b49d4e8"
+text = "//! every arm passes [`contain_gate`] first.\n"
+[[source_edit.change]]
+line = 411
+input_sha256 = "1891448ece0abd5b704d66112f0b9292dac261eb2b8b0ff7f252425b682a7434"
+text = "/// physical target is hardware_fixture's FCH SATA controller (#123), where AMD-Vi\n"
+[[source_edit.change]]
+line = 416
+input_sha256 = "7ac0f12ff1fe885c3bba68230cf6a542cbc4a397efbb03c4ec16645c112d4118"
+text = "    environments: \"qemu hardware_fixture\",\n"
+[[source_edit.change]]
+line = 447
+input_sha256 = "73516428d05ba491be1708f9afc09b6256ddc851a335d6e66c18e0fa967df257"
+text = "    environments: \"hardware_fixture reference_host-vfio\",\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/gpt.rs"
+input_sha256 = "7904fba390398371ccb9b8fa6a002f58d4deea619f0f8f5713af702db0c53ce7"
+output_sha256 = "870f3c3796ba5ac3412e2e8043108a5ac205560bf5680db16b5d3d27f404b29b"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "821892f7be66abc1ffc48edc770f668c9dc1a14eccf43e9596b8291ba6d48aff"
+text = "//! (docs/hardware/GPT-PARTITION.md; coordination record #123 step 3).\n"
+[[source_edit.change]]
+line = 41
+input_sha256 = "9266b9191e84c7cd92dae02a1d29ad165c1d1dcdd3b2ca947acf0ef27f47f33b"
+text = "/// The ABSD partition type GUID (owner decision, coordination record #123):\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/gpt/tests.rs"
+input_sha256 = "b931fd0112a67aeacdc94be092d53fed9f4dd77b5346977d57c91e9db1d2be6d"
+output_sha256 = "f7eb96e1b1a3a738e68f090dbe61e5bde32366bab90eb446fc97af98421445b0"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 683
+input_sha256 = "73962925edb6498dc3ab60f3ba93c8628db0a1c6ea5efde04103b131e44e28bb"
+text = "/// The second Codex review (coordination record #123): every used entry is checked,\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/ivrs.rs"
+input_sha256 = "cfab3f02b62830565c5e8166b124a580cbfba0b71aeb8f3206f6bd27782725c6"
+output_sha256 = "d778ed774f3348823e0a1b47e3016fbdb3ce69b7ffd9a14499a6a30dcea4c60f"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 36
+input_sha256 = "8cb68214876ae36561cf298bb3df7274c669b4acb50fbf6703b7eae9f617543c"
+text = "//! deviation (owner decision, coordination record#111, 2026-10-30; none exists),\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/ivrs/tests.rs"
+input_sha256 = "b27087f4285e78e372d7039cc554f6b7ce54f36478a84101460afa9ccef0f715"
+output_sha256 = "6d6abe445d9409e3dfa41ee0adf1069f7c18f075c87ab7acf080ca39a6d07f64"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 4
+input_sha256 = "0d36b2e27144d6a8105a164cb78faf28002ec2975c6f2a3a7735284ad82fb8c8"
+text = "//! backend targets (owner decision 4 on coordination record#111): one IOMMU\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/main.rs"
+input_sha256 = "9be556613ca976cf484a20c9c5a7c443e1fdee635385906322bcabfad833e803"
+output_sha256 = "1c3922c6981ca3acb9c6fc70461ef753e6fdb2a8c41ecafc6ab0f26eb224d62f"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 1215
+input_sha256 = "e3ef9352926884af64187f80972ecff3d64f02643ae0a31d7cbc1bcf2cb376e0"
+text = "        // coordination record #45 slice 1: a separate census entry, before storage or\n"
+[[source_edit.change]]
+line = 1294
+input_sha256 = "d2c84951030a28a63fe7493cd3a8c1056fd35166f6fb3190552096595e3fb387"
+text = "        // coordination record #109 S1 (docs/RTL8125.md): identity by reads only,\n"
+[[source_edit.change]]
+line = 3018
+input_sha256 = "2ed0f62c6944b5a7d024edd51da2dc6609c91bf15c10867ebf049c0a44f82193"
+text = "    // An armed RTL8125 must not outlive this kernel (coordination record #109 F4).\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/rtl8125.rs"
+input_sha256 = "04c0dfcbf2cfd0fb8b7f9dc784b23bf51febf95b878ca67f3adb7d041f4f2d1e"
+output_sha256 = "783645207804e3382df2376d0f84589e503622937902aa5ce0ba056a2e2292d3"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 476
+input_sha256 = "c53570b783e51a9c0439c77d3a603195fae2d135999f6ff65a7ad91a09e71a01"
+text = "/// coordination record #109 lane 2.\n"
+[[source_edit.change]]
+line = 576
+input_sha256 = "52f1b3b3aa23155060da522ac648dc3e35f85c4eb7d2fab8514bc95ed590fcc1"
+text = "    // than one speed bit has no consistent meaning: reference_host's 8125B shows\n"
+[[source_edit.change]]
+line = 1020
+input_sha256 = "5ea16bd404a2c31956a43e63512386029156b5c3d188301d5bc505e38baddc7a"
+text = "        /// reference_host's 02:00.0 as the earlier survey and r8169 report it, except\n"
+[[source_edit.change]]
+line = 1023
+input_sha256 = "591980b09cd8188d626eaf51f8d181847d464f99d5a18910218efee89c1229d5"
+text = "        pub fn reference_host() -> Self {\n"
+[[source_edit.change]]
+line = 1207
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1224
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1238
+input_sha256 = "2eaf2fcd57c5e824df66ec1c8014ee77acdeeb2e0c73c9613b907ffc7d7722bb"
+text = "    fn identify_reads_reference_host_and_writes_only_ocp_addresses() {\n        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1239
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = ""
+[[source_edit.change]]
+line = 1254
+input_sha256 = "1316b65dfc32644b99713099d9d06fbadeaebce4e22ded34ce5b2a1e9507f370"
+text = "            let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1259
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1300
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1321
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1345
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1361
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1381
+input_sha256 = "1316b65dfc32644b99713099d9d06fbadeaebce4e22ded34ce5b2a1e9507f370"
+text = "            let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1412
+input_sha256 = "40307b0016ff522816124f6c01d6970b623dc54f5801e1d0cb49b3f7bae4db20"
+text = "        // Observed on reference_host while negotiating from link-down; rge's order\n"
+[[source_edit.change]]
+line = 1431
+input_sha256 = "1316b65dfc32644b99713099d9d06fbadeaebce4e22ded34ce5b2a1e9507f370"
+text = "            let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1522
+input_sha256 = "1316b65dfc32644b99713099d9d06fbadeaebce4e22ded34ce5b2a1e9507f370"
+text = "            let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1539
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1549
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1572
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1585
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1598
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1602
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1616
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1620
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1626
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1635
+input_sha256 = "1316b65dfc32644b99713099d9d06fbadeaebce4e22ded34ce5b2a1e9507f370"
+text = "            let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1651
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1659
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1662
+input_sha256 = "bd26c0103d5f3c27b6a17f68a751d0e44f35277d11cd55fd2480fecb3ed3bffa"
+text = "        let mut fake = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1670
+input_sha256 = "8b54110c47ca3940536d2a766dea9a61d0d015a86e3fc1bbacb70e5ec430fe32"
+text = "        let mut tuned = Fake::reference_host();\n        let mut untuned = Fake::reference_host();\n"
+[[source_edit.change]]
+line = 1671
+input_sha256 = "167ee42de0d4a2895560b71c3e99ab47e8b47d129d642459f405682629a4858e"
+text = ""
+
+[[source_edit]]
+component = "kernel"
+path = "src/rtl8125_device.rs"
+input_sha256 = "af12e0c5f7880de02e9cc59dcf66a2f70e04ee26dba07b9360591d01760b1c8b"
+output_sha256 = "0d8cd1ceb81448002dc5c8a2eb88e5fa694a91f36ea33f58b371d831812d359e"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 1
+input_sha256 = "179f24900b2aa95af3df6a0dc9ed7142219a97859a72ad92d67497a278282dd9"
+text = "//! Opt-in RTL8125B bring-up entries (docs/RTL8125.md), coordination record #109.\n"
+[[source_edit.change]]
+line = 251
+input_sha256 = "5f1d463c981719923e649a45c3e762ae2f85e3819b7c5af40d5c81cd7188aed7"
+text = "/// Under VFIO the guest sees its own view of Device Control; the reference_host\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/rtl8125_pci.rs"
+input_sha256 = "c42a0c4812fac705f8284498112a620e264bd046de39bb3bd8b1c8f21058702f"
+output_sha256 = "0b27afcc9162a5c53a3fd74850875e163e3d5a67ba9f2967bc9a9df4e4749a53"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 284
+input_sha256 = "5680f2948256e074b40dce4e4c687190dc10386097a2d4b2b09a872a51816400"
+text = "/// QEMU q35 MCH, as reference_host's `absd-vfio-guest` (`-machine q35`) presents it.\n"
+[[source_edit.change]]
+line = 288
+input_sha256 = "daf06ed3cb72b1a54191604f4995837b72d2b319db10766bbe048ade402f29bd"
+text = "/// mastering: a KVM guest on QEMU q35, i.e. reference_host's VFIO launcher. This\n"
+[[source_edit.change]]
+line = 294
+input_sha256 = "38dca1fec540286d566d902aa0a28652b50213cb112492041e344262355ba223"
+text = "/// precondition, and the evidence label is reference_host-vfio. There is no option\n"
+[[source_edit.change]]
+line = 349
+input_sha256 = "9c6b48c5f47b490e4bb4501d93fb5075e9a2290952b5ec252c5643ddd8bb0b5c"
+text = "    /// reference_host's 02:00.0 as OVMF hands it to the guest: I/O BAR0, 64-bit\n"
+[[source_edit.change]]
+line = 375
+input_sha256 = "0ddcc86efec0bdc89874a11409fff31e76a3fe264059402e0eafc425de4b54d7"
+text = "    fn reference_host_function_is_admitted_with_its_inherited_command() {\n"
+[[source_edit.change]]
+line = 469
+input_sha256 = "ca993aed7dac4acb0675900dd45891ef028354acd707a47e8c21113f0ea040a4"
+text = "        // reference_host's chain: PM 0x40 -> MSI 0x50 -> PCIe 0x70 -> 0xb0 -> end.\n        let reference_host = [\n"
+[[source_edit.change]]
+line = 470
+input_sha256 = "f29fbce904fa77b2d06d40e212d0f73282d6a5a250183265b0a3575f237f1a93"
+text = ""
+[[source_edit.change]]
+line = 478
+input_sha256 = "639f6fea0b7f8979f262ffc71fffb3469ca99b584b172bf6aea7b90b6dda475a"
+text = "        assert_eq!(express_device_control(space(&reference_host)), Ok(0x2017));\n"
+[[source_edit.change]]
+line = 516
+input_sha256 = "ca86fb0a105bd532345be62e3eec655891f91168c4b48cf0f902e673dcd0ef49"
+text = "        // reference_host: PCIe cap at 0x70, Device Control 0x203f, status 0x0010.\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/rtl8125_ring.rs"
+input_sha256 = "9085301749c517ec4e8e55d5f125926f813f4112b5e999b7a59d0b75fd2adb06"
+output_sha256 = "dea2858e7000aed2b4812d848a285fa2da95e6a04bb27cb9816b000dc5f0098a"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 3
-input_sha256 = "284cc990f59dbb365354962cfbe4b7b81fb08bd83de300ba892b178c2330bdd2"
-text = "//! (slice A; kernel `docs/USERSPACE.md`, \"enrollment build\"). Init gives\n"
+input_sha256 = "3915672cbc984db94fba9744d309e1c99e89f63beeb1f390a340c8edb4b137d4"
+text = "//! so they run under `cargo test` on the host. coordination record #109 corrective\n"
+[[source_edit.change]]
+line = 40
+input_sha256 = "0692a03b2c6132737f9fbf767a8bcc5282106f435f4c185b9f07f4fb56350fc2"
+text = "/// alone does not: on reference_host-vfio the chip raised it with free slots and every frame\n"
+[[source_edit.change]]
+line = 414
+input_sha256 = "c716bd6f347d3260dafc9e8debad0d9284e40e19cc6682a2d245634ea2a75fc6"
+text = "                // with slots free. No slot left does, and past that point reference_host\n"
+[[source_edit.change]]
+line = 696
+input_sha256 = "321bc040d193b833a1d36cf9a9c2cbb569406cc3672dadb7d602e3a4cc981e3c"
+text = "    //! review and the corrective experiments observed on reference_host.\n"
+[[source_edit.change]]
+line = 793
+input_sha256 = "87f7f73dd72afabbcc6aa15def190ac73fd68d22d68cbb189339b06d8aa66aee"
+text = "        /// The chip receives one frame from the wire, as reference_host's 8125B was\n"
+[[source_edit.change]]
+line = 1082
+input_sha256 = "51141f2c61b64d4d51987c980c24d9795ef45aafcabf6044aa8cfa4d2ae5c391"
+text = "    /// Descriptor-unavailable alone is not loss: on reference_host-vfio the chip raised it\n"
+[[source_edit.change]]
+line = 1153
+input_sha256 = "f213a421ddf8d00e9e6ab8434a202cceb64c90d68de53506a23c2cff2113d15e"
+text = "    /// reference_host, overloaded past the ring with only this bit set: frames came back\n"
+
+[[source_edit]]
+component = "kernel"
+path = "src/survey_facts.rs"
+input_sha256 = "2d375da425887ac55bc20eacb33c9765b56d94f445eedb873f0c792efb4ca5e6"
+output_sha256 = "3fe15bfa533f5ffeee25eb76ccb8cc0f8e699541f85a5c84e1d7aa98154f22d3"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 513
+input_sha256 = "b08f324b4002e05d36b0ab0dfcc7a3c5b864486f066c6b9f438b3c0b29dea5d8"
+text = "// ATA IDENTIFY DEVICE decoding (coordination record #45, the AHCI census): pure word\n"
+[[source_edit.change]]
+line = 832
+input_sha256 = "8946cc155e493faa204efc0e421cf07673d5a2e885869e26f6d29c0ff1052c20"
+text = "// AHCI port engine stop handling (coordination record #45): what the census may do\n"
 
 [[source_edit]]
 component = "platform"
-path = "scripts/enroll-matrix.py"
-input_sha256 = "b6c3f3241932c159eed1cb0346eb552109613ad8db15574d27c9476d184a7b3c"
-output_sha256 = "100ccc2f7afa20755672e4df54fc520b0bc0e483607ade790c530ac5990e4058"
-reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+path = "README.md"
+input_sha256 = "874f0a49c1423097cd2c9b3c599178fa1bb507462ec614ea8b47ffaa6e8949f4"
+output_sha256 = "3fef59f1c5fc091579e7eb245af779ae136d22bd01d84b4e0a2603d41ca37c59"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 18
+input_sha256 = "3b00a519b300c2067dccedfcffb856ff3355a70f4c4dfb71571eb2c4d182863e"
+text = "(coordination record #63; WRITABLE-ENTRY.md \"Operator-authorized resume\",\n"
+
+[[source_edit]]
+component = "platform"
+path = "c/vectors/startup/README.md"
+input_sha256 = "38b631239108ecd0b40dab90da616cab46861f387f26b6fab2364188f5540c6e"
+output_sha256 = "b40cb65ddddc9ce118dbc66ad6bdcbcd7621d86baa993cdf387641ec25077664"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 34
+input_sha256 = "9b84c3b181b09789592c3dd7013cfb82659f5c5ae44444c840014c8c9a65040d"
+text = "    R=archived-occurrence\n"
+
+[[source_edit]]
+component = "platform"
+path = "cports/programs.tsv"
+input_sha256 = "9f03ef17f5e5a9a34b1532950cdbda337d6b158e737f698ca8fdf71fcaa5c626"
+output_sha256 = "9d629fc80d8febdd17fa159e0b5dfb426f040e6a8b3755d39b271c074c2e2370"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 8
+input_sha256 = "c505d3b785c65416fe0fefcff562000bcb19a5f303b5347f6b4859e3e1f730d9"
+text = "# archived-occurrence<name>/dl/.\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/APP-A-VM-RUNNER.md"
+input_sha256 = "e2613d2e4eeec2e538f5ed9471979c1cba2f1eff71a49caf9eb1578ca2924642"
+output_sha256 = "767fb4f183f4f7a5cd499e84b58467af91eda2453fa39a66afe595ebf0cc1465"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 24
+input_sha256 = "dc43fb89dd71391706bb655337139ae66ac10facc4262bcd248c229cf0e25d05"
+text = "Set `ABSD_APP_A_SSH_TARGET` and `ABSD_APP_A_SSH_IDENTITY` explicitly for the admitted host. There are no lab defaults. The runner disables SSH agents and forwarding, uses only the named identity, and retains batch mode and strict host-key checks. These inputs do not grant execution authority.\n\n```sh\n"
+[[source_edit.change]]
+line = 36
+input_sha256 = "a884f3af82ec3bc2f00792d2fefac13367124ac9668e9dbbc0948bdb9afdb5bd"
+text = "After media staging, the runner writes `ADMISSION-REQUEST.json` and waits for the admission file. Admission must name the same run and materialization SHA, a fresh resource sample and launch window, and the unchanged 14,400-second outer contract. The VM is not launched without it. One staging_host `systemd` unit owns the remaining sequence, and the staged executor uses the dispatch's absolute time bounds.\n"
+[[source_edit.change]]
+line = 63
+input_sha256 = "e694bcaef86f9f8b1e48483d2eadaa87b8fd99772ca50d054b0d8d367978b660"
+text = "Public evidence is archived before exact-key and overlay teardown. The staging_host staging root and evidence disk remain explicitly retained for build_host custody until independent review and the recorded closeout; they are not silently deleted or called absent.\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/ENROLLMENT.md"
+input_sha256 = "1539af08a9baa0376c57f9e91331f87bc3f2869ef186518af6fa3e574b4713ff"
+output_sha256 = "7b1e556c9a9edab31bfe90192a082466d5de38f34c8c4e2c1b8fd38de2704d0c"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 18
+input_sha256 = "c66bcd6855123a221fc757921775b3299ede019bac1a7a333b1252976214d30c"
+text = "Owner ruling 2026-10-16 (coordination record #31, slice A) makes the enrollment image\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/HOST-SDK.md"
+input_sha256 = "b842a49e91051dc6d62bce5b4f76fbbab7d77bd7674be5ab098f567cd29a6d1a"
+output_sha256 = "a3bba9bb20fd21e414ecb055089bb8dff10c6b7110c69d4301fdc688d7f93bfa"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 105
+input_sha256 = "ef2a3643330171a856b04caea74f51bb57b3668988a93b00425ca7e992686f49"
+text = "on build_host nor build_host's loopback address is a client endpoint.\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/INSTALL-DISK.md"
+input_sha256 = "7988f37becc00538b8782dcd9eb4abf26a5cad038a4acf929038b9c8dae534bd"
+output_sha256 = "922eabead140cae2f2f322427e372acce61f59116623d74d0f2476802ca26c55"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 1
+input_sha256 = "31064c75354193ed6e813b071840280d172b72da3f3150edbd60a2223816cb78"
+text = "# Installing ABSD onto a GPT disk (coordination record #123, step 5)\n"
+[[source_edit.change]]
+line = 460
+input_sha256 = "a9e557a81309ec5cd7264a4b9c268d767b832edd4d4a5a7ad3e2dd0a94b342e9"
+text = "  writable boot of a physical disk (coordination record #111), and the machine's\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/LOCAL-CONSOLE.md"
+input_sha256 = "735de40f134715b481f15c00d2556ab36218642a66ce3c574d68b74e964fbe27"
+output_sha256 = "94d0fab63b87227022fe807066104d3c5e6f93ae49b57248571e72c5aa1b0a7c"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 7
+input_sha256 = "8739162df4c2671564b2d45899ff19abcb200255ca1ba3ce6201790127ec4bfa"
+text = "physical hardware_fixture display/keyboard path still requires an observed hardware run.\n"
+[[source_edit.change]]
+line = 121
+input_sha256 = "9449c933d55dc904346dfc1bca076357e9d8bdc71d2a880b3a08173ca131f683"
+text = "composed operator image. Serial-QEMU success does not establish hardware_fixture usability.\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-DATAGRAM-LINK-FEEDBACK.md"
+input_sha256 = "2aed1ec3c676672b805ab066ac7a25d6a070c4062d9f80920c2d8172b77eb99b"
+output_sha256 = "a902cd1fb2b433c8de76e2d1a0985d5a9cc862d3235325b8fd257331b9e765b1"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 113
+input_sha256 = "eb874c79dd78acc798493a33095f35164498a63523a2d87f12108e0935840373"
+text = "under `archived-occurrence`, root run\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-ICMP-ECHO-BOUNDARY.md"
+input_sha256 = "1d53142f36353d3746252e4fafc05bff4718cef3ff2b2bf1d1db1522193dde68"
+output_sha256 = "386e463a27128c55f1f31cc7a812adad0322bcbc9b7ce145939de1715a8021cf"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 70
+input_sha256 = "0b6683c05949f57018477ce846a345494c86d4763a53ec0f09f0c0aa3b0f1e38"
+text = "No compiler, guest or tests run on build_host for this source task.\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-ICMP-ECHO-WIRE.md"
+input_sha256 = "9183256a5b99611a1a4d891ce2868a0ca22e680e58e85d591818898d77e1f70e"
+output_sha256 = "6730016ef4d08d37c5ce989e32382bd8144cde2925ca9f4d287fef7d7c3239b6"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 12
+input_sha256 = "1f26706d080e3b97b01814ec668eb39c8b5a8fb7593faf979dcb10c162b58f43"
+text = "operations on build_host. Root owns a separately committed independent Linux peer,\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-ICMPV6-FEEDBACK.md"
+input_sha256 = "c718e6164a50c4b3734dd0d83f5aab31a1ce3965630019b32f009a93e15b6fd2"
+output_sha256 = "08a0f49ef8a0f8847c7b3906dc556b42fafe1c570ff54430c1d5b4237defe036"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 6
+input_sha256 = "c386fc278a8a34346a26b5e2e0d7dd2c891a49a93308df690cb47e45c08aeb8d"
+text = "and tree. Canonical coordination remains coordination record #41. This source task\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-INSTALLER.md"
+input_sha256 = "59ff302222d2cf3c849b9f5cbdd681fd6107c7b70bd2d8575ef0fc5ce37b6173"
+output_sha256 = "11a68c5d54b1f9b91bf444b0ea5a930887caf9139068fbca4db96f1e91116969"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 8
+input_sha256 = "6864120672ad50716b31282101d4151f388c4fdf3d377ccc52e7c95657f311c1"
+text = "Physical hardware_fixture remains dependent on independently accepted AMD-Vi/named-disk\nAHCI containment from `lane/hardware_fixture-served-20261104` (`52cae2a`). That branch is\n"
+[[source_edit.change]]
+line = 9
+input_sha256 = "f7ef50e85195009d8230c48ed24c64a445ac3be670bca383d6ad31c34bae77b0"
+text = ""
+[[source_edit.change]]
+line = 73
+input_sha256 = "aa7fd9dad5942f590f3ec498dd6cb7adea6145523bd4dc0db5469fe04c51a74c"
+text = "requires explicit ABSD_PROTECTED_HOST and refuses that host; QEMU 8.2.2 is required. Use an admitted bare-metal KVM host through\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-TCP-LAST-REFUSAL-PROOF.md"
+input_sha256 = "9c9339103f9037a564ccb0d03dcfe14d85b3c3ee6e8552c5fec26ade5f7818fa"
+output_sha256 = "8ac7a736630b954bf7aafbd17b12becb8905bf1bf261e11b6892ff01b827abb8"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 4
+input_sha256 = "f612d51aba8ff43af4ad0571187bb27a6cd94ad66a108a6b3d45d63038f30c96"
+text = "#29. It implements the\n"
+[[source_edit.change]]
+line = 86
+input_sha256 = "5120b0d2c3f39a0e2b92518b1ab8965e0cc7c32ca75b2bd8d2abd5f39b1ba43e"
+text = "no compiler or metadata query runs on build_host during this source task.\n"
+[[source_edit.change]]
+line = 179
+input_sha256 = "f8078c5121e3cd00c55e41c96da51e7076815c38898e1fbb6963ab2d5a357191"
+text = "under `archived-occurrence` (96 members).\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-TCP-MTU-BOUNDARY-PROOF.md"
+input_sha256 = "614e3ba33366ecf1d1772c75e355e415ad8a48318e84299b38f74f7581b7ba2b"
+output_sha256 = "cf053dace8566c3273eb1118c9aa4f4867147e8366f83f933069556c895cf579"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 4
+input_sha256 = "692ab88d81d3c58ff695e85bc81d7f38e8bfafa151b738eef3d3df04ad77cc67"
+text = "#34. Source preparation\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-TCP-MTU-DELEGATED-PROOF.md"
+input_sha256 = "fa60f9017e3df4431677b8c72655bc6a3fab5cc5706bd1fb1e7186da90df4f63"
+output_sha256 = "9af305c8204a310cb796c8739bc7a915de4bc45afacd32de45f43a9812c9b2d1"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 4
+input_sha256 = "db713450927cac8ab7b9a17fdb32fb2796b1a3df2a552c81ab513c19a5447257"
+text = "#34 and reuses the bounded\n"
+[[source_edit.change]]
+line = 6
+input_sha256 = "725fb65082bdb26380be224b9b998970640d9314d3dc3d1795349f5f7fa7862e"
+text = "#29. No build, artifact\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-TCP-SERVER-BOUNDARY.md"
+input_sha256 = "63837fd67e0094ade5dfc76772cbaf8df57e0e9923fc074ef7502fc1881821da"
+output_sha256 = "b4740b1b8f243194ea6e6c2cb5e71064aedcb08ea1926eb5ac1f6006a6b6dc60"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 106
+input_sha256 = "eb88a265ab30256e4888765ed9c407b6cae7faebb4d87a8792ed4b80ca1342e5"
+text = "control or compiler executes on build_host. With exact authenticated offline\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/NATIVE-TCP-SERVER-PROOF.md"
+input_sha256 = "7610f95637824793c466bf9222cc8a686a8378b6047a3435c53fbbd0455a1b27"
+output_sha256 = "7204307eded8e26f463c3e354c7cdbbae94278fe3924382ea839337bdce7e90b"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 57
+input_sha256 = "6031dab9c5366cf630ee3f5edd51f63a28bb1d86def6a5e7cace2dbd1b1e2fe7"
+text = "under `archived-occurrence`:\n"
+[[source_edit.change]]
+line = 169
+input_sha256 = "379f13593f30da3e3e60ac5b65c6a104dbc7a25ed7b9740a5824ed157e5ca462"
+text = "under `archived-occurrence`.\n"
+[[source_edit.change]]
+line = 284
+input_sha256 = "05d28a59ff7fdba33a3fa4a1f7d6a250a1d574115635d7b0f8db955e89745944"
+text = "and pass in both variants; report actual full counts. No test runs on build_host.\n"
+[[source_edit.change]]
+line = 381
+input_sha256 = "66dd2ee77f9f3dcaa336f9861641fd3861abb632fb913489d10a8f9a8b4a5924"
+text = "The shared registry is `archived-occurrence`.\n"
+[[source_edit.change]]
+line = 414
+input_sha256 = "acd2a7a7aae5e4dd0a5e0f5e0944f5c605c912f60430eb44f962f9dd27140b75"
+text = "Coordination issue 29\n"
+[[source_edit.change]]
+line = 495
+input_sha256 = "be9ccb7b98a352f96de3d47baf7903e1173cc9c572d89d9d8705cfb53899a2d3"
+text = "# Run from the oracle checkout; these 25 authored controls are not run on build_host.\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/OPERATOR-RUNBOOK.md"
+input_sha256 = "c8fa8f920ad2d4303c1055d578e7aef7e10af2a22c9c4ce688e0069c786c66a7"
+output_sha256 = "a7c4c11f47e9fe4dbac3a9e0cb0ebfee626bf3f3492f0d42cc49a8eba029f8b6"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 1275
+input_sha256 = "0bc5d163abe868b9cbb30e1684d0c3919084b723a2d91787c70c849db003d781"
+text = "## build_host access to the enrolled local console\n"
+[[source_edit.change]]
+line = 1283
+input_sha256 = "227b9a771f59e9634185198e0c4973f49d7f059bfdca35fd809d2181140d0c6f"
+text = "From the **client**, use the existing authenticated SSH connection to build_host and\nallocate a terminal (replace both paths with their locations on build_host):\n"
+[[source_edit.change]]
+line = 1284
+input_sha256 = "37d007bd650c4e80235f5042280aa7287214f8dbe7024d2824e371e36ee6adf7"
+text = ""
+[[source_edit.change]]
+line = 1287
+input_sha256 = "7258e50d4568e4efcfec8a58bc51ce5f5b4830b8fa3e3b312447dbe89a26a6e5"
+text = "ssh -tt build_host 'cd /path/to/platform && scripts/boot-operator.sh --local-only --console /path/to/OUT'\n"
+[[source_edit.change]]
+line = 1290
+input_sha256 = "46c500e490c83f3f203f36f808f996c5de6e9280b1be69a8a7e8f0d37311611e"
+text = "The launcher and emulator run on **build_host**. The serial terminal is carried by\nthat SSH session; no public console listener or build_host-local URL is created.\n"
+[[source_edit.change]]
+line = 1291
+input_sha256 = "0ec2c36ebcf208179d63eea1133bf1bdea2ffd367e9aa44b696d5089206185e5"
+text = ""
+[[source_edit.change]]
+line = 1307
+input_sha256 = "54dbcc10729e843ad96497c0318a0df0846ffa5d17ac56f897c9763c9573276a"
+text = "After offline repair, launch normally on **build_host**, through the client SSH\n"
+[[source_edit.change]]
+line = 1311
+input_sha256 = "43e90dc64d6afc1db5f99748867b52d4e3594fd4bfb17975479920ba15e0ed6a"
+text = "ssh -tt build_host 'cd /path/to/platform && scripts/boot-operator.sh --console /path/to/OUT'\n"
+[[source_edit.change]]
+line = 1319
+input_sha256 = "4065215f3823fd8e51a70ddeb57dd4c8c495e9c38a36175eb523407abd4c0f04"
+text = "release and current resource admission; this example grants no build_host guest slot.\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/RELEASE.md"
+input_sha256 = "cd78141ffb70639320870210f431d6de0167762337562168f000f718103235b0"
+output_sha256 = "a67132bdfd9343b165a6a43be527aa47e83f18c8151c8552649991aed1c19b28"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 481
+input_sha256 = "db145175f792a3022feb1afd99fec1c54d2cc520809c7b59b29b93c4881dec52"
+text = "(coordination record #28): `128m`, the unchanged 128 MiB default, and opt-in `2g`, a\n"
+
+[[source_edit]]
+component = "platform"
+path = "docs/WRITABLE-ENTRY.md"
+input_sha256 = "9197777188a09462ce4f2d09ad45bc3749dc1e01976082c7978fd378f265c38c"
+output_sha256 = "8e8ea715071412dd2d5e1d54171edab52e97c828144b98f3b2b6d1b206f39a12"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 12
+input_sha256 = "02a1d22c1f4d64d503e807baebbc10e63e21de93a53d6fb9e8e8321434e7f452"
+text = "is platform 15's \"Operator-authorized resume\" below (coordination record #63): an\n"
+[[source_edit.change]]
+line = 122
+input_sha256 = "45d756ccb5a3e27e1841d3402797c808e0a9e710e8a9478ab2d216ffba2e4bd7"
+text = "Owner decision, 2026-10-19 (coordination record #63): init's three-reset served\n"
+[[source_edit.change]]
+line = 138
+input_sha256 = "0cffdc338ee8a0d44ffe9046490b163055850d40dd7b64a2f8d512b8db9cb342"
+text = "## Operator-authorized resume (coordination record #63)\n"
+
+[[source_edit]]
+component = "platform"
+path = "fixtures/native-dhcp/captured-client.json"
+input_sha256 = "3f274ab041cd912e84007cfbcab5e461f942551599f1114289095aced4368d46"
+output_sha256 = "e72a803f34b9d805c5fac985f4da0c9189872ccafce92443b5e8d62683845a45"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 3
+input_sha256 = "0bb393388b191f8a5ccad7d3a1c4e21aea284373c1e2b5d90963a3a52994dfce"
+text = "  \"capture\": \"archived-occurrence\",\n"
+
+[[source_edit]]
+component = "platform"
+path = "fixtures/native-dhcp/captured-offer.json"
+input_sha256 = "7979277ead39c34c54f97d869d0eed31ddfa87976d5d2df6dd4721c87e6c78fd"
+output_sha256 = "de2722971440ecd53d8387b7c15acc4b773cef180f86a0bf38b002daf35feabb"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 4
+input_sha256 = "0bb393388b191f8a5ccad7d3a1c4e21aea284373c1e2b5d90963a3a52994dfce"
+text = "  \"capture\": \"archived-occurrence\",\n"
+
+[[source_edit]]
+component = "platform"
+path = "fixtures/storage-fence/README.md"
+input_sha256 = "e63c136f45b01caf4bc2f029978bf9223575b3642f18c8ae71b8fce4533624cb"
+output_sha256 = "30684ba8d48da1326fc9dd54f879e2c57b03e1d5310dbd166b2caa6ce6bf383f"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 3
+input_sha256 = "199efdfbcec7e9c240daa0a224ef5351cb35ada202c27ebc5ee8e2a0832306fd"
+text = "Operator-authorized resume slot v1 golden sectors (`resume-v1-*.bin`, coordination record #63; docs/WRITABLE-ENTRY.md \"Operator-authorized resume\"). Each is exactly 512 bytes. `resume-v1-none.bin` is the seeded slot: the ASCII line `absd-resume v1 none\\n` followed by zero padding. `resume-v1-record.bin` is one authorization record: `absd-resume v1 id=<32 hex> fs=<16 hex> seq=<n> image=<64 hex> ledger_seq=<n> ledger_boot=<32 hex> previous=failed|not_ready time=<unix s> fnv=<16 hex>\\n` zero-padded, where `fnv` is FNV-1a 64 over the preceding text of the line. `resume-v1-torn-40.bin` and `resume-v1-torn-200.bin` are the record's first 40 and 200 bytes followed by zeros: a torn sector write, refused as corrupt by both readers. Both encodings share the 15-byte prefix `absd-resume v1 `; anything else at the slot is corrupt (`RECOVERY STATE REFUSED reason=resume_corrupt` in the guest, `corrupt-slot` on the host). Rust (`fsd/src/resume.rs`) and Python (`scripts/storage_fence_state.py`) independently match these vectors. Only the fresh-image constructor seeds `none`; the operator act writes a record; the next serving boot consumes it back to `none` as its first device write; `recover --revoke` rewrites `none`.\n"
+
+[[source_edit]]
+component = "platform"
+path = "fsd/src/resume.rs"
+input_sha256 = "4564ab832eba492e08c6a81a8711d346266f8571dadf52e8a5a46a99fc90f36e"
+output_sha256 = "44ed251b90f825f9f9678e20076272ad9358d9d26f5f2a67a7bdd713b8e2b6fc"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 3
+input_sha256 = "b9355568885bbe831202cb72a5b89863c98a974d1fbbb682a6bac345f783711f"
+text = "//! \"Operator-authorized resume\"; coordination record #63).\n"
+
+[[source_edit]]
+component = "platform"
+path = "fsd/src/write_guard.rs"
+input_sha256 = "9da9e222f70096f02e61cda1179498bcc8b0644a6a8301b95d62c2218ff94894"
+output_sha256 = "30d48ab04a67394afc43053604c8ff9dceea371263a62611d2466080e3d5b295"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 405
+input_sha256 = "ad2256744dfdcd2aa040f31781df61a19ccd58e46b3a8bf1ce96848af4b40e34"
+text = "    // -- operator-authorized resume (coordination record #63, ACCEPTANCE-v5 B1, R4e) --\n"
+
+[[source_edit]]
+component = "platform"
+path = "man/local-console.7"
+input_sha256 = "63df0050ed035ae8c9bdfc47da22a0567417d4b1cc0367618437bd8e1a0d2377"
+output_sha256 = "c65c751002bb29da88b096876a31a1b85b9e7e168ab6e1b6e8d6e4ad0f0d44d8"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 151
+input_sha256 = "e69d7910d73f14ab481a16d5fc857a5d8a187495688341b4672dc37aeef69829"
+text = "Physical hardware_fixture input and display operation require a separate observed hardware run.\n"
+
+[[source_edit]]
+component = "platform"
+path = "man/porting.7"
+input_sha256 = "b4baa55226dbd819345b424eff00ef53600b91f6acdf94c4bd81f41b0bee78cf"
+output_sha256 = "6cab5429e543dc90819a7cd2bfc469eb57dfb2f52f8960363e88a6872de4458f"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 131
+input_sha256 = "774650a67dfa12d1dd236c4a9b104a2782a3cbe644427071c0398ed380d0c8b2"
+text = ".No \"#121 local SDK candidate evidence\" .\n"
+
+[[source_edit]]
+component = "platform"
+path = "media/z2-usb.toml"
+input_sha256 = "f1bdd42ab221d4d7d52062314f2e374dbc67fd5aed779f111c9b9b49db36bd81"
+output_sha256 = "1c397f921feacfaee3b712cf07bd6675960aa436b8224271620f399c57bd3c24"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 2
-input_sha256 = "f55a95beedaea89f5312b7d776f10f574a5abbb33fcaa479bbdb2f2d24e68d92"
-text = "\"\"\"The enrollment image's case matrix (slice A).\n"
+input_sha256 = "bdd07b99b215bad32f3b76608362a75359698db007e44d01d6db303456e084a5"
+text = "# attended boot (coordination record #28; generalised from the S4 recipe for\n# bf8c7583/f8184ca, archived-occurrence).\n"
+[[source_edit.change]]
+line = 3
+input_sha256 = "edfaaf2be5af27b3131fa8cc0989ea0345bb053cb02ea3ff0e6c376a8dfafc74"
+text = ""
+
+[[source_edit]]
+component = "platform"
+path = "provenance.toml"
+input_sha256 = "aa3bdc2f01a5a7a8399d2153d63eaeec3e2dade02c9df4aefb6e757c656cfbc0"
+output_sha256 = "e200d409c57b3e67942cb0803d93b0a123dd412be49f92257011bc301d433778"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 64
+input_sha256 = "4ee79e40a294c930a970459f32890c5299e989233e5c56de3b6af2928485672b"
+text = "# The enrollment key cases (coordination record #31 slice A): authorized_keys inputs\n"
+[[source_edit.change]]
+line = 97
+input_sha256 = "be307b583289f147c992c5d20fa1ce1aaecd41d1120ba137130146a1645e8f41"
+text = "# checkout path archived-occurrence \u2014 short\n"
+
+[[source_edit]]
+component = "platform"
+path = "provenance/paired/kernel-image.toml"
+input_sha256 = "1274a08352b436f0a38418b74af556dbc572093f83d6da68864ef63fdeb8664c"
+output_sha256 = "a2376dabb5b67610571a62c96563fbe5716d5cc1635fc8089c6deec92c3e87c5"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 9
+input_sha256 = "1d25a8798e441006d267a9b6eed7cfd3d70fae25500ff64bfde086d58f51e24a"
+text = "recorded = \"2026-11-05T15:51:45.589393+00:00; actual kernel provenance.py full --peer clean platform f5f757cb4e351d87c056f71a7c6b121c4ce11579; evidence archived-occurrence sha256 fac28878e0e6dd1ec9cec7afd4690b4e9a3dc194eb5e3d58d2ac2cd88791aa1c and kernel-full/READINESS.md; scope expression validity and declared-licence policy only; O2-O5, collector completeness and SPDX consistency remain UNVERIFIED; source/binary NOT_READY and owner #121 HOLD unchanged; no release acceptance\"\n"
 
 [[source_edit]]
 component = "platform"
 path = "scripts/absd_try.py"
-input_sha256 = "9a8ce4870b45784ac5861f0e5e3660d6be5467b0af1ae6e12eda69415baae667"
-output_sha256 = "42caa4a806b636367d7c9870de6a019cffce451de64c25d36b8c05ed31d7e9c9"
-reason = "Remove internal tracker references from comments and docstrings; preserve executable behavior."
+input_sha256 = "1eff8833a8f141ced89d3835504f836d8864a56d7c5f8639fb0635dd063e8d33"
+output_sha256 = "ae25853f350625552c079bbb87e17f80d6d68df8fa0f9779f2a4182c7e26bff1"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
 line = 3
 input_sha256 = "e6a4d2d816cf661b66cfcf91840ccee10121779f840b3dee939b7362b5f58de8"
-text = "(design docs/preview-pipeline-20261015/DESIGN.md, slice C).\n"
+text = "(coordination record #31, design docs/preview-pipeline-20261015/DESIGN.md, slice C).\n"
+[[source_edit.change]]
+line = 64
+input_sha256 = "707c2fc89f695a86f4622c5bcec8a3b5ecd5f7fbeae52fb28b115cf55490aa3c"
+text = "# leave a __pycache__ there (coordination record #62 item 7). Set before any import.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/app-a-vm-runner.py"
+input_sha256 = "6148556c5a396fec94e8b72d9bc705d501864e79e68d7705f41183dc005a3cca"
+output_sha256 = "148fa230c3f345441bf9ea50d89d76abb0c3695b5d809b6381c070415de207f3"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 157
+input_sha256 = "bcb1f45404cdfeca334c9f77f2e85d21200afc6501e39d12228244f784a4fa85"
+text = "def staging_host_ssh_argv(command, streamed):\n    target = os.environ.get('ABSD_APP_A_SSH_TARGET', '')\n    identity = os.environ.get('ABSD_APP_A_SSH_IDENTITY', '')\n    if not target or not identity:\n        raise ValueError('explicit ABSD_APP_A_SSH_TARGET and ABSD_APP_A_SSH_IDENTITY are required')\n    if target.startswith('-') or any(c.isspace() for c in target):\n        raise ValueError('invalid explicit SSH target')\n"
+[[source_edit.change]]
+line = 160
+input_sha256 = "779e6cb85d09dbe1b100ac88b3ee0a3287f866218e42b5114ac651ec44aea7f0"
+text = "        '-o', 'IdentityAgent=none', '-o', 'ForwardAgent=no', '-i', identity,\n"
+[[source_edit.change]]
+line = 162
+input_sha256 = "371352b840f4bf6936519391618ecb4bd7e4f4d726f095bd86126d8f597f19a3"
+text = "        target, command,\n"
+[[source_edit.change]]
+line = 470
+input_sha256 = "bd74c287b15956f1ab5594ca829f22851895e867083690cb648dad8c3655e86b"
+text = "            '--proof-script', str(self.occurrence / 'source/staging_host-clock-proof.py'),\n"
+[[source_edit.change]]
+line = 519
+input_sha256 = "c496f7ef89f08a43b5cd090d0338687b19593c428dc9eb129a712ee142170053"
+text = "            clock_attestor='staging_host CLOCK_REALTIME via KVM PTP/chrony PHC; guest bound remains guest-to-staging_host',\n"
+[[source_edit.change]]
+line = 1108
+input_sha256 = "7097338adbee78077ca9f2211a1ced495a73c8766b416028f69257e4858689e7"
+text = "    staging_host = admission['staging_host']\n    if not staging_host.get('qemu_absent') or {control_port, 24133} & set(staging_host['host_listen_ports']):\n"
+[[source_edit.change]]
+line = 1109
+input_sha256 = "39468424cf48933a87f5ca142da630e0a53f2e989ab02824eba231beb246a9d5"
+text = ""
+[[source_edit.change]]
+line = 1112
+input_sha256 = "656847035b99e116324088cd7f13b523d82f589dc3835cc0d6efca66edcc94ff"
+text = "        capacity = staging_host['capacity'][path]\n"
+[[source_edit.change]]
+line = 1115
+input_sha256 = "da8cea8ff374a902063585aa9ec317da2502d824e25251cd2082e796601c05e6"
+text = "    if staging_host['memory']['MemAvailable'] < 20 * 10**9 or staging_host['load'][0] >= 10:\n"
+[[source_edit.change]]
+line = 1126
+input_sha256 = "ddbeacd80c464285cac157af88a11acc7db14ec6e2d379f963aa15f7bc8e8c12"
+text = "        self.root = '/data/absd-p15-staging_host-vm-' + run\n"
+[[source_edit.change]]
+line = 1131
+input_sha256 = "7e71efa040b253eb35daf4fd32773fdb729dc807fcd308aa34da2a2825144bd9"
+text = "            staging_host_ssh_argv(command, streamed=data is not None),\n"
+[[source_edit.change]]
+line = 1144
+input_sha256 = "c06ae02a99bcd7b36be0235d71cee5b0f6aff51bc78f31dd79abd03bb3a0252c"
+text = "            raise ValueError('staging_host staging command failed: ' + (result.stderr + result.stdout).decode(errors='replace')[-1000:])\n"
+[[source_edit.change]]
+line = 1152
+input_sha256 = "f6287f0e41f5145d8edd1b257a24bc6ad57149e6a9e91275d480362eb3c392a9"
+text = "            raise ValueError('staging_host staging readback differs: ' + str(remote))\n"
+[[source_edit.change]]
+line = 1158
+input_sha256 = "22720b4e1a9a4face8603ab63ddca6e6e9df5ff61a8e48745d1d5bdb6e608955"
+text = "            staging_host_ssh_argv('tar -C ' + shlex.quote(str(destination)) + ' -xf -', streamed=True),\n"
+[[source_edit.change]]
+line = 1212
+input_sha256 = "31f381a7d1967e4fda477655f9dc2b6b2958c1238de6929f9759158016421db9"
+text = "                raise ValueError('staging_host storage reserve failed before allocation: ' + path)\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/check-all.sh"
+input_sha256 = "a3e3b8e5a9564151dd5c34757fe0446131cc89005342c200e1648f02a189cf4c"
+output_sha256 = "a7bc45388d1455553f1fdae002597188f0938c104a1caa7cdc9e92e66b902d80"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 53
+input_sha256 = "bdfecfeeb3bc2d59295fbc250bbc7fdeee0abbbf733b73117e8289d9dc3d9c35"
+text = "# The stopped copy of the operator image the matrix builds (coordination record #67);\n"
+[[source_edit.change]]
+line = 418
+input_sha256 = "b23fc7811cae0e1d89e82b6471669de412d9cb8e638d157f8fde57fbd1148a4d"
+text = "# matrix just built (coordination record #67): never a protected endurance guest's disk.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/check-storage-fence-frozen.py"
+input_sha256 = "c278df56b1716bb39bc5b766b649ffe9d3d3341816b3cb5b5c49c019a6edb99f"
+output_sha256 = "d4a2f00015176b3a8c9b18ed7899d6278321ab505704fa0f56948f1150f1d2ec"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "bdd752e04714f77336d63a98d68de2bbbf6f32c28a5d896d1ef06c054a45ce95"
+text = "\"\"\"Check the frozen-harness source boundary of ACCEPTANCE-v5 (coordination record #63).\n"
+[[source_edit.change]]
+line = 29
+input_sha256 = "7d7fbea8305a648e7d5ee28fc781855406912c55fafc1baaddf69119a5d283f6"
+text = "# archived-runs/integration-steward-20261011/outbox/\n"
+[[source_edit.change]]
+line = 103
+input_sha256 = "017f9e62df7ac77c5e10f0d4dbf973c5f48b7c55ee351b4936103f453e459aca"
+text = "        r\"^\\+operator act of coordination record #63 is the only writable recovery\\) is inherited\\.$\",\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/cports-matrix-selftest.py"
+input_sha256 = "7c28eb2ab0a7fad3598afa2629682cf43339fe3a8733e05ba806a3daf24c18ce"
+output_sha256 = "b94ccf902ffc2356a5818e069451c6c6d197c8790e8ac69a5011d104977e27f3"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 871
+input_sha256 = "ed2a5cde8ac979a82cf93a149a4fc20695e18c4e77ee78406ec39ec070f5e989"
+text = "        # The cut under the storage fence (coordination record #63 (b)): the same\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/cports-matrix.py"
+input_sha256 = "215b29b8ac9689573d67507217f2ac75891e8c32f65e9de951d142328c45e51c"
+output_sha256 = "812517810be8e69b36fd2392f668413ea3fc3e4e1a83aec42eb527c9102d1187"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 202
+input_sha256 = "4f0183e9d3a1f02c6ecd60754d0818b5c044184e4d3a80dcbbbe6961c5cc7bf8"
+text = "Under the owner's storage fence (coordination record #63 (b), docs/WRITABLE-ENTRY.md)\n"
+[[source_edit.change]]
+line = 1777
+input_sha256 = "1c7d7864b573c60b4031a06bfdffa63d8a924789657dc58f672a7537e1cf0ac4"
+text = "        \"\"\"Section 8 form (a) under the owner's storage fence (coordination record\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/enroll-matrix.py"
+input_sha256 = "35ee524235b1a816c1448555d5db1ea71c3b63567ce33d72f77d72300280da5c"
+output_sha256 = "d8dc41083e08d650fa3d33807e300a4294d10a077f655400a71a3493f9a303d8"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "f55a95beedaea89f5312b7d776f10f574a5abbb33fcaa479bbdb2f2d24e68d92"
+text = "\"\"\"The enrollment image's case matrix (coordination record #31 slice A).\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/fixtures/release-fenced-history.json"
+input_sha256 = "cd9083432490672b91f349a7ba8fb3181b975f6b63a5293c4715c1bc2816f196"
+output_sha256 = "f284388441cd419fb92d2921f54670c3860c56244174ddbc1c53b65f274b3784"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 12
+input_sha256 = "efe10861fa3e7f2968aec7961935d488bd674dc29eb70017fadaab3cf7ddd861"
+text = "      \"original_path\": \"archived-occurrence\"\n"
+[[source_edit.change]]
+line = 19
+input_sha256 = "c2ea5fee8f3348502006c662a119852f8e6c71ac155c708d3bce317ea624fef0"
+text = "      \"original_path\": \"archived-occurrence\"\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/health-json-native.py"
+input_sha256 = "bd1d2df12fcd2576c239c14f5beaae58719fd0475ba8771babf5bf368f23a1de"
+output_sha256 = "8a0991aa4d3e5a114d4d06d2f9f56ef4105b75fafe1712c64c6ea1ac6c1f7a71"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 6
+input_sha256 = "7094e6289a9f3a8827246a480642db5630e4b82e3741be475bd595abad644e1f"
+text = "Under the storage fence (owner 2026-10-19, coordination record #63) those checks\n"
+[[source_edit.change]]
+line = 10
+input_sha256 = "75aaea27359cc107fdd16ad6c54693b7dfbde1737fb3793b9d7edc195b684f01"
+text = "operator act of coordination record #63 is the only writable recovery) is inherited.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/install_disk.py"
+input_sha256 = "1ef80b72327bc074cd95364f8b5f15fc242731465083f81c9716acb838029544"
+output_sha256 = "a452988c8c2d91e65ed9700cc3f478c3c14dc28e105c0212411ad8ebfbea8f2b"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "ff496626703cf0ef2282768d939594e7a3b7c30474db6576828a4d9b8f300ee6"
+text = "\"\"\"The first ABSD disk installer (coordination record #123 step 5): one GPT disk with\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/link-matrix.py"
+input_sha256 = "db58dad446a89aef2fa77832de3028d3a8c95674c33de510a924906b473ffa6e"
+output_sha256 = "2fc81f2d2544a57798bbaf050df074a7a26d0c030e0adf99a64ad9d849116be0"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 30
+input_sha256 = "89f5c954707f3955d436ebf2d824719bfc72bbf8983139ceaef3be3ad5faf466"
+text = "# Owner storage-fence contract (coordination record #63, #54): an unclean end, here\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/media.py"
+input_sha256 = "a501c880ff8bf9b38e4ae9a2e265072dbecc1d2e1a4f37a4ced6838bf26ed86b"
+output_sha256 = "b0a9cff2026598d8a146898d52bbc13015186125893ae0e6c3ca799786c4f796"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "999bdf77179c12f43c24ed987515f61c1a8af063c0547bffe2bc1f532b7575e9"
+text = "\"\"\"Reproducible boot media for one frozen kernel/platform pair (coordination record\n#28). Generalises the S4 recipe (archived-occurrence,\n"
+[[source_edit.change]]
+line = 3
+input_sha256 = "ff1627881a0f2b9b848f3695a08294d23b183c6a772e4f306f858e3efa6e3013"
+text = ""
+
+[[source_edit]]
+component = "platform"
+path = "scripts/model-storage-fence.py"
+input_sha256 = "d79559d44340ed38f4995007e7da89f47e1f38d182ed591f369659e41b8a02b0"
+output_sha256 = "0133e1d3e8276312aa423862f04ef32b747e3844ced4a2e32daf66ed10bf3fd1"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 12
+input_sha256 = "7330cbf5c405dd427abb43d21c60f9b1cae0ad3fe40e8cafd0acac517b95db20"
+text = "Operator-authorized resume (coordination record #63, fsd/src/resume.rs,\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-installer-e2e.py"
+input_sha256 = "dfbc04737044157c8fdff1ea0d0d71ee8956abbd9ce11e3d94ef377f17eda2d5"
+output_sha256 = "3964064c9363e545e5b2dc3309539e698505e0bbed9cf945161cd0b39832e5b5"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 6
+input_sha256 = "bd0ce121d95427801d2f25b98a17eca82112c4c711b4a62788fa63766f398bfb"
+text = "Execution requires explicit ABSD_PROTECTED_HOST and refuses that host. A fresh --work is required for each attempt.\n"
+[[source_edit.change]]
+line = 239
+input_sha256 = "89f8e3f77c78ef39bf5e8a5a1fa2e06652ebc74e2429bc19306bef3ddd4d2d50"
+text = "    protected_host = os.environ.get('ABSD_PROTECTED_HOST')\n    if args.execute:\n        if protected_host is None:\n            raise layout.Refused('set ABSD_PROTECTED_HOST explicitly before execution')\n        if protected_host and socket.gethostname().split('.')[0].lower() == protected_host.split('.')[0].lower():\n            raise layout.Refused('QEMU is prohibited on the configured protected host')\n"
+[[source_edit.change]]
+line = 240
+input_sha256 = "966ae7d1a8c6e59622cab8ffcc347ebd4ab4a79fb5d4b1e1c13efb1619a2563f"
+text = ""
+[[source_edit.change]]
+line = 322
+input_sha256 = "c40c06213aa526caa37aacb5f81c4c86b898df38951dae08d90bceebee62335c"
+text = "        'plan_sha256':media.sha(artifact/'PLAN.json'),'limits':'QEMU only; physical hardware_fixture/SSH enrollment unproven'},indent=2)+'\\n')\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-ipv6-echo-matrix.py"
+input_sha256 = "a94e3291e5e4ec5902e8cd03f12f1b630a9a3fbfbfe97fed421eb7b10f290d58"
+output_sha256 = "f15c35b66cfcfe1a695197a32cf8b36c499738dcb58f4f6487cd77168ebbd6fd"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 129
+input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
+text = "# globals, profiles or classifier. Neither this file nor its tests runs on build_host.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-ipv6-mtu1280-matrix.py"
+input_sha256 = "a7aa2078f532c044c1d5d67fd2157476c978d4448b6af41bb39605f926273cec"
+output_sha256 = "61c91a040ac2acb4eaff703321e5df66b58e84e10d16a12312d6f407854c531b"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 84
+input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
+text = "# globals, profiles or classifier. Neither this file nor its tests runs on build_host.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-ipv6-route-matrix.py"
+input_sha256 = "4b1fd7cd23cd3c0f8325961551c3eb034a3b511bb02ed2d7e3dbe53998cfb8c2"
+output_sha256 = "8aa12103ed12326547507cdc7f7b4e3df6edaf274b8a51640832cb34dbea807e"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 80
+input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
+text = "# globals, profiles or classifier. Neither this file nor its tests runs on build_host.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-ipv6-routed-tcp-matrix.py"
+input_sha256 = "0f93d3363dc4c05728cbfc53bf233df84089a116341843695b98a12f7de76a61"
+output_sha256 = "fdb43df6827c2cdc1bf8786158c8d565c70cbc3e59878e88ecd2e084adcab225"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 80
+input_sha256 = "0a8e53eaf24a3a9990728e0ef246517f2c34e902310d497fd716eefcf31cece0"
+text = "# globals, profiles or classifier. Neither this file nor its tests runs on build_host.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/native-sntp-matrix-tests.py"
+input_sha256 = "baa07c36c8fba698cd039ec7d302e493acfaa8305812b013b8d2f8b92a0345d7"
+output_sha256 = "4846d8a3d724359e9ac1b72f703390137d9cc1567836ad9114648d0792206d0d"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 4
+input_sha256 = "c4fa7a93e045952d01d0ce4ce733684d3acf5da742552b94e251a13187411319"
+text = "Execute later on the resource owner's VM; source-only authoring on build_host.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/operator_image.py"
+input_sha256 = "efbfcf3f0e5f231cd72abdab2543da90e634b8dc0619861ef757931fa1784a27"
+output_sha256 = "8b90376c28511ed9e8122f47d5d2e480cba55a530f61dd78e3abd15b41aace3c"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 87
+input_sha256 = "464dae6edb88807460c3ca37d7ce93f08af1b9b328ea5f27ce78a4ae6739538c"
+text = "# /bin/https-document (coordination record #28: peak 4448 blocks, free 4188). 128 MiB\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/qualification/composition/f2.sh"
+input_sha256 = "2e4b20aec0394608e478acc49bc5a60f2a4b3c62a2635d11b302ab4d5ae9df70"
+output_sha256 = "26543063eb73246d791a884e48da9561cd33d90b8962e05b9b13e7dfdb03406e"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "39efbb6d042a7453c2d2e10ab8cd7aecd10ce63a094cdd14596235e42e07ed11"
+text = "# F2 guest qualification steps 1-5 (as archived-occurrence)\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/release.py"
+input_sha256 = "884918b7f0b38ac26eac425fa50ed8a31dd8001c6736a6ed21a0021963e9dcf1"
+output_sha256 = "93171b151ed60cab3880304c2839d6f1139dbf969532d254234ed77cab3cda29"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 376
+input_sha256 = "3bc15d19ca2ffae57c12a04f36ea437cd14b9e3f7a40d325ec4f11adad71cc60"
+text = "        # The disk's own geometry (coordination record #28), never the creation size.\n"
+[[source_edit.change]]
+line = 881
+input_sha256 = "e934d2878c9135e7fc7d652c4059c602558a4b2d480a43f34f8d091b2ddb28a1"
+text = "        # (coordination record #28) before it replaces anything.\n"
+[[source_edit.change]]
+line = 1684
+input_sha256 = "13bfae75bc47688050c61f4036cb266f4f304065d47270a6e5758be1c4cb99cd"
+text = "    # unchanged (coordination record #28).\n"
 
 [[source_edit]]
 component = "platform"
 path = "scripts/release_manifest.py"
-input_sha256 = "dacd6116a9428e6df3a184992ecbeecfe98852da5c2e0e2f63745c56e2fc113c"
-output_sha256 = "b215fc3f2362bacca1d5ecb5808d446e621f295c54acef51e12e685e50445822"
-reason = "Public recipe adaptation: remove private sibling lineage default; retain explicit --components and ABSD_COMPONENTS_TOML. Unset lineage stays absent, as on a public checkout without the private sibling. No compiled artifact or runtime algorithm changes."
+input_sha256 = "c548fea77a23a93694581fc75e4f6d26d310b45462007f1ae3cc08a70d1262b3"
+output_sha256 = "78675bb1d43b9d40b1b791f2139d8fc4d9ca667231587cef401e33877505f550"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
-line = 790
+line = 843
 input_sha256 = "901f07145beb30057793dbcf3dc6c19dc5fb2689e78d060202686f45ff0a7e57"
-text = "                   help=\"the qualified-lineage file (default: ABSD_COMPONENTS_TOML; \"\n"
+text = "                   help=\"optional qualified-lineage file (explicit --components or ABSD_COMPONENTS_TOML only)\")\n"
 [[source_edit.change]]
-line = 791
+line = 844
 input_sha256 = "4c477a3dd2bd36734eb788a29bc68be0724f14e990e7250648972d0d74c30543"
-text = "                        \"no implicit file when unset)\")\n"
+text = ""
 [[source_edit.change]]
-line = 817
+line = 870
 input_sha256 = "fa34f72bed11c29911f20d3b7cd3390cb10fa81aede0c3dd22a7e4fd807dca2a"
 text = "            components = args.components\n"
 [[source_edit.change]]
-line = 818
+line = 871
 input_sha256 = "3f9d2ded55137f4db0f3319fedc17cad1caf4e810327375f300a12d2d76e417e"
 text = ""
 
 [[source_edit]]
 component = "platform"
-path = "scripts/verify-inputs.sh"
-input_sha256 = "833da4f047f628fe8ca0b8c455d6d904d14ad114d926dc9a05b865aefcbaccae"
-output_sha256 = "7f3684e53bfcd9fb1785c563970c37421b1e723ae54c0b38838ee41b572f8007"
-reason = "Public curation correspondence: update only the first-party SSH Cargo manifest expected hash to its declared curated output. Keep actual comparison/refusal behavior and every other upstream, compiler, lock and reference pin unchanged."
+path = "scripts/run-agent-exec.sh"
+input_sha256 = "1b61af909b229cf4d240a56d79174ab878446882cb6ff816f5616701de61866e"
+output_sha256 = "3efccaa6bd86cdfcfe36f60ca24c20f17158b03cb58376c7378d21e8a7ad800b"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
-line = 322
-input_sha256 = "3948c7c3d9f2fde70fad68622422860e04b3dcb38664d8927cc29bc91018938a"
-text = "    106195da818e39b54428abf213b113a5c4a78ade606c777b5db9f92fda24571f \\\n"
+line = 9
+input_sha256 = "948f966eb410963b20d11ac7129d85b7d1a0c721f4184aa2fe83a0e54197f40b"
+text = "# archived-occurrence or a kernel source checkout); ABSD_QEMU (default\n"
+[[source_edit.change]]
+line = 25
+input_sha256 = "77d7e9e31fce38cea17906072a384fbef498cd7aa2e437e81669cd30d1045214"
+text = ". \"$root/scripts/inputs.sh\"\nkernel=${ABSD_KERNEL_RUN:?set ABSD_KERNEL_RUN to a disposable kernel copy}\n"
+[[source_edit.change]]
+line = 48
+input_sha256 = "b1e25207d24a8475606b4b9f08b73fb9d8bfabb79736d2aeba5cd5f0ebe3d751"
+text = ""
+[[source_edit.change]]
+line = 49
+input_sha256 = "3885c1bc58731080b2c0b8b84584e69df34e998a18493ffc91f84711ec26e029"
+text = ""
+[[source_edit.change]]
+line = 50
+input_sha256 = "c05159768b7527880bed83bbd385ad39993d3d5dc22def3bc97423a11ab923b1"
+text = ""
+[[source_edit.change]]
+line = 51
+input_sha256 = "7dda6c6635e210937fb45b848deb2df59cf60b218b95ee3cde46ed5dab3b22d4"
+text = ""
+[[source_edit.change]]
+line = 52
+input_sha256 = "d644aac68ee3f93b3bce2a9ba5a3d60f1ea1a99801656295f39fae15bca0d8c4"
+text = ""
 
 [[source_edit]]
 component = "platform"
-path = "docs/PROVENANCE.md"
-input_sha256 = "67e9b0e1fdcdad936a79ffbcd4085e4542557a2a04d6c341287d975eb5bb5783"
-output_sha256 = "e759f9527c6cceaf56016e19751b87d445bb083ec74c11341315a92c536bf45e"
-reason = "Record the owner three-tier policy and exact omitted TinyCC scope; historical baseline statements are not updated into new qualification claims."
-
+path = "scripts/run-c-kit.sh"
+input_sha256 = "feae95fcb75626677427b1d8203745c3bb2efffe762011abcf3ad7ca120fd84b"
+output_sha256 = "9a81d679cc91755da43611166bf34edc93b4fb5f9fdbb4766e2da79485415a59"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
-line = 188
-input_sha256 = "794699cede84f7fc6f5608be23d00e37f61adaaab80856cffc44c0fd8c0e2ab0"
-text = "  the kernel and platform repositories by hand.\n\n## Owner distribution policy, 2026-10-19\n\nThe owner distinguishes three scopes. Code distributed as part of ABSD\nmust be permissively licensed. Libraries incorporated into ABSD binaries\nhave a strong preference against LGPL. External build and test tools are\nevaluated case by case; their execution alone does not incorporate their\ncode or determine the license of independently authored files.\n\nProvenance must distinguish copied context or modified upstream expression,\nindependently authored additions, generated configuration and mere API use.\nA patch target's license is not sufficient evidence to classify every added\nline. Mixed patch files still carry their copied upstream material. Generated\noutput requires its own provenance assessment; generation alone does not\nsettle copyright or license applicability.\n\nFor the public RC1 source, the three mixed TinyCC patches and generated\nconfiguration are excluded. Five locally introduced TinyCC build-support\nfiles are omitted because their only consumer is that unavailable stage;\nthis is a scope decision, not a finding of LGPL derivation. TinyCC compiler\nqualification is NOT_RUN / not included in the public source. Its public\nstage entry points refuse explicitly; kernel/core checks and their refusal\ncriteria are unchanged. The private isolated stage remains separate.\n\nAn inventory is a bounded evidence record, not legal clearance. Report any\nadditional GPL/LGPL finding with its actual scope before publication. Notice\ntexts for unbuilt upstream files and permissive alternatives already elected\nmust not be described as incorporated copyleft code. GRUB/Unifont boot\ncomponents and their separate source/notices remain separately disclosed;\nthis source correction does not replace or relicense them.\n"
+line = 20
+input_sha256 = "9819e043f4e80d0c716553c063501fe7c20e08d88dc82ee5b10cde0eabb57e57"
+text = ". \"$root/scripts/inputs.sh\"\npython3 -B \"$root/scripts/test-c-kit-confirmation.py\"\n"
+[[source_edit.change]]
+line = 24
+input_sha256 = "b1e25207d24a8475606b4b9f08b73fb9d8bfabb79736d2aeba5cd5f0ebe3d751"
+text = "absd_not_kernel_source \"$kernel\"\n"
+[[source_edit.change]]
+line = 25
+input_sha256 = "3885c1bc58731080b2c0b8b84584e69df34e998a18493ffc91f84711ec26e029"
+text = ""
+[[source_edit.change]]
+line = 26
+input_sha256 = "c05159768b7527880bed83bbd385ad39993d3d5dc22def3bc97423a11ab923b1"
+text = ""
+[[source_edit.change]]
+line = 27
+input_sha256 = "b16b1e17e38336088b86da741b3a68b3aa84f999580ad0dab7674a86271c79c3"
+text = ""
 
 [[source_edit]]
 component = "platform"
-path = "scripts/stage-tcc.sh"
-input_sha256 = "a4bd21d1c3f3dd3bc73a18dd308e02ba98a358a182383ef99548ef8c057271fc"
-output_sha256 = "420615bd3c61b6e6f5fbbd2d71d2f62d0e6f25d58648225b40fa89f3b56e40da"
-reason = "Keep the original script body for existing static checks; public-only entry refuses omitted TinyCC work before environment processing, external commands or output creation."
-
+path = "scripts/run-clang-guest.sh"
+input_sha256 = "90ca42b571da0684b10d166f260311cfeb6911498bbff19c8c7decf03ed2a685"
+output_sha256 = "f71cf09acb2e1a61f57277f565be88706d68094a57ee62fe31b09819256a5879"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
 [[source_edit.change]]
-line = 1
-input_sha256 = "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"
-text = "#!/bin/sh\n# Public snapshot: the omitted TinyCC stage is never a passing test.\nprintf '%s\\n' 'TCC STAGE NOT_RUN: not included in the public source' >&2\nexit 78\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/tcc-unpatched-arrays.sh"
-input_sha256 = "6d8e7344079f64d64eab0062bf3c1cd56c0501762a8787e2577a58ac6cc30c9e"
-output_sha256 = "bef32c6e1198df137ef03acabdbbd4a1972d99afd1a83bbe01da94d5c23e8ffd"
-reason = "Keep the original script body for existing static checks; public-only entry refuses omitted TinyCC work before environment processing, external commands or output creation."
-
+line = 19
+input_sha256 = "a1326182e7259f37e5182192eda0cc3d6ae957f971edbc66b5f29c6e449ad8df"
+text = "# archived-occurrence); ABSD_CLANG_PLATFORM (required; a built platform\n"
 [[source_edit.change]]
-line = 1
-input_sha256 = "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"
-text = "#!/bin/sh\n# Public snapshot: the omitted TinyCC stage is never a passing test.\nprintf '%s\\n' 'TCC STAGE NOT_RUN: not included in the public source' >&2\nexit 78\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/tcc-matrix.py"
-input_sha256 = "85c3ad290341791188c02ec56c0132f4b5e4c157aefdfcf6f504895ed54569a2"
-output_sha256 = "0285f59f1981d807bc42eafc1afbbfb21ee62fda2883a3b2b33ee64f846dfa92"
-reason = "Public direct CLI refuses omitted TinyCC stage before imports or output creation; importable judging helpers remain available to independent host tests."
-
+line = 32
+input_sha256 = "e6c65faa39a11c9bb3d17bb382e00c3a223b34fd6deb8898f9e435b4b822f700"
+text = ". \"$root/scripts/inputs.sh\"\ncamp=$(dirname \"$root\")\n"
 [[source_edit.change]]
-line = 110
-input_sha256 = "f6b1e108417aff6cfa9be55f270524a97fb99f40f91a2a4af4863735397511d5"
-text = "if __name__ == \"__main__\":\n    print(\"TCC STAGE NOT_RUN: not included in the public source\", flush=True)\n    raise SystemExit(78)\n\nimport argparse, hashlib, os, pathlib, re, select, shutil, struct, subprocess, sys, time\n"
-
-[[source_edit]]
-component = "platform"
-path = "scripts/tcc-matrix-selftest.py"
-input_sha256 = "8428f540d1d0dd16c7f6a7b0cbf09260f97ae92fb348621c3cc7c1ca42a2ca7c"
-output_sha256 = "705de90d52143d39e393e4116cdfd757899cab1fe74bb69f808948af2d7768e4"
-reason = "Public direct CLI refuses omitted TinyCC stage before imports or output creation; importable judging helpers remain available to independent host tests."
-
+line = 37
+input_sha256 = "b1e25207d24a8475606b4b9f08b73fb9d8bfabb79736d2aeba5cd5f0ebe3d751"
+text = "absd_not_kernel_source \"$kernel\"\n"
+[[source_edit.change]]
+line = 38
+input_sha256 = "3885c1bc58731080b2c0b8b84584e69df34e998a18493ffc91f84711ec26e029"
+text = ""
 [[source_edit.change]]
 line = 39
-input_sha256 = "46cb1d926aa74ff99bbdc63f612bb37b8a45d8b76f04f9fdfb1066540950f77e"
-text = "if __name__ == \"__main__\":\n    print(\"TCC STAGE NOT_RUN: not included in the public source\", flush=True)\n    raise SystemExit(78)\n\nimport argparse, contextlib, importlib.util, io, pathlib, subprocess, sys, types\n"
+input_sha256 = "c05159768b7527880bed83bbd385ad39993d3d5dc22def3bc97423a11ab923b1"
+text = ""
+[[source_edit.change]]
+line = 40
+input_sha256 = "f039ac1df0278bf95abd9d4b60da40563db2c14a0cb03f02b1b8359a80b992a6"
+text = ""
+[[source_edit.change]]
+line = 74
+input_sha256 = "bb29fa44fb44f1d319d91dadcd094a9d6e0f972ec337ce9273bb6333c7d5a267"
+text = "# (the first guest run stamped archived-occurrence's HEAD this way; GUEST-RESULT.md).\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-cports.sh"
+input_sha256 = "9ca994fa66f92d21e52e9de32d52afa7cda5036700c6b43b3a5e0eae214820f6"
+output_sha256 = "d5fbb78c6b40ec821d241b72d8ec4ccdb84b7350248448019dc3bf78e6f8eefe"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 11
+input_sha256 = "25060e9c02af0dfcc4d65edc4272f9bdf914b4e5330c6a647b3ec6bc62b21073"
+text = "# archived-occurrence); ABSD_SKIP_BUILD=1 reuses the adapter archive, the\n"
+[[source_edit.change]]
+line = 27
+input_sha256 = "e6c65faa39a11c9bb3d17bb382e00c3a223b34fd6deb8898f9e435b4b822f700"
+text = ". \"$root/scripts/inputs.sh\"\ncamp=$(dirname \"$root\")\n"
+[[source_edit.change]]
+line = 36
+input_sha256 = "b1e25207d24a8475606b4b9f08b73fb9d8bfabb79736d2aeba5cd5f0ebe3d751"
+text = "absd_not_kernel_source \"$kernel\"\n"
+[[source_edit.change]]
+line = 37
+input_sha256 = "3885c1bc58731080b2c0b8b84584e69df34e998a18493ffc91f84711ec26e029"
+text = ""
+[[source_edit.change]]
+line = 38
+input_sha256 = "c05159768b7527880bed83bbd385ad39993d3d5dc22def3bc97423a11ab923b1"
+text = ""
+[[source_edit.change]]
+line = 39
+input_sha256 = "5ee1e94a6ab359d84c9553aa6b49ab9846aaa0e36f447f9fd53ffe25a39fdd26"
+text = ""
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-operator-matrix.sh"
+input_sha256 = "b0367d423e6ef03f57f706ab2d8e46e5b322c06e2eed7abf059c4dbe955d18d2"
+output_sha256 = "2cb73856eb0ef3a72491cdfc34e9ad1096792021aea6be4a1c4d6b2d1cc60cec"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 31
+input_sha256 = "f1019a6f9514e9d11ae4a551e72b1f5609058d2117e2af8e02f00ccbde8a76b2"
+text = "# real operator disk (check-all.sh, coordination record #67). Never a protected guest's.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-perf-matrix.sh"
+input_sha256 = "71f476e180080303c6a686911c2b0a93cb728141cc230464378bdfe650b66c8f"
+output_sha256 = "16484bd0a38b617fd5abbd3d8aa569c5d37c4efccd1d77d4922c6f47abe0f664"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 11
+input_sha256 = "22a2f8ea028ce5283b4efdae8a9728e65479d1714c10ef049fdb2416f5d8e130"
+text = "# EXECUTION_HOST-KVM-ORACLE.md in the kernel repository has the procedure).\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-storage-fence-resume.sh"
+input_sha256 = "e34000c0ad1f3d924a2b113bdc81ebfd1b7909fdde5c524f676bde4d7d978d5b"
+output_sha256 = "0eb9181bc8da55f9d19c98fd4a6f259d7751a68336a547a4f56a0d7a8c4977bf"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 3
+input_sha256 = "a69177c99f9df0c76ff7aa639c3cec28c674ff1a45d78f5b38e538ae457cf62e"
+text = "# (scripts/storage-fence-resume-matrix.py; ACCEPTANCE-v5 of coordination record #63):\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/run-userland-matrix.sh"
+input_sha256 = "7f8584215f9f15fcdb36e86ec2e9c8b079981b020083795d6b68cf8c7f4ea674"
+output_sha256 = "af86960a1b932d4fdfce9d54e10e8c26af32502f4c94068e581903656338006a"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 9
+input_sha256 = "259ca43105cb7962b2effb09774f57a7373b135959d8fd13477d6c1a1168453d"
+text = "# archived-occurrence); ABSD_USERLAND_PLATFORM (required);\n"
+[[source_edit.change]]
+line = 23
+input_sha256 = "e6c65faa39a11c9bb3d17bb382e00c3a223b34fd6deb8898f9e435b4b822f700"
+text = ". \"$root/scripts/inputs.sh\"\ncamp=$(dirname \"$root\")\n"
+[[source_edit.change]]
+line = 29
+input_sha256 = "b1e25207d24a8475606b4b9f08b73fb9d8bfabb79736d2aeba5cd5f0ebe3d751"
+text = "absd_not_kernel_source \"$kernel\"\n"
+[[source_edit.change]]
+line = 30
+input_sha256 = "3885c1bc58731080b2c0b8b84584e69df34e998a18493ffc91f84711ec26e029"
+text = ""
+[[source_edit.change]]
+line = 31
+input_sha256 = "c05159768b7527880bed83bbd385ad39993d3d5dc22def3bc97423a11ab923b1"
+text = ""
+[[source_edit.change]]
+line = 32
+input_sha256 = "8fab996c13833eb9e13dd96cc31460880f15f60ec9c202f40266904b71c5c664"
+text = ""
+
+[[source_edit]]
+component = "platform"
+path = "scripts/storage-fence-resume-matrix.py"
+input_sha256 = "a1aef5328454137cc034a2246203cabe58d61e1844faa9b7b41bcf4d3fd3e28c"
+output_sha256 = "261adc6736ddb02c4818a390999eab06554b1d8c03547eb3bc72cb5d44557cf4"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "687dd0d8c52904f905243533cb4ed964828fddd8b19dd6c1b320421ae6cc34d3"
+text = "\"\"\"Operator-authorized writable recovery: the guest matrix (coordination record #63,\n"
+[[source_edit.change]]
+line = 810
+input_sha256 = "3f627a76a5f67c60346aca8c53000f539034f7c95a699640985d63aef6bcbf84"
+text = "# P0's commit boundary (coordination record #63, owner direction 2026-10-23).\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/storage-fence-resume-mutants.sh"
+input_sha256 = "b84402d5d9c79b0ca1b77c649a68ac39af7a124351932845ca0b9bbca4e1e8cb"
+output_sha256 = "c6688c49210e303504051ca587f46a0c80a4cefdee4388dd3b0f66d2d7283b1a"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "40b9dad1968be9a4ef17296860a41a94fe690bdf44226279292dc11084c6e31f"
+text = "# WORK-PLAN-v5 step 6 mutants for operator-authorized recovery (coordination record\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/storage_fence_resume.py"
+input_sha256 = "8af7204c31c5c0d28278a4d5aa2b2cdd76b3073b39efb6edca4f65b82a07092a"
+output_sha256 = "dab236006c67fb80f79259c386b44296264dfb6789b1d60c5767235b39906494"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "6d35e7db5eafa06ed221d9157e12ce823a523aed0158142f8efd57dd6fe702d0"
+text = "\"\"\"Bounded operator-attested writable recovery on the host (coordination record #63;\n"
+[[source_edit.change]]
+line = 69
+input_sha256 = "576433fd461ab4f84a5398002f9fb80fa693585f980b6d4f3fcb8cd76bd3a0f8"
+text = "    use the disk's geometry, never the creation size (coordination record #28: a\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/survival-recovery.py"
+input_sha256 = "4c4335bf734043b8b576bd13f45937f47e36d2b310597e1619d297a1961f9cfd"
+output_sha256 = "1ba717efb400d2fddef0240731147aea0b6d9582cbf9cc525f897cc3a1edb4d0"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 12
+input_sha256 = "f4c6e64a71ae4a12688dca9eb5236e455cb83ad98f2e07a14f6c62a9b4720fb5"
+text = "coordination record #63) the budget is retained but inert: only the first fault and\n"
+[[source_edit.change]]
+line = 69
+input_sha256 = "82291777dec113f468ef513ee7a738b3c8ab1618f37122ad95b3c421fc785f1b"
+text = "# The countdown's disclosure line (coordination record #63): automatic writable\n"
+[[source_edit.change]]
+line = 80
+input_sha256 = "209871536d77467d267816a976e4d8e62f9a5d5a62f069e66cb3fed74f66d85f"
+text = "# Owner decision 2026-10-19 (coordination record #63): the three-reset recovery\n"
+[[source_edit.change]]
+line = 616
+input_sha256 = "304a9f60687f7225ed8a53f142876f654109ee899e07cd19a0b0b869817f6f59"
+text = "    2026-10-19, coordination record #63). The first boot serves, the fault is sent\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test-cports-quiescence.py"
+input_sha256 = "4f7d99307b9bf92f45ac252fa962d46f21ea9bae6e8aac9051df2a559554d53c"
+output_sha256 = "479ca34762aa8388a0930370b67955d7d9965b327dc2edc8c4fb32844652b371"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 68
+input_sha256 = "a038e4aae99820ca6e86f2de40aea2bdcd74c93e77ca103158960ddd371e25b9"
+text = "        # Under the owner's storage fence (coordination record #63 (b)) the cut's\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test-cports-warm.py"
+input_sha256 = "504b4b55f4cde24f8da0e61dc495a6968d009787bf6e2da999decefaa5c19cc1"
+output_sha256 = "aff60d95721a9aa3d7641653559d890e3c5eb286088fcde3ff694b4201d9fb99"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 230
+input_sha256 = "37d74fc0f127aebd1ebe49618aee143b02e66351e8f48681a8913362770a76e9"
+text = "        # byte-for-AST. Under the owner's storage fence (coordination record #63 (b))\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test-native-quic-entropy.py"
+input_sha256 = "289e7cbbfd6eae7f7937bed9e438382e0a617f048c735abe6a7639e36325b739"
+output_sha256 = "67c468e7f3334070525bce44b0285d41c200ecfddb66493f32fd4b5c6443a387"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "232b498e958b7449bd87e3542669ff20778ea6e42886570bfa741f621d2a8667"
+text = "\"\"\"Execution-host controls for conditional Q31; authored, not run on build_host.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test-native-quic-link-peer.py"
+input_sha256 = "c608e5906e6b16b21050052c9a5f2ee211df50b5811f019c46dc842f4e89b3c6"
+output_sha256 = "6d53c6774f81853e58d98d519516c915853ebd1fa375434d6c84c88683854d43"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "8b742b6467d80cf5125600a507f759958b80c2bfd6a9ef63dcbad840bb05e81e"
+text = "\"\"\"Q24 actual peer/socket and complete wire controls, authored only on build_host.\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test-qualify-operator-binding.py"
+input_sha256 = "30fee9360830f2f0f468498f7bc45cfe293d44adf83eeddd548c889aab0707d7"
+output_sha256 = "cdc47623426216c17d382a1c824f50e9e389954f13f7aae1e9cf5eba96df3128"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 164
+input_sha256 = "5a61998a8b681fdc8e7517ca9071e9cf51a106ed5c5d11b1be110c3a07d268c9"
+text = "        if not os.environ.get('ABSD_TEST_OPERATOR_ISO'):\n            self.skipTest('set ABSD_TEST_OPERATOR_ISO for retained-media checks')\n        retained = Path(os.environ['ABSD_TEST_OPERATOR_ISO'])\n"
+[[source_edit.change]]
+line = 182
+input_sha256 = "d417b00485c6b974b0865de57ac8f95d54d1d9fd8950f2af6ba08c4f11554fad"
+text = "        if not os.environ.get('ABSD_TEST_OPERATOR_ISO'):\n            self.skipTest('set ABSD_TEST_OPERATOR_ISO for retained-media checks')\n        iso = Path(os.environ['ABSD_TEST_OPERATOR_ISO'])\n        if not os.environ.get('ABSD_TEST_OPERATOR_EXTRACTION'):\n            self.skipTest('set ABSD_TEST_OPERATOR_EXTRACTION for retained-media checks')\n        extracted = Path(os.environ['ABSD_TEST_OPERATOR_EXTRACTION'])\n"
+[[source_edit.change]]
+line = 183
+input_sha256 = "370e31464b16554581866ddc802ab1c2b59714d6e506d32148c8979d4b69bf42"
+text = ""
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_absd_try.py"
+input_sha256 = "4f42ed2385bfd349e00977226cd401d0600124b2184fe3814862629e4ebe92e4"
+output_sha256 = "be5396627290e4b58c889ebb2d1f2315cc8a74338b9d8ccc4d9639018323142d"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 24
+input_sha256 = "463c91f978872b1fca29c26ced25889f263486b9186c4654129dd2f9ddb8c6b3"
+text = "import shlex\nimport socket\n"
+[[source_edit.change]]
+line = 218
+input_sha256 = "662c8643346244d483bc46f43fe3f6ae5df1abb05be9af06ee4bc702a0dfe403"
+text = "        wrapper.write_text(f\"#!/bin/sh\\nexec {shlex.quote(sys.executable)} -I -B -X {shlex.quote('pycache_prefix=' + (sys.pycache_prefix or ''))} {shlex.quote(str(pathlib.Path(__file__).resolve()))} --fake-qemu \\\"$@\\\"\\n\")\n"
+[[source_edit.change]]
+line = 440
+input_sha256 = "06b1df12c824fa69c12566fefd814fd7aa52e4bbb0f164130112adf1627d57da"
+text = "        # coordination record #63 M1: the enrollment tool enters the mutators' boundary.\n"
+[[source_edit.change]]
+line = 769
+input_sha256 = "07efc06a240626c33bc71c8832229636de52c11f1cc4ddacd5b1bb9bfd741d1d"
+text = "        self.env = {k: v for k, v in os.environ.items() if k not in (\"PYTHONDONTWRITEBYTECODE\", \"PYTHONPYCACHEPREFIX\")}\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_app_a_vm_runner.py"
+input_sha256 = "6f0eb24ddc41bf7147fd72fdf9aacc5cc509761085b0ea35028f2203b12930d8"
+output_sha256 = "42766d1a3e7b1b528f9265ecc72a2c170e7f309340bec8b5b2db27e78a779c7e"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 208
+input_sha256 = "174b2f63d99d768e6e22ce6a63b3d85d6d553a43c8b2ce68b4842fc2b0d74e04"
+text = "        from unittest.mock import patch\n        fixture = patch.dict(os.environ, {'ABSD_APP_A_SSH_TARGET': 'builder@example.invalid',\n                                          'ABSD_APP_A_SSH_IDENTITY': '/public-fixture/identity'})\n        fixture.start()\n        self.addCleanup(fixture.stop)\n        self.assertTrue(SCRIPT.is_file(), 'repository-owned runner entrypoint is missing')\n"
+[[source_edit.change]]
+line = 789
+input_sha256 = "7c868c7613a60f5808a83952035044e2ddba51fc2be3512dc9415314c65b3622"
+text = "        streamed = runner.staging_host_ssh_argv('tar -C /data/vm -xf -', streamed=True)\n        plain = runner.staging_host_ssh_argv('true', streamed=False)\n"
+[[source_edit.change]]
+line = 790
+input_sha256 = "830c5b6cd94929e1f57aaa5d30590cd793202f35e18a9490b9e2b3ef2984aa2d"
+text = ""
+[[source_edit.change]]
+line = 806
+input_sha256 = "a6001880571ddfcca0757af836531f18c024fe1b21549ef7e3772faec40dca29"
+text = "                os.fsencode(os.sys.executable), '-I', '-B', '-X', 'pycache_prefix=' + (os.sys.pycache_prefix or ''), os.fsencode(SCRIPT), '--materialize',\n"
+[[source_edit.change]]
+line = 1272
+input_sha256 = "feb3700c197ee3496d6a4b950cc9bc03bec5e322aaef78af6141e53abb4faf9c"
+text = "                'staging_host': {\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_media.py"
+input_sha256 = "c5c71d61dd25164c6a9f30f9df88c2eda97bdacebb52ba8396bbd985d5dc77e9"
+output_sha256 = "d4ae5424f7a3821a842526479b4f853ce7c85b1361e98d077555e65a07746e58"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 4
+input_sha256 = "e0e7050850d3aa55ad8289a328ef0456d0dfa23829a48972eed4d85be5e90740"
+text = "Against S4's retained candidate (archived-occurrence,\n"
+[[source_edit.change]]
+line = 35
+input_sha256 = "5545c43e8baba0e9fd36952c5e74c85b8d185880cd6d06e4573e8b2f55abd17b"
+text = "S4 = pathlib.Path(os.environ[\"ABSD_S4_CANDIDATE\"]) if os.environ.get(\"ABSD_S4_CANDIDATE\") else None\n"
+[[source_edit.change]]
+line = 78
+input_sha256 = "6e76b82191006773504f2c92c0f02a9ca91a1bd120e9874957ab6434c3cc8662"
+text = "@unittest.skipUnless(S4 is not None and (S4 / \"inputs/COMPONENTS.json\").is_file(), \"S4 candidate not present\")\n"
+[[source_edit.change]]
+line = 405
+input_sha256 = "70148c309ba4dc41270d702aab75577a46a33c6e540a1a6d984faf330953b9a4"
+text = "@unittest.skipUnless(E2E and S4 is not None and (S4 / \"inputs/COMPONENTS.json\").is_file(),\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_native_installer.py"
+input_sha256 = "2006f15f4526ab05de0208d0a7a6b88c7b5dbea42b5d336e0a97766698e97d78"
+output_sha256 = "47fea8eefd5b310fabddc03e55e8eeaddc8656cd72c3e06647ecfaaf5da378d6"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 241
+input_sha256 = "a7323a99eca0ad4a59696b100ee1cd3aa472c187da5d967a6edbe86aebdf04c6"
+text = "                with mock.patch.dict(os.environ, {'ABSD_PROTECTED_HOST': ''}), \\\n                     mock.patch.object(mod.socket, 'gethostname', return_value='execution_host'), \\\n"
+[[source_edit.change]]
+line = 429
+input_sha256 = "1cbb795a8acf055138b09127b85cf88521ea93f714b1b28b31b2fddf4ad51d29"
+text = "                    parent = subprocess.Popen([sys.executable, '-B', '-I', '-X', f\"pycache_prefix={sys.pycache_prefix or ''}\", '-c', parent_code])\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_picolibc_provenance.py"
+input_sha256 = "deb4ae239867754556c103f1f9023265e0979dd484e99bb16c67e91090fb5f97"
+output_sha256 = "e84da2c60a5b3a4e29df3246169bde656f585bcaef2599ec8e7f7721490b657a"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 186
+input_sha256 = "6448d1677cc3264f78cfb4c421b83232ec65eeb3d065f23076552a6aed6b3e12"
+text = "CANDIDATES = [Path(p) for p in os.environ.get(\"ABSD_TEST_USERLAND_BUILD\", \"\").split(os.pathsep) if p]\n"
+[[source_edit.change]]
+line = 187
+input_sha256 = "abddb6b72651231356d4cee6693cb847555f2619302869eafb10c963e0b6309a"
+text = ""
+[[source_edit.change]]
+line = 188
+input_sha256 = "aa34df0df547df5db611f2d9eb165ac5ae9b3f4943d7fdcd34a196dde4f507e5"
+text = ""
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_recovery_point.py"
+input_sha256 = "269a3a2e3bf183cf8d4c1daf36af37c2f7b5a92a983f7db5992c3f57751e98a5"
+output_sha256 = "b780b0fca96092d87b6aa26b2651141390732215668309bac2c3e3ce6e069305"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 217
+input_sha256 = "3f08ad46f617e085c60daaf5388b1274e223b6955eab5719159e3371d7d4a8ec"
+text = "        # The point is read at its image's own size (coordination record #28): a\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_release_tool.py"
+input_sha256 = "7580f49b8f0baef7b6f92319291f2755278451049c30b3088a811f59568cdd18"
+output_sha256 = "a23991bbfaf7e02a771ba8b30dd56226df0c28e86a8a9592defceae849840ef5"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 503
+input_sha256 = "715debd940c6fbc5274bbc5c8f319769c314c84137b96ec8db7b336ec9c2c519"
+text = "    # operator-authorized recovery (coordination record #63): the hand-off boundary\n"
+[[source_edit.change]]
+line = 2013
+input_sha256 = "bb150c47452366bcb9550aa8e56c9b5bc481d223e69076b4ec1aaed9f2b45505"
+text = "        run = subprocess.run([sys.executable, \"-I\", \"-B\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", str(here / \"release.py\"), \"backup\", \"--target\", str(out),\n"
+[[source_edit.change]]
+line = 2061
+input_sha256 = "8380bf657febcf0d7bd6cbe5738d839405544e5574ff024ce51ff433a7eaa31f"
+text = "        # Reads take the image's own size (coordination record #28), so a truncated\n"
+[[source_edit.change]]
+line = 2631
+input_sha256 = "2549ae64b3e79f358171b61fd7e7da7b2ef7000c83155f84224ccf09914cdeee"
+text = "        run = subprocess.run([sys.executable, \"-I\", \"-B\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", str(here / \"release.py\"), \"select\", \"--release\", \"x\", \"--target\",\n"
+[[source_edit.change]]
+line = 3065
+input_sha256 = "ce3203b4e75fb2ed73d5281ec9a9118096ce9a80cd2cc849cdba577893d82304"
+text = "        run = subprocess.run([sys.executable, \"-I\", \"-B\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", str(here / \"release.py\"), \"reconfigure\", \"--target\", \"x\",\n"
+[[source_edit.change]]
+line = 3381
+input_sha256 = "ea94962d2d6d3ee7ccc4877afc73a84c275b6cefdc92e6dcd83605f4b669573d"
+text = "        for 64 MiB, as every operator image before coordination record #28.\"\"\"\n"
+[[source_edit.change]]
+line = 3486
+input_sha256 = "a439e2647b40a51706526c3486e24e882b8d4f4553ce32d3de017b0ae834c4bf"
+text = "        # coordination record #28: a full-layout disk whose v3 descriptor was written\n        # for 64 MiB, as every operator image before coordination record #28. The\n"
+[[source_edit.change]]
+line = 3487
+input_sha256 = "36b7be4630b5123c32716bef824bd3e43195cc8735fd7850329ecb2842150494"
+text = ""
+[[source_edit.change]]
+line = 3548
+input_sha256 = "261b241e8ffd30aed30d7741adfe261d7a673d5f9100d91809a3e0ae79dc2f98"
+text = "    \"\"\"coordination record #28: the operator image must stage a successor release of\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_storage_fence_resume.py"
+input_sha256 = "b54ce41431e452e2017ac589bcd2f4bb81cf8ec172d6962e3f7ee726416ce266"
+output_sha256 = "e39df91f98d81ba5c0ac5399df06071f74ebc5b15a87d222567f47bf08529d4a"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "2519277c2e17dab8e8172e04d52fd6ca78aed27d181e1bff1a2da768439ce27c"
+text = "\"\"\"Host tests of operator-authorized writable recovery (coordination record #63;\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/testdata/candidate8-release-manifest-v1.toml"
+input_sha256 = "edd1dfb59302cb0496f95031ccdecce1262166c34db978f41b996010f14e1e6b"
+output_sha256 = "901f3414e0a72730683cc15d24693b828c980198a00057c998b5098290accd71"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 3
+input_sha256 = "c8928a869382c052e0c3ae133b7591d47a3729f74e45203aab8d3be1cdcd0a5a"
+text = "# file is archived-occurrence\n"
+[[source_edit.change]]
+line = 23
+input_sha256 = "0eb2ace549ccd2b0881669589eea44c0ec2418aa5776388f2b2fdab59f85d85f"
+text = "kernel_repository = \"archived-occurrence\"\nkernel_remote = \"archived-occurrence\"\n"
+[[source_edit.change]]
+line = 24
+input_sha256 = "e88afc5496329b2bf248b1ba93dc2b398181e9a112e1c5ac702eb0b8736378fc"
+text = ""
+[[source_edit.change]]
+line = 27
+input_sha256 = "a28aeb5e47f5b78557ccb4143553aff596a4f060eabdf88e07287b1ef5508564"
+text = "platform_repository = \"archived-occurrence\"\nplatform_remote = \"archived-occurrence\"\n"
+[[source_edit.change]]
+line = 28
+input_sha256 = "547b8ee36758484d3e6ffed399cdda5c690a107d4e1eb4c6e23b068eecf86b14"
+text = ""
+[[source_edit.change]]
+line = 41
+input_sha256 = "20800a76fadedc38c2a7978c37f484d6ec7dcb7b749a7b77aa73b94e3ec8df93"
+text = "components_toml = \"archived-occurrence\"\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/verify-inputs.sh"
+input_sha256 = "afb22fd93b548187ed68377eb7cdf579d2ee39dd8aab6bf89979c395c1a70058"
+output_sha256 = "c46c3b4377cdc58566947adf0eb59252c69e748331055737be2e06b37b3514c8"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 330
+input_sha256 = "d1a280836a80f3ca243ba120ff9851fe287b6b801f1c79301585ad2e3068335b"
+text = "    8bd1a44514791c4454150aea7cf9f73207c398da7b3de0252da0c889fbed1502 \\\n"
+
+[[source_edit]]
+component = "platform"
+path = "src/bin/fsd_probe.rs"
+input_sha256 = "b6ee4ca7ff2583b25751cf5bb09392ac83e836bb77f35912c488e6c3900fc360"
+output_sha256 = "6962b49e19a78e2a2a787da26bdcd29b4ee2a0a29bc96b236a0d133b1f5a8c4e"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 143
+input_sha256 = "f69afff9492b5e17e8512c1ca60210538d98b816eaceef07cd03aa642acf67ba"
+text = "            // P0's commit-boundary discriminator (coordination record #63): the same\n"
+
+[[source_edit]]
+component = "platform"
+path = "ssh/Cargo.toml"
+input_sha256 = "33f4e241377c2835fd7ca27065d9864c5d2ba78f10c794447efecfeffbb447e0"
+output_sha256 = "8bd1a44514791c4454150aea7cf9f73207c398da7b3de0252da0c889fbed1502"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 43
+input_sha256 = "5794d5579c7e0674d073ef8a388707e2d8649ab3e8303c5be7275b2f08f33437"
+text = "# The worker of the dedicated enrollment image (coordination record #31 slice A,\n"
+
+[[source_edit]]
+component = "platform"
+path = "ssh/src/enroll_main.rs"
+input_sha256 = "34e1617306e887d7de41bc6e7356ba9292216378ca68c7d756e52da05d928db3"
+output_sha256 = "26966eaef18a1f8f154e7c562964a46d9fb379a2fa64884a1cdd69e41c6d64cf"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 2
+input_sha256 = "0316012590074378926f34eba27a1e42e11caac1ec84b3b110237f7105f43a28"
+text = "//! `absd-enroll`, the worker of the dedicated enrollment image (coordination record\n"
+
+[[source_edit]]
+component = "platform"
+path = "userland/TOOLBOX.md"
+input_sha256 = "90529e054e1003accd13be69766655acd29e9d35a46061a3c53b8471e278bb67"
+output_sha256 = "d8018778086c14b8285055eede1b50697be0b111b3a7c746c03239722a447a38"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 3
+input_sha256 = "ac89c455e94ec4509f0ac814d5519555b9777f476f7faa8396f265d72eb1b5fd"
+text = "Canonical task inventory for coordination record #53; observed 2026-11-05. This is\n"
+[[source_edit.change]]
+line = 39
+input_sha256 = "dc5331fbe546682269e6db8663f549acb0844fefa3ce3b3d9adcc45dd0a536a9"
+text = "  binaries match their declared hashes. Acquired over established staging_host SSH.\n"
+
+[[source_edit]]
+component = "platform"
+path = "vendor/README.md"
+input_sha256 = "9492d065c8c8c84a0434661797b8fe9f756ac6af069e3797d0267fa2614e1f1e"
+output_sha256 = "ced35d4102aa3584dad1f94901bee7e9ccedec863d8ddb2504af212d14734eff"
+reason = "Preview 2 steward checkpoint1 dispositions; explicit public inputs and archived labels"
+[[source_edit.change]]
+line = 26
+input_sha256 = "44a8570edf13786db7e44b8cb7676c004b27eb91ee2cd755abd5981b453f2c7d"
+text = "Everything else is byte-identical to the archive. The ABSD lines and `absd.rs` are first-party Apache-2.0, as recorded in `provenance.toml`.\n"
+[[source_edit.change]]
+line = 27
+input_sha256 = "35407b528c5cae51d9c068e75c077d409ce0877ab67eec7399977831e4cf1e89"
+text = ""
+[[source_edit.change]]
+line = 43
+input_sha256 = "a2e9762e4e2607e8e8f6ed78309c23a8aa7e7b451dc916f09a7a0c05f30d3736"
+text = "standard-library workspace. Those ABSD changes are first-party Apache-2.0, as recorded in `provenance.toml`.\n"
+[[source_edit.change]]
+line = 55
+input_sha256 = "d492c062bca948156ed5e852a640f6a1a42c28fe44d51e9053c7c246ef45b714"
+text = "first-party Apache-2.0.\n"
+
+[[accept]]
+kinds = ["private-address"]
+paths = ["platform/scripts/app-a-vm-runner.py"]
+lines = 1
+reason = "Exact isolated guest-network topology literals, not physical SSH destinations; checkpoint1 E."
+line_sha256 = { "platform/scripts/app-a-vm-runner.py" = ["e7dfd6551d6054b26b2f0f5d53451940ead368d4baadbbac851afa9d5d121f98"] }
+
+[[accept]]
+kinds = ["private-address"]
+paths = ["platform/scripts/test_app_a_vm_runner.py"]
+lines = 4
+reason = "Exact isolated guest-network topology literals, not physical SSH destinations; checkpoint1 E."
+line_sha256 = { "platform/scripts/test_app_a_vm_runner.py" = ["7e9793119e1286f80d76ba848722f4325636650c6328777400a48d21dca1c720", "19a291b25c330b8f7e4c43fd964c652399b5dad3ab56ab2139ff7d9079de10ef", "d13266c43f9b84de6025682ad8247e4200b6fdcef0c650a12fa9ceaebc610641", "3aa20cebbf6a9374e538ef623342ed8525a123ce736541f952fbed2d860b922f"] }
+
+[[accept]]
+kinds = ["credential"]
+paths = ["platform/scripts/test_app_a_vm_runner.py"]
+lines = 1
+reason = "Exact bare-header negative fixture without key body; checkpoint1 J."
+line_sha256 = { "platform/scripts/test_app_a_vm_runner.py" = ["e1a09f98d8aba5ab672b82594bcd860c8c64ed83f13edf7a0cb6d87c2482da66"] }
+
+# Public monorepo Git discovery must not rewrite SSH patch inspection paths.
+[[source_edit]]
+component = "platform"
+path = "scripts/stage-ssh.sh"
+input_sha256 = "52d8f96c0d6beef863c3682ecdf42c4f3baac5291a4c9a8b396620828feff71c"
+output_sha256 = "07cd5174b41eb97ab8b8c6254c03c87dc8d469e47bddb9f0cd8bffccee804efd"
+reason = "Inspect SSH patch paths at the component boundary without outer Git prefix rewriting; preserve src-only refusal and exact archive/patch checks."
+[[source_edit.change]]
+line = 27
+input_sha256 = "78ec183b89572e4610720f1249ec3f0184c6e8b6b53a0747e27cbece1ffcc533"
+text = "    # Inspect from the component, without inheriting an outer monorepo prefix.\n    if GIT_CEILING_DIRECTORIES=\"$(dirname \"$root\")\" git -C \"$root\" apply --numstat \"$root/patches/$patch\" | awk '{print $3}' | grep -v '^src/'; then\n"
+
+[[source_edit]]
+component = "platform"
+path = "scripts/media_operator.py"
+input_sha256 = "a2c1e5ff4d3da5883429522fb9503313bb7d828e18db8881b22e7b91e64fe827"
+output_sha256 = "97418957af5cb6d45dc771cc32527cf8275d448aa4ef39100f69b6519f2d9773"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 418
+input_sha256 = "a728bf8a5626ef2d82d859ec5a25c7022913aa24ebfc55e6594fd053c50fccc5"
+text = "    command = [\"/usr/bin/python3\", \"-I\", \"-B\", \"-X\", f\"pycache_prefix={work / 'pycache'}\",\n               str(platform / \"scripts\" / \"operator_image.py\"), \"build\", \"--kernel\", str(kernel),\n"
+
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_served_kernel.py"
+input_sha256 = "448c4c81caf1f5dd8e5191a9f7531d3fd89b77147aae0627bc456fa9221bb30c"
+output_sha256 = "c578dc2a89f1ae7c9cd2cd70e425b11cc688cb38c77e24aa32f3bac7dc295435"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 177
+input_sha256 = "732db7c62a6fc8569589118c003e56521dda0e6fdef0f23d9461498f62460a61"
+text = "                        [sys.executable, '-I', '-B', '-X', f\"pycache_prefix={sys.pycache_prefix or ''}\", '-c',\n"
+
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_preview_bundle.py"
+input_sha256 = "80900e19d01487cc6a14a675bc5dae67273cdeca987613d12be52dbabae542ad"
+output_sha256 = "f9024eaf1d588202e2360c159aa4c336ed8f16e681c792f8da26aba87cf4e002"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 281
+input_sha256 = "98cbcb1df13e3c002b0634276d23077c4a5e533fcc38429b0c345a702fbb3bc8"
+text = "        result = subprocess.run([sys.executable, '-B', '-I', '-X', f\"pycache_prefix={sys.pycache_prefix or ''}\", str(HERE / 'release.py'),\n"
+[[source_edit.change]]
+line = 367
+input_sha256 = "30d9babe0d693de36a18a367b89d7db8ba4701e872fd1b45aa1f81772d9164c8"
+text = "        command = [sys.executable, '-B', '-I', '-X', f\"pycache_prefix={sys.pycache_prefix or ''}\", str(HERE / 'release.py'), 'preview']\n"
+
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_p2_boot_binding.py"
+input_sha256 = "9f634e1a260261c1f546abfa826f36afad635319e2278e29205526a916e185c5"
+output_sha256 = "bd2882afb5d6f0e25e54ff8f645ef6f8833118e2c49e6a0a4ca71aea14aa98f2"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 194
+input_sha256 = "e58eab1e62db7a63858306d4dbe908164600bf603c79f2c71a384af4219f1444"
+text = "        done=subprocess.run([sys.executable,'-I','-B','-X',f\"pycache_prefix={sys.pycache_prefix or ''}\",'-c',code],env=env,capture_output=True)\n"
+
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_c_kit_selftest.py"
+input_sha256 = "8a5fd7c4e51c296c3c9d030cc075e16de299428f041baae690db8345b54e5ca5"
+output_sha256 = "6c8777e2323a035340e6928b971dccf850978accd52e1f62e43f1b1e5954598f"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 13
+input_sha256 = "4c074226b58869bb0aaa90e324656759ed467158061c34df6b61baec5210c9eb"
+text = "        result = subprocess.run([sys.executable, \"-B\", \"-I\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", str(SELFTEST), *map(str, args)],\n"
+
+
+[[source_edit]]
+component = "platform"
+path = "scripts/test_install_disk.py"
+input_sha256 = "3bf37204c0b0bbb37c0636700bec8cfa322d40efccedba8b944f15e21c52f82d"
+output_sha256 = "a8bc07f76766eb2a71af695cc8c3137979d9042aecb9479005c1659dec9ac588"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 788
+input_sha256 = "f22533b02e64e929791d9ab42385c946e8af7e0b670fb084329b6edbcf84396c"
+text = "            command = [sys.executable, \"-I\", \"-B\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", str(script), *argv]\n"
+[[source_edit.change]]
+line = 792
+input_sha256 = "4640ae7b4808573916c4506459aa4877091d3b1c840536b4f02130f72540b897"
+text = "            command = [sys.executable, \"-I\", \"-B\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", \"-c\", code]\n"
+[[source_edit.change]]
+line = 862
+input_sha256 = "f0d2d686c35b7846d213e68116e71c2e6489321841cde3ea52f2067231d32b70"
+text = "                done = subprocess.run([sys.executable, \"-I\", \"-B\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", \"-c\", code], stderr=subprocess.PIPE, timeout=60)\n"
+[[source_edit.change]]
+line = 869
+input_sha256 = "66537e2582fd6d8da1e462e01c8150fa7056b20a6ce6ebcfe96e346c65a198f7"
+text = "                done = subprocess.run([sys.executable, \"-I\", \"-B\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", \"-c\", code], stdout=subprocess.PIPE, timeout=60)\n"
+[[source_edit.change]]
+line = 891
+input_sha256 = "420663749d6e8cf31154dab27c0ec2d78be651faca4b1ffdb2db55d66683eb90"
+text = "                        done = subprocess.run([sys.executable, \"-I\", \"-B\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", \"-c\", code], stdout=w,\n"
+[[source_edit.change]]
+line = 895
+input_sha256 = "6070ebaa01b86436d7557fcbbf8b5b21a6d0fe5460da6e6e2b89969bd23567cf"
+text = "                        done = subprocess.run([sys.executable, \"-I\", \"-B\", \"-X\", f\"pycache_prefix={sys.pycache_prefix or ''}\", \"-c\", code], stderr=subprocess.PIPE,\n"
+
+
+[[source_edit]]
+component = "platform"
+path = "scripts/tests/test_boot_operator_supervisor.py"
+input_sha256 = "657c94325c53c843dced0f31eff62ce26446ff04e0c8b0fbc4b23c904a4610fc"
+output_sha256 = "40f2d8cb11584b985953ebd18649ab60bbb1a3f5a73390c6685a533e875f7f05"
+reason = "Preserve prior approved Preview 2 curation and propagate explicit isolated Python bytecode policy under steward0658; first-party host tooling only."
+[[source_edit.change]]
+line = 79
+input_sha256 = "4aecdc6ff2fe91e158301ebbae7acb53b9296f86c432392373907142be67b836"
+text = "    subprocess.run([sys.executable,'-I','-B','-X',f\"pycache_prefix={sys.pycache_prefix or ''}\",os.environ['FAKE_CONSUME'],image,console],check=True)\n"

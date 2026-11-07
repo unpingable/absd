@@ -17,6 +17,7 @@ tried to write.
 import argparse
 import hashlib
 import importlib.util
+import json
 import pathlib
 import re
 import struct
@@ -95,6 +96,124 @@ def import_plan(files):
     return plan
 
 
+def reserved_import_path(path):
+    return any(re.fullmatch(r"\.absd-import-[0-9a-fA-F]{4}", part) for part in path.split("/"))
+
+
+def import_peak_bytes(files):
+    records = import_plan_records(import_plan(files))
+    return max((r["peak_extra_blocks"] for r in records), default=0) * absd_fs.BLOCK
+
+
+def import_plan_records(plan, initial_files=()):
+    """Diagnostic identities/work estimates for the exact ordered plan.
+
+    The transient ABSDFIX1 stream is unchanged. An uncertain step 3 needs
+    prefix/result reconciliation; this record is not automatic retry authority.
+    """
+    states = {path: (len(data), hashlib.sha256(data)) for path, data in initial_files}
+    records = []
+    resident_blocks = peak_blocks = 0
+    for number, (step, entries) in enumerate(plan, 1):
+        files = []
+        for path, data in entries:
+            if reserved_import_path(path):
+                raise ValueError(f"reserved importer temporary component: {path}")
+            old_bytes = states.get(path, (0, None))[0]
+            if step in (1, 2) and path in states and not path.endswith("/"):
+                raise ValueError(f"duplicate creating import entry: {path}")
+            if step == 3:
+                if path not in states:
+                    raise ValueError(f"append plan has no known prefix for {path}")
+                prefix_bytes, prefix_hash = states[path]
+            elif step in (1, 2, 4):
+                prefix_bytes, prefix_hash = 0, hashlib.sha256()
+            else:
+                raise ValueError(f"cannot describe file-import step {step}")
+            result = prefix_hash.copy()
+            result.update(data)
+            total = prefix_bytes + len(data)
+            temporary_blocks = (total + absd_fs.BLOCK - 1) // absd_fs.BLOCK
+            before_blocks = resident_blocks
+            peak_blocks = max(peak_blocks, before_blocks + temporary_blocks)
+            resident_blocks += temporary_blocks - (old_bytes + absd_fs.BLOCK - 1) // absd_fs.BLOCK
+            files.append({"entry_type": "directory" if path.endswith("/") else "file", "path": path, "prefix_bytes": prefix_bytes, "prefix_sha256": prefix_hash.hexdigest(),
+                          "chunk_bytes": len(data), "chunk_sha256": sha256(data),
+                          "result_bytes": total, "result_sha256": result.hexdigest(),
+                          "temporary_bytes": total,
+                          "temporary_blocks": temporary_blocks,
+                          "committed_before_blocks": before_blocks,
+                          "peak_extra_blocks": peak_blocks,
+                          "resident_extra_blocks": resident_blocks,
+                          "estimated_file_io_bytes": 3 * prefix_bytes + 2 * len(data)})
+            states[path] = total, result
+        records.append({"boot": number, "step": step, "files": files,
+                        "peak_extra_blocks": peak_blocks, "resident_extra_blocks": resident_blocks,
+                        "pipe_bytes": sum(len(data) for _, data in entries),
+                        "largest_temporary_bytes": max((f["temporary_bytes"] for f in files), default=0),
+                        "estimated_file_io_bytes": sum(f["estimated_file_io_bytes"] for f in files)})
+    return records
+
+
+def inspect_import_plan(image, plan):
+    """Records and peak allocation relative to this halted image's state."""
+    sectors = pathlib.Path(image).stat().st_size // absd_fs.SECTOR
+    region = absd_fs.fs_region(image, sectors)
+    initial = []
+    if region is None:
+        if not plan or plan[0][0] != 1:
+            raise ValueError("import capacity: a blank device requires step 1")
+        # runtime/src/layout.rs Layout::format: filesystem is the second half.
+        blocks = absd_fs.geometry(sectors - sectors // 2)["data_blocks"]
+        used = 0
+    else:
+        selected = absd_fs.select(region)
+        blocks = absd_fs.geometry(region.sectors)["data_blocks"]
+        used = 0 if selected is None else len({b for r in selected["records"] for b in r["blocks"]})
+        if selected is not None:
+            paths = absd_fs.tree(region, selected)
+            seen = set()
+            for step, entries in plan:
+                for path, _ in entries:
+                    if step in (3, 4) and path not in seen and path in paths:
+                        if paths[path]["dir"]:
+                            raise ValueError(f"import capacity: {path} is a directory")
+                        initial.append((path, absd_fs.content(region, selected, paths[path])))
+                    seen.add(path)
+    records = import_plan_records(plan, initial_files=initial)
+    peak = max((r["peak_extra_blocks"] for r in records), default=0)
+    free = blocks - used
+    if peak > free:
+        raise ValueError(f"import_capacity peak_extra_blocks={peak} free_blocks={free}: temporary successor does not fit")
+    return records, {"peak_extra_blocks": peak, "free_blocks": free, "data_blocks": blocks}
+
+
+def fitted_image_bytes(plan, minimum):
+    """The size of a blank fixture image for `plan`: the smallest whole MiB,
+    never below `minimum`, whose filesystem holds the plan's peak extra
+    allocation plus a quarter of it as headroom for the matrix's own writes.
+    Derived from the same records check_import_capacity refuses on, so a
+    growing /bin cannot outrun a hand-picked image size again."""
+    peak = max((r["peak_extra_blocks"] for r in import_plan_records(plan)), default=0)
+    need = peak + -(-peak // 4)
+    mib = 1024 * 1024
+    size = -(-minimum // mib) * mib
+    while True:
+        sectors = size // absd_fs.SECTOR
+        try:
+            # runtime/src/layout.rs Layout::format: filesystem is the second half.
+            if absd_fs.geometry(sectors - sectors // 2)["data_blocks"] >= need:
+                return size
+        except absd_fs.Refused:
+            pass
+        size += mib
+
+
+def check_import_capacity(image, plan):
+    """Refuse the peak extra allocation before the first importer boot."""
+    return inspect_import_plan(image, plan)[1]
+
+
 class Matrix:
     def __init__(self, args):
         self.kernel = pathlib.Path(args.kernel).resolve()
@@ -136,7 +255,10 @@ class Matrix:
         return files
 
     def install(self, image, files):
-        for step, entries in import_plan(files):
+        plan = import_plan(files)
+        print("EXEC IMPORT CAPACITY " + json.dumps(check_import_capacity(image, plan), sort_keys=True))
+        print("EXEC IMPORT PLAN " + json.dumps(import_plan_records(plan), sort_keys=True))
+        for step, entries in plan:
             status, serial, captured = self.boot(f"import-{step}", step, image, stream(entries),
                                                  self.importer)
             require(status == 3 and f"FIXTURE IMPORT OK files={len(entries)}" in captured,

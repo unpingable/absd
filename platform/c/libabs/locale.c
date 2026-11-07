@@ -21,7 +21,7 @@
    never written: with mb-capable=false it can only be its initial value, C.
    newlocale, uselocale and the *_l functions are Picolibc's, unchanged:
    newlocale(LC_ALL_MASK, "pt_BR", 0) still succeeds (residual, outside R14;
-   no Stage 2 program, tcc or the POSIX adapter calls them). */
+   no Stage 2 program or the POSIX adapter calls them). */
 #include <errno.h>
 #include <locale.h>
 #include <stddef.h>

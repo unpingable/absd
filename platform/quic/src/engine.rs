@@ -305,6 +305,203 @@ fn pattern(offset: usize) -> u8 {
     b'a' + (offset % 26) as u8
 }
 
+/// Q04-only observation of one accepted UDP datagram, using public Quinn
+/// transmitted STREAM-frame counters. This diagnostic is not an IPC/handle ABI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamTransmitObservation {
+    pub engine_ordinal: u64,
+    pub native_request_ordinal: u64,
+    pub accepted_ordinal: u64,
+    pub bytes: usize,
+    pub sha256: [u8; 32],
+    pub stream_frames_before: u64,
+    pub stream_frames_after: u64,
+    pub authenticated: bool,
+}
+
+/// Q13/Q16-only public STREAM-frame processing around one actual received
+/// datagram. This is not an AEAD rejection counter or an IPC/handle ABI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TagReceiveObservation {
+    pub at_ms: u64,
+    pub receive_ordinal: u64,
+    pub bytes: usize,
+    pub sha256: [u8; 32],
+    pub stream_frames_before: u64,
+    pub stream_frames_after: u64,
+    pub authenticated_before: bool,
+    pub target_handled: bool,
+}
+
+fn observe_tag_receive(
+    observer: Option<fn(TagReceiveObservation)>,
+    counters: Option<(u64, u64, bool)>,
+    target_handled: bool,
+    bytes: &[u8],
+    receive_ordinal: u64,
+    at_ms: u64,
+) -> Result<(), (Outcome, String)> {
+    let Some(observer) = observer else {
+        return Ok(());
+    };
+    let (before, after, authenticated_before) =
+        counters.ok_or((Outcome::Bounds, "missing tag receive counters".into()))?;
+    if after < before
+        || after - before > bytes.len() as u64
+        || bytes.is_empty()
+        || bytes.len() > d::MAX_DATAGRAM
+        || receive_ordinal == 0
+        || receive_ordinal > PACKET_LIMIT
+        || (!target_handled && after != before)
+    {
+        return Err((Outcome::Bounds, "tag receive observation shape".into()));
+    }
+    // Retain zero deltas and pre-authentication/non-target inputs too. Only
+    // the independent Q13 checker decides which exact pair can establish M1.
+    observer(TagReceiveObservation {
+        at_ms,
+        receive_ordinal,
+        bytes: bytes.len(),
+        sha256: digest::digest(&digest::SHA256, bytes)
+            .as_ref()
+            .try_into()
+            .unwrap(),
+        stream_frames_before: before,
+        stream_frames_after: after,
+        authenticated_before,
+        target_handled,
+    });
+    Ok(())
+}
+
+/// Q06-only public flow-control observations. Existing Settings, Hooks and
+/// Report layouts and ordinary run entry points are unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlowControlObservation {
+    Blocked {
+        at_ms: u64,
+        sent_stream: usize,
+        requested: usize,
+        authenticated: bool,
+        max_data_received: u64,
+        max_stream_data_received: u64,
+    },
+    Transmit {
+        engine_ordinal: u64,
+        native_request_ordinal: u64,
+        accepted_ordinal: u64,
+        bytes: usize,
+        sha256: [u8; 32],
+        data_blocked_before: u64,
+        data_blocked_after: u64,
+        authenticated: bool,
+    },
+    Credit {
+        at_ms: u64,
+        receive_ordinal: u64,
+        bytes: usize,
+        sha256: [u8; 32],
+        max_data_before: u64,
+        max_data_after: u64,
+        max_stream_data_before: u64,
+        max_stream_data_after: u64,
+    },
+    Resumed {
+        at_ms: u64,
+        sent_before: usize,
+        written: usize,
+        max_data_received: u64,
+        max_stream_data_received: u64,
+    },
+}
+
+fn observe_flow_transmit(
+    observer: Option<fn(FlowControlObservation)>,
+    counters: Option<(u64, u64, bool)>,
+    bytes: &[u8],
+    engine_ordinal: u64,
+    native_request_ordinal: u64,
+    accepted_ordinal: u64,
+) -> Result<(), (Outcome, String)> {
+    let Some(observer) = observer else {
+        return Ok(());
+    };
+    let (before, after, authenticated) =
+        counters.ok_or((Outcome::Bounds, "missing flow transmit counters".into()))?;
+    if after < before {
+        return Err((Outcome::Bounds, "flow transmit counter rewind".into()));
+    }
+    if after == before {
+        return Ok(());
+    }
+    if !authenticated
+        || bytes.is_empty()
+        || bytes.len() > SEND_MTU
+        || after - before > bytes.len() as u64
+    {
+        return Err((Outcome::Bounds, "DATA_BLOCKED observation shape".into()));
+    }
+    observer(FlowControlObservation::Transmit {
+        engine_ordinal,
+        native_request_ordinal,
+        accepted_ordinal,
+        bytes: bytes.len(),
+        sha256: digest::digest(&digest::SHA256, bytes)
+            .as_ref()
+            .try_into()
+            .unwrap(),
+        data_blocked_before: before,
+        data_blocked_after: after,
+        authenticated,
+    });
+    Ok(())
+}
+
+fn observe_stream_transmit(
+    observer: Option<fn(StreamTransmitObservation)>,
+    counters: Option<(u64, u64, bool)>,
+    bytes: &[u8],
+    engine_ordinal: u64,
+    native_request_ordinal: u64,
+    accepted_ordinal: u64,
+) -> Result<(), (Outcome, String)> {
+    let Some(observer) = observer else {
+        return Ok(());
+    };
+    let (before, after, authenticated) =
+        counters.ok_or((Outcome::Bounds, "missing transmit counters".into()))?;
+    if after < before {
+        return Err((Outcome::Bounds, "transmit frame counter rewind".into()));
+    }
+    if after == before {
+        return Ok(());
+    }
+    if !authenticated
+        || bytes.is_empty()
+        || bytes.len() > SEND_MTU
+        || after - before > bytes.len() as u64
+    {
+        return Err((
+            Outcome::Bounds,
+            "STREAM observation shape or authentication".into(),
+        ));
+    }
+    observer(StreamTransmitObservation {
+        engine_ordinal,
+        native_request_ordinal,
+        accepted_ordinal,
+        bytes: bytes.len(),
+        sha256: digest::digest(&digest::SHA256, bytes)
+            .as_ref()
+            .try_into()
+            .unwrap(),
+        stream_frames_before: before,
+        stream_frames_after: after,
+        authenticated,
+    });
+    Ok(())
+}
+
 fn exchange<P: Pipe>(
     endpoint: &mut Endpoint,
     config: ClientConfig,
@@ -313,6 +510,9 @@ fn exchange<P: Pipe>(
     peer: SocketAddr,
     transport: &mut NativeTransport<P>,
     report: &mut Report,
+    stream_observer: Option<fn(StreamTransmitObservation)>,
+    flow_observer: Option<fn(FlowControlObservation)>,
+    tag_observer: Option<fn(TagReceiveObservation)>,
 ) -> Result<(), (Outcome, String)> {
     let native = |failure| (Outcome::Native, format!("{failure:?}"));
     if queue_control {
@@ -334,6 +534,10 @@ fn exchange<P: Pipe>(
         .connect(now, config, peer, SERVER_NAME)
         .map_err(|error| (Outcome::Protocol, format!("connect {error:?}")))?;
     let mut pending: Option<Vec<u8>> = None;
+    let mut pending_stream_counters = None;
+    let mut pending_flow_counters = None;
+    let mut flow_blocked_observed = false;
+    let mut flow_resumed_observed = false;
     let mut scratch = Vec::with_capacity(d::MAX_DATAGRAM);
     let mut input = [0; d::MAX_DATAGRAM];
     let mut stream = None;
@@ -356,7 +560,14 @@ fn exchange<P: Pipe>(
         // At most one input per turn. Endpoint responses are deliberately
         // discarded in this one-client profile; they never replace held bytes.
         if let Some(length) = transport.receive(&mut input).map_err(native)? {
+            let tag_before =
+                tag_observer.map(|_| (connection.stats().frame_rx.stream, report.authenticated));
+            let credit_before = flow_observer.map(|_| {
+                let stats = connection.stats();
+                (stats.frame_rx.max_data, stats.frame_rx.max_stream_data)
+            });
             scratch.clear();
+            let mut target_handled = false;
             match endpoint.handle(
                 now,
                 peer,
@@ -366,11 +577,44 @@ fn exchange<P: Pipe>(
                 &mut scratch,
             ) {
                 Some(DatagramEvent::ConnectionEvent(target, event)) if target == handle => {
-                    connection.handle_event(event)
+                    connection.handle_event(event);
+                    target_handled = true;
                 }
                 Some(DatagramEvent::Response(_)) => report.endpoint_responses_discarded += 1,
                 Some(_) => return Err((Outcome::Protocol, "unexpected endpoint event".into())),
                 None => {}
+            }
+            observe_tag_receive(
+                tag_observer,
+                tag_before.map(|(before, authenticated)| {
+                    (before, connection.stats().frame_rx.stream, authenticated)
+                }),
+                target_handled,
+                &input[..length],
+                transport.metrics.received,
+                clock.last,
+            )?;
+            if let (Some(observer), Some((data_before, stream_before))) =
+                (flow_observer, credit_before)
+            {
+                let stats = connection.stats();
+                if stats.frame_rx.max_data > data_before
+                    || stats.frame_rx.max_stream_data > stream_before
+                {
+                    observer(FlowControlObservation::Credit {
+                        at_ms: clock.last,
+                        receive_ordinal: transport.metrics.received,
+                        bytes: length,
+                        sha256: digest::digest(&digest::SHA256, &input[..length])
+                            .as_ref()
+                            .try_into()
+                            .unwrap(),
+                        max_data_before: data_before,
+                        max_data_after: stats.frame_rx.max_data,
+                        max_stream_data_before: stream_before,
+                        max_stream_data_after: stats.frame_rx.max_stream_data,
+                    });
+                }
             }
         }
         let mut work = 0;
@@ -440,8 +684,39 @@ fn exchange<P: Pipe>(
                         *byte = pattern(report.sent_stream + index);
                     }
                     match connection.send_stream(id).write(&bytes[..count]) {
-                        Ok(count) if count > 0 => report.sent_stream += count,
-                        Ok(_) | Err(WriteError::Blocked) => {}
+                        Ok(count) if count > 0 => {
+                            if let Some(observer) = flow_observer {
+                                if flow_blocked_observed && !flow_resumed_observed {
+                                    let stats = connection.stats();
+                                    observer(FlowControlObservation::Resumed {
+                                        at_ms: clock.last,
+                                        sent_before: report.sent_stream,
+                                        written: count,
+                                        max_data_received: stats.frame_rx.max_data,
+                                        max_stream_data_received: stats.frame_rx.max_stream_data,
+                                    });
+                                    flow_resumed_observed = true;
+                                }
+                            }
+                            report.sent_stream += count;
+                        }
+                        Err(WriteError::Blocked) => {
+                            if let Some(observer) = flow_observer {
+                                if !flow_blocked_observed {
+                                    let stats = connection.stats();
+                                    observer(FlowControlObservation::Blocked {
+                                        at_ms: clock.last,
+                                        sent_stream: report.sent_stream,
+                                        requested: count,
+                                        authenticated: report.authenticated,
+                                        max_data_received: stats.frame_rx.max_data,
+                                        max_stream_data_received: stats.frame_rx.max_stream_data,
+                                    });
+                                    flow_blocked_observed = true;
+                                }
+                            }
+                        }
+                        Ok(_) => {}
                         Err(error) => return Err((Outcome::Protocol, format!("write {error:?}"))),
                     }
                 }
@@ -508,6 +783,10 @@ fn exchange<P: Pipe>(
         }
         if pending.is_none() {
             scratch.clear();
+            // With max_datagrams=1, no segment_size and exact scratch size below,
+            // the public counter delta belongs to this one returned UDP datagram.
+            let stream_before = stream_observer.map(|_| connection.stats().frame_tx.stream);
+            let flow_before = flow_observer.map(|_| connection.stats().frame_tx.data_blocked);
             if let Some(transmit) = connection.poll_transmit(now, 1, &mut scratch) {
                 if transmit.destination != peer
                     || transmit.src_ip.is_some()
@@ -524,6 +803,20 @@ fn exchange<P: Pipe>(
                 if report.engine_transmits >= PACKET_LIMIT {
                     return Err((Outcome::Bounds, "produced packet bound".into()));
                 }
+                pending_stream_counters = stream_before.map(|before| {
+                    (
+                        before,
+                        connection.stats().frame_tx.stream,
+                        report.authenticated,
+                    )
+                });
+                pending_flow_counters = flow_before.map(|before| {
+                    (
+                        before,
+                        connection.stats().frame_tx.data_blocked,
+                        report.authenticated,
+                    )
+                });
                 report.engine_transmits += 1;
                 if transmit.ecn.is_some() {
                     report.ecn_hints_omitted += 1;
@@ -532,10 +825,42 @@ fn exchange<P: Pipe>(
                     &mut scratch,
                     Vec::with_capacity(d::MAX_DATAGRAM),
                 ));
+            } else if stream_before
+                .is_some_and(|before| connection.stats().frame_tx.stream != before)
+            {
+                return Err((
+                    Outcome::Bounds,
+                    "STREAM counter advanced without a returned datagram".into(),
+                ));
+            } else if flow_before
+                .is_some_and(|before| connection.stats().frame_tx.data_blocked != before)
+            {
+                return Err((
+                    Outcome::Bounds,
+                    "DATA_BLOCKED counter advanced without a returned datagram".into(),
+                ));
             }
         }
         if let Some(bytes) = &pending {
             if transport.send(bytes).map_err(native)? {
+                observe_stream_transmit(
+                    stream_observer,
+                    pending_stream_counters,
+                    bytes,
+                    report.engine_transmits,
+                    transport.metrics.send_calls,
+                    transport.metrics.send_accepted,
+                )?;
+                observe_flow_transmit(
+                    flow_observer,
+                    pending_flow_counters,
+                    bytes,
+                    report.engine_transmits,
+                    transport.metrics.send_calls,
+                    transport.metrics.send_accepted,
+                )?;
+                pending_stream_counters = None;
+                pending_flow_counters = None;
                 if report.pending_exhausted_sha256.is_some()
                     && report.pending_retry_sha256.is_none()
                 {
@@ -583,7 +908,79 @@ fn exchange<P: Pipe>(
 }
 
 pub fn run<P: Pipe>(pipe: P, root_der: &[u8], settings: Settings, hooks: Hooks) -> Report {
-    run_with_peer(pipe, Peer::V4(PEER), root_der, settings, hooks)
+    run_with_peer(
+        pipe,
+        Peer::V4(PEER),
+        root_der,
+        settings,
+        hooks,
+        None,
+        None,
+        None,
+    )
+}
+
+/// Same IPv4 engine with an opt-in accepted-transmit diagnostic for Q04.
+/// Existing run/run_ipv6, Hooks, Settings and Report layouts stay unchanged.
+pub fn run_stream_observed<P: Pipe>(
+    pipe: P,
+    root_der: &[u8],
+    settings: Settings,
+    hooks: Hooks,
+    observer: fn(StreamTransmitObservation),
+) -> Report {
+    run_with_peer(
+        pipe,
+        Peer::V4(PEER),
+        root_der,
+        settings,
+        hooks,
+        Some(observer),
+        None,
+        None,
+    )
+}
+
+/// Same IPv4 engine with opt-in public blocking, accepted DATA_BLOCKED and
+/// received credit observations for Q06. This changes no transport authority.
+pub fn run_flow_observed<P: Pipe>(
+    pipe: P,
+    root_der: &[u8],
+    settings: Settings,
+    hooks: Hooks,
+    observer: fn(FlowControlObservation),
+) -> Report {
+    run_with_peer(
+        pipe,
+        Peer::V4(PEER),
+        root_der,
+        settings,
+        hooks,
+        None,
+        Some(observer),
+        None,
+    )
+}
+
+/// Same IPv4 engine with a Q13-only, per-input public STREAM processing
+/// diagnostic. Ordinary entry points, Hooks, Settings and Report stay intact.
+pub fn run_tag_observed<P: Pipe>(
+    pipe: P,
+    root_der: &[u8],
+    settings: Settings,
+    hooks: Hooks,
+    observer: fn(TagReceiveObservation),
+) -> Report {
+    run_with_peer(
+        pipe,
+        Peer::V4(PEER),
+        root_der,
+        settings,
+        hooks,
+        None,
+        None,
+        Some(observer),
+    )
 }
 
 /// Run the same bounded QUIC engine over an explicitly selected, scoped IPv6
@@ -596,7 +993,16 @@ pub fn run_ipv6<P: Pipe>(
     settings: Settings,
     hooks: Hooks,
 ) -> Report {
-    run_with_peer(pipe, Peer::V6(peer), root_der, settings, hooks)
+    run_with_peer(
+        pipe,
+        Peer::V6(peer),
+        root_der,
+        settings,
+        hooks,
+        None,
+        None,
+        None,
+    )
 }
 
 fn run_with_peer<P: Pipe>(
@@ -605,6 +1011,9 @@ fn run_with_peer<P: Pipe>(
     root_der: &[u8],
     settings: Settings,
     hooks: Hooks,
+    stream_observer: Option<fn(StreamTransmitObservation)>,
+    flow_observer: Option<fn(FlowControlObservation)>,
+    tag_observer: Option<fn(TagReceiveObservation)>,
 ) -> Report {
     let mut report = Report::new();
     report.enter(Phase::Init, hooks);
@@ -628,6 +1037,9 @@ fn run_with_peer<P: Pipe>(
         peer.socket_addr(),
         &mut transport,
         &mut report,
+        stream_observer,
+        flow_observer,
+        tag_observer,
     ) {
         Ok(()) => {
             report.outcome = Outcome::Complete;
@@ -765,5 +1177,221 @@ mod error_report_tests {
         // flow and independent checker still decide the terminal outcome.
         assert_eq!(report.outcome, Outcome::Config);
         assert!(!report.authenticated);
+    }
+}
+
+#[cfg(test)]
+mod stream_observation_tests {
+    use super::{StreamTransmitObservation, observe_stream_transmit};
+    use ring::digest;
+    fn unexpected(_: StreamTransmitObservation) {
+        panic!("unexpected STREAM annotation");
+    }
+    fn accepted(value: StreamTransmitObservation) {
+        assert_eq!(
+            (
+                value.engine_ordinal,
+                value.native_request_ordinal,
+                value.accepted_ordinal
+            ),
+            (2, 3, 2)
+        );
+        assert_eq!(
+            (
+                value.stream_frames_before,
+                value.stream_frames_after,
+                value.bytes
+            ),
+            (4, 6, 5)
+        );
+        assert!(value.authenticated);
+        assert_eq!(
+            value.sha256.as_slice(),
+            digest::digest(&digest::SHA256, b"frame").as_ref()
+        );
+    }
+    #[test]
+    fn accepted_counter_delta_binds_exact_ciphertext_and_request() {
+        observe_stream_transmit(Some(accepted), Some((4, 6, true)), b"frame", 2, 3, 2).unwrap();
+    }
+    #[test]
+    fn ack_only_counter_does_not_emit_stream_observation() {
+        observe_stream_transmit(Some(unexpected), Some((4, 4, true)), b"frame", 2, 3, 2).unwrap();
+    }
+    #[test]
+    fn counter_rewind_refuses_before_callback() {
+        assert!(
+            observe_stream_transmit(Some(unexpected), Some((4, 3, true)), b"frame", 2, 3, 2)
+                .is_err()
+        );
+    }
+    #[test]
+    fn unauthenticated_stream_counter_refuses() {
+        assert!(
+            observe_stream_transmit(Some(unexpected), Some((4, 5, false)), b"frame", 2, 3, 2)
+                .is_err()
+        );
+    }
+    #[test]
+    fn positive_counter_requires_bounded_bytes_and_metadata() {
+        let oversized = [0; super::SEND_MTU + 1];
+        for (counters, bytes) in [
+            (None, &b"frame"[..]),
+            (Some((4, 5, true)), &b""[..]),
+            (Some((4, 10, true)), &b"frame"[..]),
+            (Some((4, 5, true)), &oversized[..]),
+        ] {
+            assert!(observe_stream_transmit(Some(unexpected), counters, bytes, 2, 3, 2).is_err());
+        }
+    }
+    #[test]
+    fn unobserved_default_does_not_need_transmit_metadata() {
+        observe_stream_transmit(None, None, b"", 0, 0, 0).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tag_receive_observation_tests {
+    use super::{TagReceiveObservation, observe_tag_receive};
+    use ring::digest;
+
+    fn unexpected(_: TagReceiveObservation) {
+        panic!("unexpected tag input observation");
+    }
+    fn exact(value: TagReceiveObservation) {
+        assert_eq!((value.at_ms, value.receive_ordinal, value.bytes), (7, 2, 5));
+        assert_eq!(value.stream_frames_before, 4);
+        assert!(value.authenticated_before && value.target_handled);
+        assert_eq!(
+            value.sha256.as_slice(),
+            digest::digest(&digest::SHA256, b"frame").as_ref()
+        );
+    }
+    fn zero(value: TagReceiveObservation) {
+        exact(value);
+        assert_eq!(value.stream_frames_after, 4);
+    }
+    fn positive(value: TagReceiveObservation) {
+        exact(value);
+        assert_eq!(value.stream_frames_after, 6);
+    }
+    fn unhandled(value: TagReceiveObservation) {
+        assert!(!value.authenticated_before && !value.target_handled);
+        assert_eq!(
+            (value.stream_frames_before, value.stream_frames_after),
+            (0, 0)
+        );
+    }
+    #[test]
+    fn zero_delta_still_records_exact_received_datagram() {
+        observe_tag_receive(Some(zero), Some((4, 4, true)), true, b"frame", 2, 7).unwrap();
+    }
+    #[test]
+    fn positive_delta_binds_same_received_datagram() {
+        observe_tag_receive(Some(positive), Some((4, 6, true)), true, b"frame", 2, 7).unwrap();
+    }
+    #[test]
+    fn earlier_inputs_keep_actual_authentication_and_target_flags() {
+        observe_tag_receive(Some(unhandled), Some((0, 0, false)), false, b"frame", 1, 7).unwrap();
+    }
+    #[test]
+    fn counter_rewind_or_unhandled_processing_refuses_before_callback() {
+        for (counters, handled) in [(Some((4, 3, true)), true), (Some((4, 5, true)), false)] {
+            assert!(
+                observe_tag_receive(Some(unexpected), counters, handled, b"frame", 2, 7).is_err()
+            );
+        }
+    }
+    #[test]
+    fn bounded_exact_metadata_is_required_only_when_observed() {
+        let oversized = [0; super::d::MAX_DATAGRAM + 1];
+        for (counters, bytes, ordinal) in [
+            (None, &b"frame"[..], 2),
+            (Some((4, 4, true)), &b""[..], 2),
+            (Some((4, 10, true)), &b"frame"[..], 2),
+            (Some((4, 4, true)), &oversized[..], 2),
+            (Some((4, 4, true)), &b"frame"[..], 0),
+            (Some((4, 4, true)), &b"frame"[..], 257),
+        ] {
+            assert!(
+                observe_tag_receive(Some(unexpected), counters, true, bytes, ordinal, 7).is_err()
+            );
+        }
+    }
+    #[test]
+    fn ordinary_none_path_is_inert_without_metadata() {
+        observe_tag_receive(None, None, false, b"", 0, 0).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod flow_observer_tests {
+    use super::{FlowControlObservation, SEND_MTU, observe_flow_transmit};
+    use ring::digest;
+
+    fn unexpected(_: FlowControlObservation) {
+        panic!("unexpected flow observation");
+    }
+    fn accepted(value: FlowControlObservation) {
+        let FlowControlObservation::Transmit {
+            engine_ordinal,
+            native_request_ordinal,
+            accepted_ordinal,
+            bytes,
+            sha256,
+            data_blocked_before,
+            data_blocked_after,
+            authenticated,
+        } = value
+        else {
+            panic!("wrong observation kind")
+        };
+        assert_eq!(
+            (engine_ordinal, native_request_ordinal, accepted_ordinal),
+            (2, 3, 2)
+        );
+        assert_eq!((data_blocked_before, data_blocked_after, bytes), (0, 1, 5));
+        assert!(authenticated);
+        assert_eq!(
+            sha256.as_slice(),
+            digest::digest(&digest::SHA256, b"frame").as_ref()
+        );
+    }
+    #[test]
+    fn accepted_data_blocked_counter_binds_actual_datagram_and_request() {
+        observe_flow_transmit(Some(accepted), Some((0, 1, true)), b"frame", 2, 3, 2).unwrap();
+    }
+    #[test]
+    fn ordinary_ack_or_stream_does_not_supply_data_blocked_observation() {
+        observe_flow_transmit(Some(unexpected), Some((0, 0, true)), b"frame", 2, 3, 2).unwrap();
+    }
+    #[test]
+    fn flow_counter_rewind_refuses_before_callback() {
+        assert!(
+            observe_flow_transmit(Some(unexpected), Some((2, 1, true)), b"frame", 2, 3, 2).is_err()
+        );
+    }
+    #[test]
+    fn unauthenticated_data_blocked_observation_refuses() {
+        assert!(
+            observe_flow_transmit(Some(unexpected), Some((0, 1, false)), b"frame", 2, 3, 2)
+                .is_err()
+        );
+    }
+    #[test]
+    fn positive_flow_counter_requires_exact_bounded_metadata() {
+        let oversized = [0; SEND_MTU + 1];
+        for (counters, bytes) in [
+            (None, &b"frame"[..]),
+            (Some((0, 1, true)), &b""[..]),
+            (Some((0, 6, true)), &b"frame"[..]),
+            (Some((0, 1, true)), &oversized[..]),
+        ] {
+            assert!(observe_flow_transmit(Some(unexpected), counters, bytes, 2, 3, 2).is_err());
+        }
+    }
+    #[test]
+    fn unobserved_default_has_no_new_counter_precondition() {
+        observe_flow_transmit(None, None, b"", 0, 0, 0).unwrap();
     }
 }

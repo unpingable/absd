@@ -7,6 +7,8 @@
 #   build/    the meson build directory (replaced on every run)
 #   install/  lib/libc.a, lib/libm.a, include/ (replaced on every run)
 #   buildoptions.json  `meson introspect --buildoptions` of the build
+#   deps.txt  Ninja's dependency log; any host file in it outside clang's
+#             resource headers (a /usr/include header) refuses the build
 # meson and ninja run from the campaign venv ($camp/venv), installed from the
 # wheels pinned in PIN (from $camp/venv/dl when present, else downloaded
 # there), each wheel's sha256 checked first. The cross file's
@@ -98,13 +100,22 @@ test -f "$prefix/src/meson.build" || die "the tarball has no meson.build at its 
 printf "[constants]\nabsd_tmpdir = '%s'\n" "$TMPDIR" > "$prefix/tmpdir-cross.txt"
 options=$(grep '^-D' "$root/c/picolibc/options.txt")
 # shellcheck disable=SC2086  # one -D option per word
-"$venv/bin/meson" setup "$prefix/build" "$prefix/src" \
+NINJA="$venv/bin/ninja" "$venv/bin/meson" setup "$prefix/build" "$prefix/src" \
     --cross-file="$root/c/picolibc/cross-absd.txt" \
     --cross-file="$prefix/tmpdir-cross.txt" --prefix="$prefix/install" \
     -Dlibdir=lib -Dincludedir=include $options > "$prefix/setup.log" 2>&1 ||
     { tail -40 "$prefix/setup.log"; die "meson setup failed (log $prefix/setup.log)"; }
 PATH=$venv/bin:$PATH nice -n 10 "$venv/bin/ninja" -j "$jobs" -C "$prefix/build" > "$prefix/build.log" 2>&1 ||
     { tail -40 "$prefix/build.log"; die "ninja failed (log $prefix/build.log)"; }
+# Hermeticity: every compilation unit may read only the source tree, the
+# build directory and clang's resource headers. Ninja's dependency log names
+# every file each object read (a __has_include probe included), so any other
+# absolute path, a host /usr/include header above all, refuses the build.
+resource_include=$(clang -print-resource-dir)/include/
+"$venv/bin/ninja" -C "$prefix/build" -t deps > "$prefix/deps.txt"
+host_headers=$(awk -v ok="$resource_include" '/^ +\// { p = $1; if (index(p, ok) != 1) print p }' "$prefix/deps.txt" | sort -u)
+[ -z "$host_headers" ] ||
+    die "compilation units read host files outside clang's resource headers ($prefix/deps.txt): $(echo $host_headers)"
 PATH=$venv/bin:$PATH "$venv/bin/meson" install -C "$prefix/build" --no-rebuild > "$prefix/install.log" 2>&1 ||
     { tail -40 "$prefix/install.log"; die "meson install failed (log $prefix/install.log)"; }
 "$venv/bin/meson" introspect --buildoptions "$prefix/build" > "$prefix/buildoptions.json"

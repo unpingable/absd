@@ -22,11 +22,17 @@ into the volume, the file dates, the GRUB search UUID and the hybrid GPT;
 copies every GRUB translation the host has (language packs add files);
 and its mformat writes uninitialised process memory into the EFI FAT
 image's free space and a time-derived serial into its boot sector. The
-recipe: address randomisation off and the libc clock frozen at the pair's
-epoch (setarch -R, faketime), SOURCE_DATE_EPOCH for xorriso's GUIDs, fixed
-file dates, no locales, then the EFI image normalised in place (serial
-derived from the pair, free clusters and slack zeroed). The ISO is built
-twice and must come out identical.
+recipe: the libc clock frozen at the pair's epoch (faketime),
+SOURCE_DATE_EPOCH for xorriso's GUIDs, fixed file dates, no locales, then
+the EFI image normalised in place (serial derived from the pair, free
+clusters and slack zeroed). The ISO is built twice and must come out
+identical. An earlier step that also switched address randomisation off
+(setarch -R) was removed after the #61 comparisons: the ISO bytes were
+identical with and without it in the retained comparison cases (container
+and native-host packaging of the pinned tools, and the published RC1
+input tree). Those comparisons cover their exact inputs and pinned tool
+versions, not every future combination; the EFI normalisation plus the
+two-build check remain the enforced mechanism.
 
 What this does not make reproducible: the platform tree's own outputs.
 They are inputs here, recorded by digest in MANIFEST; see the receipt's
@@ -42,6 +48,7 @@ import os
 import pathlib
 import re
 import shutil
+import shlex
 import socket
 import struct
 import subprocess
@@ -328,7 +335,9 @@ def build_iso(tree, out_iso, epoch, profile, kernel_commit, platform_commit, scr
     for p in sorted(copy.rglob("*")):
         os.chmod(p, 0o755 if p.is_dir() else 0o644)
         os.utime(p, (epoch, epoch))
-    command = [m.tool("setarch"), "x86_64", "-R", m.tool("faketime"), stamp.strftime("%Y-%m-%d %H:%M:%S"),
+    # Basic faketime syntax starts an advancing clock; -f with an absolute
+    # timestamp freezes it, including GRUB's timestamp-derived identifiers.
+    command = [m.tool("faketime"), "-f", stamp.strftime("%Y-%m-%d %H:%M:%S"),
                m.tool("grub-mkrescue"), f"--locales={profile['iso']['locales']}", "-o", str(out_iso), str(copy),
                "--set_all_file_dates", stamp.strftime("%Y%m%d%H%M%S00")]
     result = subprocess.run(command, env=m.clean_env(epoch), cwd="/", capture_output=True, text=True)
@@ -352,6 +361,24 @@ def registry_neighbours():
     for index in sorted((home / "registry" / "src").glob("*")):
         found += sorted(p.name for p in index.iterdir() if p.name.startswith("uu_"))
     return found
+
+
+
+def bound_importer_qemu(platform, qemu, inputs, pin, env):
+    """Explicit canonical importer handoff; never an ambient env fallback."""
+    import boot_artifacts as ba
+    import p2_boot_binding as binding
+    path = pathlib.Path(inputs).resolve()
+    ba.need(ba.sha(path) == pin, "media bound importer input pin differs")
+    config = json.loads(path.read_text())
+    ba.need(config["qemu"] == qemu and config["qemu_sha256"] == ba.sha(qemu),
+            "media bound importer QEMU differs")
+    payloads = [binding.release_inputs(entry["path"], entry["manifest_sha256"]) for entry in config["releases"]]
+    ba.need(any(all(payload[name] == (platform / name).read_bytes() for name in PLATFORM_ELFS)
+                for payload in payloads), "media importer inputs differ from built platform ELFs")
+    env["ABSD_P2_BOUND_INPUTS"] = str(path)
+    env["ABSD_BLOCK_ATTACH"] = "ata"
+    return shlex.join(binding.proxy_command([qemu, "-cpu", "max,vendor=GenuineIntel,+rdrand"]))
 
 
 def operator_image(args):
@@ -381,9 +408,19 @@ def operator_image(args):
         m.confined(platform, name)
     for name in ("make", "qemu-system-x86_64", "grub-mkrescue", "xorriso"):
         m.tool(name)
-    command = ["/usr/bin/python3", "-I", "-B", "-X", f"pycache_prefix={work / 'python-cache'}", str(platform / "scripts" / "operator_image.py"), "build", "--kernel", str(kernel),
+    selected_qemu = f"{m.tool('qemu-system-x86_64')} -cpu max,vendor=GenuineIntel,+rdrand"
+    binding_inputs = getattr(args, "bound_boot_inputs", None)
+    binding_pin = getattr(args, "bound_boot_inputs_sha256", None)
+    if bool(binding_inputs) != bool(binding_pin):
+        raise m.Refused("media bound importer needs input path and independent pin")
+    if binding_inputs:
+        selected_qemu = bound_importer_qemu(platform, m.tool("qemu-system-x86_64"), binding_inputs, binding_pin, env)
+    command = ["/usr/bin/python3", "-I", "-B", "-X", f"pycache_prefix={work / 'pycache'}",
+               str(platform / "scripts" / "operator_image.py"), "build", "--kernel", str(kernel),
                "--authorized-keys", str(keys), "--release-id", args.release_id,
-               "--qemu", f"{m.tool('qemu-system-x86_64')} -cpu max,vendor=GenuineIntel,+rdrand"]
+               "--qemu", selected_qemu]
+    if getattr(args, "no_local_login", False):
+        command += ["--no-local-login"]
     if args.etc:
         command += ["--etc", str(pathlib.Path(args.etc).resolve())]
     with open(out / "operator-image.log", "wb") as log:
@@ -576,6 +613,22 @@ def free_port():
         return s.getsockname()[1]
 
 
+
+def bound_operator_launch(command, iso, disk, iso_pin, disk_pin, kernel, platform, profile, record_path, **kwargs):
+    """Bind the existing profile boot to its actual loader and active ELFs."""
+    import boot_artifacts as ba
+    import operator_boot_binding as ob
+    grub = (iso_tree_expected(kernel, profile) / "boot/grub/grub.cfg").read_bytes()
+    binary = (kernel / KERNEL_OUTPUT).read_bytes()
+    ob.verify_iso(iso.read_bytes(), binary, grub)
+    catalog = ob.verify_kernel_catalog(binary, {
+        "external-workload": (platform / "sshd.elf").read_bytes(),
+        "file-server": (platform / "absd-fsd.elf").read_bytes()})
+    process = ba.launch(command, iso_sha256=iso_pin, disk_sha256=disk_pin,
+                        qemu_sha256=ba.sha(command[0]), record_path=record_path, **kwargs)
+    return process, catalog
+
+
 def operator_boot(args, timeout=420):
     """A bounded TCG boot of a copy of the disk (the boot writes it: the
     host key, /home, /tmp, /var/log). Passes when sshd listens and answers
@@ -624,8 +677,11 @@ def operator_boot(args, timeout=420):
     faults = ("ABSD PANIC", "KERNEL FAULT", "SERVED RECOVERY BEGIN", "MACHINE STOP")
     record = {"passed": False, "iso_sha256": iso_sha, "image_sha256": image_sha, "port": port}
     log = open(results / "qemu.log", "wb")
-    process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=env)
+    process = None
     try:
+        process, record["catalog"] = bound_operator_launch(command, paths[ISO], disk, iso_sha, image_sha,
+            pathlib.Path(args.kernel_run), pathlib.Path(args.platform_tree).resolve(), profile,
+            results / "LAUNCH.json", stdout=log, stderr=subprocess.STDOUT, env=env)
         start = time.monotonic()
         text = ""
         while True:
@@ -681,11 +737,12 @@ def operator_boot(args, timeout=420):
             record["halted"] = True
         record["passed"] = True
     finally:
-        if process.poll() is None:
+        if process is not None and process.poll() is None:
             process.kill()
             process.wait()
         log.close()
         record["console_sha256"] = m.sha(console) if console.exists() else None
+        record["launch_sha256"] = m.sha(results / "LAUNCH.json") if (results / "LAUNCH.json").exists() else None
         record["validated_disk_unchanged"] = m.sha(paths[IMAGE]) == image_sha
         if disk.exists():
             record["disk_copy_sha256"] = m.sha(disk)

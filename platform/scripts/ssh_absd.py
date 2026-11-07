@@ -42,6 +42,8 @@ spec.loader.exec_module(em)
 from served_ram import served_qemu
 from e1000_rx import wait_rx_setup, RxSetupFailed
 from served_kernel import kernel_make
+from served_kernel import FILE_SERVER_SLOTS
+import storage_fence_state
 import absd_fs  # noqa: E402
 import absd_inputs  # noqa: E402
 import release_record  # noqa: E402
@@ -76,6 +78,15 @@ def captured(serial):
     return data.decode(errors="replace")
 
 
+def file_server_storage(text):
+    """Exact current control mounts, rights and session pool capacity."""
+    expected = ("SSH STORAGE VIA FILE SERVER OK block=none control=/ssh:ro,/bin:ro,/etc:ro,/var/log:rw,"
+                "/var/log/journal:ro,/var/log/journal-health:ro,/var/state:ro,/var/state/facts:rw "
+                f"slots={FILE_SERVER_SLOTS}")
+    records = [line for line in text.splitlines() if line.startswith("SSH STORAGE VIA FILE SERVER ")]
+    return records == [expected]
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -98,21 +109,21 @@ class AbsdTarget:
     shell_script = b"cd /etc\npwd\necho in-shell\nexit 3\n"
     shell_status = 3
     shell_orphan_note = "killed and reaped by its shell on sshd's End"
-    pty_prompt = b"absd$ "
+    pty_prompt = b"\x1b[?2004habsd$ "
     # (typed, then the screen up to the next prompt: echo, output, prompt).
     # On a PTY the shell's stderr reaches the same screen.
     pty_shell_steps = [
-        (b"cd /etc\r", b"cd /etc\r\nabsd$ "),
-        (b"pwx\x7fd\r", b"pwx\x08 \x08d\r\n/etc\r\nabsd$ "),
-        (b"ls\r", b"ls\r\nmotd\r\nabsd$ "),
-        (b"cat motd\r", b"cat motd\r\n" + MOTD.replace(b"\n", b"\r\n") + b"absd$ "),
-        (b"sshtest exit 5\r", b"sshtest exit 5\r\nabsd-sh: sshtest: exit status 5\r\nabsd$ "),
-        (b"status\r", b"status\r\n5\r\nabsd$ "),
-        # ^C discards the line being typed; the shell is still reading
-        # (it prints no new prompt), and the next line runs.
+        (b"cd /etc\r", b"cd /etc\r\n\x1b[?2004l\x1b[?2004habsd$ "),
+        (b"pwx\x7fd\r", b"pwx\x08 \x08d\r\n\x1b[?2004l/etc\r\n\x1b[?2004habsd$ "),
+        (b"ls\r", b"ls\r\n\x1b[?2004lmotd\r\n\x1b[?2004habsd$ "),
+        (b"cat motd\r", b"cat motd\r\n\x1b[?2004l" + MOTD.replace(b"\n", b"\r\n") + b"\x1b[?2004habsd$ "),
+        (b"sshtest exit 5\r", b"sshtest exit 5\r\n\x1b[?2004labsd-sh: sshtest: exit status 5\r\n\x1b[?2004habsd$ "),
+        (b"status\r", b"status\r\n\x1b[?2004l5\r\n\x1b[?2004habsd$ "),
+        # ^C cancels the read and discards the line. The matrix consumes this
+        # echo and the regenerated primary prompt before typing the next line.
         (b"ech\x03", b"ech^C\r\n"),
-        (b"cd /\r", b"cd /\r\nabsd$ "),
-        (b"exit 3\r", b"exit 3\r\n"),
+        (b"cd /\r", b"cd /\r\n\x1b[?2004l\x1b[?2004habsd$ "),
+        (b"exit 3\r", b"exit 3\r\n\x1b[?2004l"),
     ]
 
     def shell_sleep_line(self, seconds):
@@ -171,17 +182,30 @@ class AbsdTarget:
         subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(self.kernel), "durable-iso",
                         f"DURABLE_STEP={step}", f"EXTERNAL_USER_ELF={worker}", f"EXTERNAL_INPUT={input_path}",
                         "EXTERNAL_READER_ELF=", "EXTERNAL_READER_INPUT=", f"DURABLE_OPTIONS={options}",
-                        f"FILE_SERVER_ELF={server}"],
+                        f"FILE_SERVER_ELF={server}",
+                        f"LOGD_ELF={self.root / 'absd-logd.elf' if server else ''}", "LOGD_FAULT=0"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         return self.kernel / "build" / "durable" / f"absd-durable-{step}.iso"
 
     def setup(self, work, authorized):
+        global IMAGE_BYTES, DEVICE_SECTORS
         self.work = work
         self.image = work / "ssh.img"
-        with open(self.image, "wb") as handle:
+        files = self.installed(authorized) + storage_fence_state.fresh_files()
+        plan = em.import_plan(files)
+        # IMAGE_BYTES is each matrix's floor; the image grows to the plan's
+        # import peak plus headroom (exec-matrix.py fitted_image_bytes).
+        fitted = em.fitted_image_bytes(plan, IMAGE_BYTES)
+        if fitted != IMAGE_BYTES:
+            print(f"SSH IMAGE FITTED bytes={fitted} floor={IMAGE_BYTES}", flush=True)
+            IMAGE_BYTES, DEVICE_SECTORS = fitted, fitted // 512
+        # A guard seed is valid only for fresh construction. Never reset
+        # an existing image's boot history as part of setup or an upgrade.
+        with open(self.image, "xb") as handle:
             handle.truncate(IMAGE_BYTES)
-        files = self.installed(authorized)
-        for step, entries in em.import_plan(files):
+        self.image.chmod(0o600)
+        em.check_import_capacity(self.image, plan)
+        for step, entries in plan:
             iso = self.iso(step, self.root / "fixture-import.elf", em.stream(entries))
             self.boots += 1
             log = work / f"import-{self.boots:03d}.serial.log"
@@ -205,13 +229,18 @@ class AbsdTarget:
                 for path, record in absd_fs.tree(region, selected).items()
                 if not path.endswith("/") and record_is_file(region, selected, record)}
 
-    # The only files a boot writes that a session did not ask for: the
-    # file server's and sshd's logs and their rotated copies (README "Logs").
-    LOGS = ("/var/log/fsd", "/var/log/fsd.0", "/var/log/sshd", "/var/log/sshd.0")
+    # Exact mutable log files from the text projections and journal producer
+    # (fsd/src/journal.rs, ssh/src/service_journal.rs; logs(1) retention).
+    # The journal directory and every neighboring pathname remain compared.
+    LOGS = ("/var/log/fsd", "/var/log/fsd.0", "/var/log/sshd", "/var/log/sshd.0",
+            "/var/log/journal/current", "/var/log/journal/current.0",
+            "/var/log/journal/previous", "/var/log/journal/previous.0", "/var/log/journal-health")
     # Declared owner records change at startup or on transitions.
     # Their exact writable-file shapes stay in comparisons; only changing
     # content and serial are excluded, never the log subtree.
-    OWNER_SAMPLES = {"/var/log/network-status": 512, "/var/log/network-recovery": 128}
+    OWNER_SAMPLES = {"/var/log/network-status": 512, "/var/log/network-recovery": 128,
+                     storage_fence_state.PATH: storage_fence_state.SECTOR,
+                     storage_fence_state.RESUME_PATH: storage_fence_state.SECTOR}
     # The recovery ledger and facts (absd_fsd::recovery): charged by the
     # file server on every boot and left by sshd, so they change on a boot
     # that only loaded the host key.
@@ -223,17 +252,23 @@ class AbsdTarget:
         return hashlib.sha256(repr(self.system_objects()).encode()).hexdigest()
 
     def system_objects(self):
-        """Every object on the image but the four log files and recovery state:
+        """Every object except declared mutable log files and recovery state:
         ordinary rows keep path, kind, read-only flag, serial and byte digest.
         The bounded owner sample keeps its presence and shape in the same
         five-field layout, with no serial and a size marker instead of a digest.
-        A changed flag, a new directory, a rewritten file, or anything else
-        under /var/log still counts. The guest may be
+        A declared log replaced by a directory or read-only file counts.
+        A changed flag, a new directory, a rewritten non-log file, or any
+        other pathname under /var/log still counts. The guest may be
         committing a log line while this reads, so a read that finds the
         image mid-commit is retried."""
         def object_row(path, record):
             if (path in self.OWNER_SAMPLES and not record["dir"]
                     and not record["readonly"] and record["size"] == self.OWNER_SAMPLES[path]):
+                if path in (storage_fence_state.PATH, storage_fence_state.RESUME_PATH):
+                    # Its bytes transition, but its identity/allocation
+                    # must never move while the service owns it.
+                    return (path, False, False, record["serial"],
+                            f"owner-guard-size:512 blocks:{record['blocks']}")
                 return (path, record["dir"], record["readonly"], None,
                         f"owner-sample-size:{record['size']}")
             return (path, record["dir"], record["readonly"], record["serial"],
@@ -246,7 +281,8 @@ class AbsdTarget:
                 objects = sorted(
                     object_row(path, record)
                     for path, record in absd_fs.tree(region, selected).items()
-                    if path not in self.LOGS and path not in self.STATE)
+                    if (path not in self.LOGS or record["dir"] or record["readonly"])
+                    and path not in self.STATE)
                 return objects
             except absd_fs.Refused:
                 time.sleep(0.5)
@@ -311,8 +347,7 @@ class AbsdTarget:
             raise Failed(f"no host key line:\n{text[-2000:]}")
         public = m.group(2)
         # sshd holds no block handle; the file server made or found the key.
-        if not re.search(r"SSH STORAGE VIA FILE SERVER OK block=none control=/ssh:ro,/bin:ro,/etc:ro,/var/log:rw,/var/state:ro,/var/state/facts:rw slots=\d+",
-                         text):
+        if not file_server_storage(text):
             raise Failed(f"sshd storage is not the file server's:\n{text[-2000:]}")
         server = re.search(r"FSD HOST KEY (GENERATED|PRESENT) ", self.serial())
         if not server or "FSD READY" not in self.serial():
@@ -328,7 +363,7 @@ class AbsdTarget:
             added = [o for o in after if o not in before]
             swept = removed and not added and all(o[0].startswith("/tmp/") for o in removed)
             if not (expect_sweep and swept):
-                raise Failed("the image's files (other than /var/log and /var/state) changed on a boot that "
+                raise Failed("the image's files (apart from declared mutable logs and recovery state) changed on a boot that "
                              f"only loaded the host key: removed={[o[0] for o in removed]} added={[o[0] for o in added]}")
         return {"generated": generated, "public": public, "fingerprint": m.group(3),
                 "entropy": "ok" if "SSH ENTROPY OK source=rdrand" in text else "missing",
@@ -369,6 +404,23 @@ class AbsdTarget:
     def restart(self, regenerate=False):
         self.stop()
         return self.start(regenerate=regenerate)
+
+    def wait_clean_halt(self):
+        """Require the requested guest shutdown before a host-key test reboot.
+
+        stop() remains an abrupt fixture stop. A writable disk left by that
+        operation must still be refused on an unfenced successor boot.
+        """
+        if self.proc is None:
+            raise Failed("clean halt has no running boot")
+        output, _ = self.proc.communicate(timeout=300)
+        finalized = re.findall(r"(?m)^FSD SHUTDOWN FINALIZ[^\n]*$", self.serial())
+        if (self.proc.returncode != 0 or output.strip() != b"3"
+                or finalized != ["FSD SHUTDOWN FINALIZED status=0"]):
+            raise Failed(f"guest shutdown did not complete cleanly: {output!r}")
+        state = self.tree().get(storage_fence_state.PATH, b"")
+        if storage_fence_state.parse(state) != "clean":
+            raise Failed("guest shutdown did not leave a clean writable guard")
 
     def negative_controls(self, matrix):
         """Without an accepted entropy source sshd must not start: QEMU's
@@ -529,8 +581,8 @@ class AbsdTarget:
         return term, pids[-1]
 
     def step(self, matrix, term, keys, screen, what, timeout=60):
-        term.type(keys)
-        ok = term.expect(screen, timeout=timeout) and term.between == b""
+        # Use the same exact prompt boundary as the interactive matrix driver.
+        ok = matrix.pty_shell_step(term, keys, screen, timeout=timeout)
         matrix.check(what, ok, f"want {screen!r} shown {term.shown[-400:]!r}")
 
     def interrupt(self, matrix, term, what):
@@ -546,7 +598,7 @@ class AbsdTarget:
     def listing(self, matrix, term, check=True):
         """Runs `ps` in a PTY shell: (session line, [pids], holders line)."""
         term.type(b"ps\r")
-        ok = term.expect(b"ps\r\n", timeout=30) and term.expect(self.pty_prompt, timeout=60)
+        ok = term.expect(b"ps\r\n\x1b[?2004l", timeout=30) and term.between == b"" and term.expect(self.pty_prompt, timeout=60)
         text = term.between.decode(errors="replace")
         m = re.fullmatch(r"(session \d+ \(this session\), terminal, connected \d+ s)\r\n"
                          r"  PID PROGRAM\r\n((?: *\d+ \S+\r\n)*)"
@@ -562,6 +614,31 @@ class AbsdTarget:
             time.sleep(0.3)
         matrix.check(what, self.all_images() == count, self.census_detail())
 
+    def check_process_authority(self, matrix, term):
+        # Script invocations are interpreted inside the session's shell. They
+        # may compose native commands, which remain that shell's children.
+        spawned = self.spawn_count()
+        line = b'absd-sh -c "sshtest sleep 15000"'
+        self.step(matrix, term, line + b"\r", line + b"\r\n\x1b[?2004lslept\r\n" + self.pty_prompt,
+                  "an interpreted script completes inside the session shell")
+        matrix.check("the interpreted script starts one native child, no child interpreter",
+                     self.spawn_count() == spawned + 1, self.census_detail())
+        self.step(matrix, term, b"status\r", b"status\r\n\x1b[?2004l0\r\n" + self.pty_prompt,
+                  "the interpreted script exits with status zero")
+
+        # A native program still cannot start a grandchild. This existing
+        # image probe calls the native process API rather than interpreting text.
+        spawned = self.spawn_count()
+        line = b"fsd-probe spawn /bin/fsd-probe block"
+        self.step(matrix, term, line + b"\r",
+                  line + b"\r\n\x1b[?2004lspawn: /bin/fsd-probe: permission denied\r\n"
+                  + b"absd-sh: fsd-probe: exit status 1\r\n" + self.pty_prompt,
+                  "a native command's spawn request is refused by permission")
+        matrix.check("only the native probe starts; no grandchild is created",
+                     self.spawn_count() == spawned + 1, self.census_detail())
+        self.step(matrix, term, b"status\r", b"status\r\n\x1b[?2004l1\r\n" + self.pty_prompt,
+                  "the refused native spawn exits with status one")
+
     def check_session_control(self, matrix):
         """^C in an interactive shell (SSH INTERRUPT OK) and the session's
         own listing (SESSION LIST OK), with stock ssh on a host terminal."""
@@ -571,22 +648,22 @@ class AbsdTarget:
         try:
             # A command sleeping: ^C ends it; the shell prompts again.
             spawned = self.spawn_count()
-            self.step(matrix, term, b"sshtest sleep 600000\r", b"sshtest sleep 600000\r\n", "a sleeping command runs")
+            self.step(matrix, term, b"sshtest sleep 600000\r", b"sshtest sleep 600000\r\n\x1b[?2004l", "a sleeping command runs")
             self.await_spawns(spawned, 1)
             latencies.append(self.interrupt(matrix, term, "^C ends a sleeping command; the shell prompts"))
             self.await_live(matrix, baseline + 1, "the interrupted command was killed and reaped")
-            self.step(matrix, term, b"status\r", b"status\r\n130\r\n" + self.pty_prompt,
+            self.step(matrix, term, b"status\r", b"status\r\n\x1b[?2004l130\r\n" + self.pty_prompt,
                       "the interrupted line's status is 130")
             # A command blocked reading the session's input.
             spawned = self.spawn_count()
-            self.step(matrix, term, b"cat\r", b"cat\r\n", "cat reads the session's input")
+            self.step(matrix, term, b"cat\r", b"cat\r\n\x1b[?2004l", "cat reads the session's input")
             self.await_spawns(spawned, 1)
             self.step(matrix, term, b"typed\r", b"typed\r\ntyped\r\n", "cat copies a typed line")
             latencies.append(self.interrupt(matrix, term, "^C ends cat blocked on the input; ^C is not its input"))
             self.await_live(matrix, baseline + 1, "cat was killed and reaped")
             # A pipeline blocked on a pipe: both commands end.
             spawned = self.spawn_count()
-            self.step(matrix, term, b"sshtest sleep 600000 | cat\r", b"sshtest sleep 600000 | cat\r\n",
+            self.step(matrix, term, b"sshtest sleep 600000 | cat\r", b"sshtest sleep 600000 | cat\r\n\x1b[?2004l",
                       "a pipeline whose reader is blocked on the pipe runs")
             self.await_spawns(spawned, 2)
             latencies.append(self.interrupt(matrix, term, "^C ends both commands of the pipeline"))
@@ -595,14 +672,16 @@ class AbsdTarget:
             # next command (it is tagged before that line).
             self.step(matrix, term, b"ech\x03", b"ech^C\r\n", "^C at the prompt discards the line")
             self.step(matrix, term, b"\x03", b"^C\r\n", "^C at an empty prompt")
-            self.step(matrix, term, b"sshtest sleep 1500\r", b"sshtest sleep 1500\r\nslept\r\n" + self.pty_prompt,
+            self.step(matrix, term, b"sshtest sleep 1500\r", b"sshtest sleep 1500\r\n\x1b[?2004lslept\r\n" + self.pty_prompt,
                       "a ^C typed at the prompt does not interrupt the next command", timeout=120)
-            self.step(matrix, term, b"echo still here\r", b"echo still here\r\nstill here\r\n" + self.pty_prompt,
+            self.step(matrix, term, b"status\r", b"status\r\n\x1b[?2004l0\r\n" + self.pty_prompt,
+                      "the command after prompt cancellation exits with status zero")
+            self.step(matrix, term, b"echo still here\r", b"echo still here\r\n\x1b[?2004lstill here\r\n" + self.pty_prompt,
                       "the session continues")
             serial = self.output()
             matrix.check("sshd passed each ^C to the shell on its control channel",
                          len(re.findall(r"interrupt: told the shell", serial)) >= 5, serial[-600:])
-            self.step(matrix, term, b"exit 4\r", b"exit 4\r\n", "the shell exits when asked")
+            self.step(matrix, term, b"exit 4\r", b"exit 4\r\n\x1b[?2004l", "the shell exits when asked")
             rc = term.wait(timeout=60)
         finally:
             term.close()
@@ -616,7 +695,7 @@ class AbsdTarget:
         second, second_pid = self.open_shell(matrix)
         try:
             spawned = self.spawn_count()
-            self.step(matrix, second, b"sshtest sleep 600000\r", b"sshtest sleep 600000\r\n",
+            self.step(matrix, second, b"sshtest sleep 600000\r", b"sshtest sleep 600000\r\n\x1b[?2004l",
                       "the second session runs a command")
             self.await_spawns(spawned, 1)
             sleeper = [int(pid) for pid, parent in self.live_images().items() if int(parent) == second_pid]
@@ -632,16 +711,7 @@ class AbsdTarget:
             matrix.check("the second session lists exactly its own shell, as another session",
                          pids2 == [second_pid] and header2.split(" (")[0] != header.split(" (")[0],
                          f"{text2!r} vs {text!r}")
-            # A command cannot start programs: a nested shell runs (the
-            # shell started it) but its own start is refused, so nothing
-            # of the session is out of its shell's reach.
-            spawned = self.spawn_count()
-            line = b'absd-sh -c "sshtest sleep 15000"'
-            self.step(matrix, first, line + b"\r", line + b"\r\n", "a nested shell tries to start a command")
-            refused = first.expect(b"absd-sh: sshtest: cannot run: permission denied\r\n", timeout=60)
-            ended = first.expect(b"absd-sh: absd-sh: exit status 126\r\n" + self.pty_prompt, timeout=60)
-            matrix.check("the nested start is refused (no spawn right) and the nested shell ends with 126",
-                         refused and ended and self.spawn_count() == spawned + 1, f"{first.shown[-400:]!r}")
+            self.check_process_authority(matrix, first)
             _, pids, holders, text = self.listing(matrix, first)
             matrix.check("nothing is left to count",
                          pids == [first_pid] and holders == "other holders: input 0, file server channels 0",

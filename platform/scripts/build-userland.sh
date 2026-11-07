@@ -30,6 +30,8 @@ if ! [ -f "$staged/LICENSE" ] || ! [ -f "$up/toybox/src/diff/diff.c" ] || ! [ -f
     sh "$root/scripts/stage-userland.sh"
 fi
 test -x "$kit/bin/absd-cc" || { echo "build-userland: $kit/bin/absd-cc missing: run scripts/build-c-kit.sh" >&2; exit 1; }
+mkdir -p "$out"
+python3 -I "$root/scripts/c_kit_source.py" capture "$root" "$kit" "$out"
 src=$out/src
 rm -rf "$src"; mkdir -p "$out"
 cp -R "$staged" "$src"; chmod -R u+w "$src"
@@ -64,4 +66,11 @@ cmp -s "$out/repro/round1.sha256" "$out/repro/round2.sha256" ||
 rm -rf "$out/obj/linux" "$out/linux"
 mk linux >/dev/null
 cat "$out/repro/round1.sha256"
-python3 -I "$root/scripts/check-userland.py"
+if ! python3 -I "$root/scripts/check-userland.py" > "$out/check-userland.log" 2>&1; then
+    cat "$out/check-userland.log" >&2
+    exit 1
+fi
+# Receipt publication follows both reproducible rounds and all host gates.
+# Kit/source identity must still match the captured values at publication.
+python3 -I "$root/scripts/c_kit_source.py" stamp "$root" "$kit" "$out" --posix "$cports/lib/libabsd-posix.a"
+cat "$out/check-userland.log"

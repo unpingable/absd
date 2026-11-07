@@ -336,3 +336,52 @@ sys.stdout.write('\x1f'.join(flags))
 PY
     ) || return $?
 }
+
+# absd_work_dir DIR DEFAULT: refuse DIR as a work directory the caller will
+# empty with `rm -rf` (or reuse), unless it is the script's own DEFAULT, which
+# stays trusted with or without the marker. Any other DIR must be an absolute
+# path that is not a symlink, not /, not $HOME or above it, and not this tree or
+# above it; if it already exists it must be a directory that is empty or carries
+# the .absd-work marker that absd_mark_work leaves in work directories made here.
+absd_work_dir() {
+    absd_work=$1
+    if [ "$absd_work" = "$2" ]; then
+        return 0
+    fi
+    absd_work_refuse() {
+        echo "absd: refusing work directory $absd_work: $1" >&2
+        exit 2
+    }
+    case $absd_work in
+    /*) ;;
+    *) absd_work_refuse "not an absolute path" ;;
+    esac
+    if [ -L "$absd_work" ]; then
+        absd_work_refuse "is a symbolic link"
+    fi
+    absd_work_real=$(realpath -m -- "$absd_work")
+    if [ "$absd_work_real" = / ]; then
+        absd_work_refuse "is /"
+    fi
+    case "$(realpath -m -- "${HOME:-/}")/" in
+    "$absd_work_real"/*) absd_work_refuse "is \$HOME or one of its ancestors" ;;
+    esac
+    case "$(realpath -m -- "$root")/" in
+    "$absd_work_real"/*) absd_work_refuse "is this platform tree or one of its ancestors" ;;
+    esac
+    if [ -e "$absd_work_real" ]; then
+        if [ ! -d "$absd_work_real" ]; then
+            absd_work_refuse "exists and is not a directory"
+        fi
+        if [ -n "$(ls -A -- "$absd_work_real")" ] && [ ! -f "$absd_work_real/.absd-work" ]; then
+            absd_work_refuse "is a non-empty directory without the .absd-work marker (a work directory from before the marker existed needs the marker added, or a fresh directory)"
+        fi
+    fi
+}
+
+# absd_mark_work DIR: mark DIR, if it exists, as a work directory made here.
+absd_mark_work() {
+    if [ -d "$1" ]; then
+        : > "$1/.absd-work"
+    fi
+}

@@ -18,16 +18,16 @@ session ended.
 5. UNSETTLED: a before-reading that never agrees fails as
    C KIT RESOURCES UNSETTLED instead of returning an unconfirmed reading.
 
-6. SUBCLASSES: CportsMatrix and TccMatrix built by their own __init__
-   (which skips KitMatrix.__init__) over a fake transport: ssh() counts
-   connections from 0, and CportsMatrix.shell_ssh (the path of the
-   2026-10-12 AttributeError) runs; both keep QUIESCENT_READINGS False.
-   Reads (never writes) the campaign's cports-build, upstream and tcc-build.
+6. SUBCLASSES: CportsMatrix built by its own __init__ (which skips
+   KitMatrix.__init__) over a fake transport: ssh() counts connections
+   from 0, and CportsMatrix.shell_ssh (the path of the 2026-10-12
+   AttributeError) runs; its resource readings keep quiescence enabled.
+   A bounded campaign fixture supplies constructor inputs without a build.
 
-Usage: c-kit-matrix-selftest.py [--campaign <dir with cports-build, upstream,
-tcc-build>; default the worktree's parent] [--work <empty dir>; default a
+Usage: c-kit-matrix-selftest.py [--campaign <dir with cports-build and
+upstream>; default a self-contained fixture] [--work <empty dir>; default a
 temporary directory]. Prints C KIT SELFTEST OK checks=<n>."""
-import argparse, importlib.util, pathlib, sys, tempfile, types
+import argparse, contextlib, importlib.util, os, pathlib, signal, stat, subprocess, sys, tempfile, types
 
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
@@ -153,53 +153,90 @@ class FakeTransport:
 
 
 def subclasses(want, campaign, work):
-    """CportsMatrix and TccMatrix through their real constructors."""
+    """CportsMatrix through its real constructor."""
     repo = here.parent
     platform = work / "platform"
     (platform / "commands").mkdir(parents=True, exist_ok=True)
     for name in ("cp", "sha256sum", "head", "mkdir", "cat", "df", "sysinfo", "ls"):
         (platform / "commands" / name).write_bytes(b"\x7fELF fake")
-    tm = None
-    for label, build in (("cports", None), ("tcc", None)):
-        if label == "cports":
-            spec_ = importlib.util.spec_from_file_location("cports_matrix_st", here / "cports-matrix.py")
-            cm = importlib.util.module_from_spec(spec_)
-            spec_.loader.exec_module(cm)
-            args = types.SimpleNamespace(absd=campaign / "cports-build" / "absd", linux=campaign / "cports-build" / "linux",
-                                         upstream=campaign / "upstream", cases=repo / "cports" / "cases.tsv",
-                                         only=None, pin=None, skip_scenarios=False)
-            target = FakeTransport(platform)
-            d = work / "cports"
-            d.mkdir(exist_ok=True)
-            m = cm.CportsMatrix(target, d, args)
-            klass = cm.CportsMatrix
-        else:
-            spec_ = importlib.util.spec_from_file_location("tcc_matrix_st", here / "tcc-matrix.py")
-            tm = importlib.util.module_from_spec(spec_)
-            spec_.loader.exec_module(tm)
-            args = types.SimpleNamespace(tcc_build=campaign / "tcc-build", kit=repo, cases=repo / "tcc" / "cases.tsv",
-                                         only=None, pin=None)
-            target = FakeTransport(platform)
-            d = work / "tcc"
-            d.mkdir(exist_ok=True)
-            m = tm.TccMatrix(target, d, args)
-            klass = tm.TccMatrix
-        want(f"{label}: the constructor skips KitMatrix.__init__ and the counter still starts at 0",
-             "connections" not in vars(m) and m.connections == 0, vars(m).get("connections"))
-        want(f"{label}: QUIESCENT_READINGS is off", klass.QUIESCENT_READINGS is False)
-        m.client = types.SimpleNamespace(run=target.run)
-        m.ssh("/bin/sysinfo")
-        m.ssh("/bin/sysinfo")
-        want(f"{label}: ssh() counts two connections", m.connections == 2, m.connections)
-        if label == "cports":
-            rc, out, err, shell, programs = m.shell_ssh('"/bin/printenv"')
-            want("cports: shell_ssh (session_probes' path) runs and counts", (rc, out, m.connections, len(programs))
-                 == (0, b"out\n", 3, 1), (rc, out, m.connections, programs))
+    spec_ = importlib.util.spec_from_file_location("cports_matrix_st", here / "cports-matrix.py")
+    cm = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(cm)
+    args = types.SimpleNamespace(absd=campaign / "cports-build" / "absd", linux=campaign / "cports-build" / "linux",
+                                 upstream=campaign / "upstream", cases=repo / "cports" / "cases.tsv",
+                                 only=None, pin=None, skip_scenarios=False)
+    target = FakeTransport(platform)
+    d = work / "cports"
+    d.mkdir(exist_ok=True)
+    m = cm.CportsMatrix(target, d, args)
+    want("cports: the constructor skips KitMatrix.__init__ and the counter still starts at 0",
+         "connections" not in vars(m) and m.connections == 0, vars(m).get("connections"))
+    want("cports: QUIESCENT_READINGS is enabled", cm.CportsMatrix.QUIESCENT_READINGS is True)
+    m.client = types.SimpleNamespace(run=target.run)
+    m.ssh("/bin/sysinfo")
+    m.ssh("/bin/sysinfo")
+    want("cports: ssh() counts two connections", m.connections == 2, m.connections)
+    rc, out, err, shell, programs = m.shell_ssh('"/bin/printenv"')
+    want("cports: shell_ssh (session_probes' path) runs and counts", (rc, out, m.connections, len(programs))
+         == (0, b"out\n", 3, 1), (rc, out, m.connections, programs))
+
+
+def campaign_fixture(work):
+    """Only paths read by CportsMatrix.__init__; never executed as products.
+
+    Keep cases, expectations and data from the real repository. No compilation
+    or upstream payload is needed to construct and exercise session accounting.
+    """
+    campaign = work / "campaign"
+    for relative in ("cports-build/absd", "cports-build/linux",
+                     "upstream/lua-tests/absd/lua-5.4.9-tests"):
+        (campaign / relative).mkdir(parents=True)
+    return campaign
+
+
+@contextlib.contextmanager
+def selftest_work(provided):
+    """Own a fresh fixture directory; never retire pre-existing files."""
+    with contextlib.ExitStack() as stack:
+        work = pathlib.Path(provided) if provided else pathlib.Path(
+            stack.enter_context(tempfile.TemporaryDirectory(prefix="c-kit-selftest-")))
+        work.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if provided and any(work.iterdir()):
+            raise ValueError("c-kit-selftest: --work must be an empty directory")
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGHUP, signal.SIGTERM)}
+
+        def interrupted(signum, frame):
+            raise SystemExit(128 + signum)
+
+        for sig in previous:
+            signal.signal(sig, interrupted)
+        try:
+            yield work.resolve()
+        finally:
+            try:
+                # These real constructors are synchronous and use only a
+                # FakeTransport: no guest or SSH consumer can own their keys.
+                failures = []
+                for key in sorted(work.rglob("id_*")):
+                    if key.suffix == ".pub":
+                        continue
+                    try:
+                        info = key.lstat()
+                        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
+                            raise RuntimeError(f"refusing unexpected key file: {key}")
+                        subprocess.run(["shred", "--remove=unlink", "--", str(key)], check=True)
+                    except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
+                        failures.append(str(error))
+                if failures:
+                    raise RuntimeError("c-kit-selftest: key retirement failed: " + "; ".join(failures))
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--campaign", default=str(here.parent.parent))
+    ap.add_argument("--campaign", help="read constructor inputs from this campaign instead of the fixture")
     ap.add_argument("--work")
     args = ap.parse_args()
     ck.time = Clock()
@@ -283,9 +320,9 @@ def main():
     # 6. Subclasses through their own constructors (real clock: keygen runs).
     import time as real_time
     ck.time = real_time
-    work = pathlib.Path(args.work) if args.work else pathlib.Path(tempfile.mkdtemp(prefix="c-kit-selftest-"))
-    work.mkdir(parents=True, exist_ok=True)
-    subclasses(want, pathlib.Path(args.campaign).resolve(), work.resolve())
+    with selftest_work(args.work) as work:
+        campaign = pathlib.Path(args.campaign).resolve() if args.campaign else campaign_fixture(work)
+        subclasses(want, campaign, work)
 
     print(f"C KIT SELFTEST OK checks={checks}", flush=True)
 

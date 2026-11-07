@@ -9,6 +9,13 @@
 //!   write PATH BYTES             create/truncate and write a pattern; time
 //!   recovery-pending PATH BYTES  qualification: acknowledged overwrite,
 //!                                open and unsynced until VM interruption
+//!   recovery-pending-observed PATH BYTES PATTERN
+//!                                commits what is pending first, then as
+//!                                recovery-pending (PATTERN `pending`,
+//!                                or `write`: the bytes `write` wrote),
+//!                                then stats PATH through the server while
+//!                                the handle stays open and prints the
+//!                                in-memory size and mtime it reports
 //!   stat-loop PATH N             N stats; time
 //!   hold PATH MILLIS             append a numbered line every 100 ms,
 //!                                syncing each, until MILLIS have passed
@@ -16,8 +23,8 @@
 //!   rename FROM TO               rename, replacing
 //!   try-write PATH               open PATH for writing; OK or the error
 //!   try-read PATH                read PATH; OK with its length or the error
-//!   block                        every handle number 1..=64 as a block
-//!                                device: must all be refused
+//!   block                        report the runtime startup block handle;
+//!                                whole-process handle coverage UNVERIFIED
 //!   spawn-ro PROGRAM ARGS...     run PROGRAM with this session's mounts,
 //!                                read-only, on a spare channel
 //!   spawn-nofs PROGRAM ARGS...   run PROGRAM with no filesystem at all
@@ -132,6 +139,60 @@ fn main() {
                 absd_runtime::sleep_ticks(1);
             }
         }
+        "recovery-pending-observed" => {
+            // P0's commit-boundary discriminator (coordination record #63): the same
+            // single acknowledged WRITE_AT as recovery-pending, then one
+            // stat through the file server with the handle still open and
+            // unsynced, printed before the host ends the VM. A stat reads
+            // the server's in-memory object; it commits nothing.
+            //
+            // The session that runs this probe has just written the server's
+            // own log and its scratch directory, and the idle commit
+            // (`COMMIT_TICKS`, fsd/src/server.rs) is timed from the first
+            // uncommitted change, not the last. Without a commit here the
+            // overwrite can join that earlier change and be committed with
+            // it well inside the host's kill window, so the overwrite would
+            // not be the only pending change the case assumes. Commit first:
+            // the overwrite then starts its own window.
+            let precommit = absd_runtime::fsd::commit()
+                .unwrap_or_else(|code| fail(format!("recovery-pending-observed: commit: {code}")));
+            println!("RECOVERY PENDING PRECOMMIT seq={precommit}");
+            let size: usize = arg(2).parse().unwrap_or(0);
+            if size == 0 || size > 65536 {
+                fail("recovery-pending-observed: size must be 1..65536".into());
+            }
+            let shift = match arg(3).as_str() {
+                "pending" => 17,
+                "write" => 0,
+                other => fail(format!("recovery-pending-observed: pattern {other}: pending or write")),
+            };
+            let data: Vec<u8> = (0..size).map(|i| ((i + shift) % 251) as u8).collect();
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(arg(1))
+                .unwrap_or_else(|error| fail(format!("recovery-pending-observed: open: {error}")));
+            let written = file
+                .write(&data)
+                .unwrap_or_else(|error| fail(format!("recovery-pending-observed: write: {error}")));
+            if written != size {
+                fail(format!("recovery-pending-observed: short write: {written}/{size}"));
+            }
+            let meta = std::fs::metadata(arg(1))
+                .unwrap_or_else(|error| fail(format!("recovery-pending-observed: stat: {error}")));
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|age| age.as_secs().to_string())
+                .unwrap_or_else(|| "unknown".into());
+            println!("RECOVERY PENDING OBSERVED write_accepted bytes={size} size={} mtime={mtime}", meta.len());
+            std::io::stdout()
+                .flush()
+                .unwrap_or_else(|error| fail(format!("recovery-pending-observed: marker: {error}")));
+            loop {
+                absd_runtime::sleep_ticks(1);
+            }
+        }
         "stat-loop" => {
             let count: usize = arg(2).parse().unwrap_or(1);
             let start = Instant::now();
@@ -234,25 +295,13 @@ fn main() {
             }
         }
         "block" => {
-            // A session holds no block handle: every handle number this
-            // process could name is refused as a block device, for reading
-            // and for writing.
-            // A write is tried only through a handle that read sector 0,
-            // and writes the same bytes back, so the probe can never damage
-            // a device it should not have been able to reach.
-            let mut sector = [0u8; absd_runtime::layout::SECTOR_BYTES];
-            let mut accepted = Vec::new();
-            for handle in 1..=64u64 {
-                if absd_runtime::layout::read_raw(handle, 0, &mut sector).is_ok() {
-                    let written = absd_runtime::layout::write_raw(handle, 0, &sector).is_ok();
-                    accepted.push((handle, written));
-                }
+            // This observes only the runtime startup block handle. Kernel handle
+            // values contain issue tags; slot numbers cannot enumerate them.
+            // No whole-process handle coverage follows from this query.
+            if absd_runtime::block_handle() != 0 {
+                fail("block: STARTUP ROLE PRESENT process_handle_coverage=UNVERIFIED".into());
             }
-            if accepted.is_empty() {
-                println!("block: REFUSED handles=64 block_handle={}", absd_runtime::block_handle());
-            } else {
-                fail(format!("block: ACCEPTED {accepted:?}"));
-            }
+            println!("block: STARTUP ROLE ABSENT process_handle_coverage=UNVERIFIED");
         }
         "pingpong" => {
             let count: usize = arg(1).parse().unwrap_or(100);

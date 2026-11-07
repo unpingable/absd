@@ -133,6 +133,27 @@ fn repeated_independent_transition_histories_match_owned_tags_and_never_lose_bac
                     }
                 }
             }
+            let capacity = (
+                f.free_frames(),
+                f.allocated_frames(),
+                f.idle_reserved_frames(),
+            );
+            for p in 1..=4 {
+                let expected = held
+                    .iter()
+                    .filter(|(_, owner)| owner.pid() == Some(p))
+                    .count();
+                assert_eq!(f.check_reclaimed(p), expected);
+                assert_eq!(f.frames_owned_by(p), expected);
+            }
+            assert_eq!(
+                (
+                    f.free_frames(),
+                    f.allocated_frames(),
+                    f.idle_reserved_frames()
+                ),
+                capacity
+            );
             for &(frame, owner) in &held {
                 assert_eq!(f.state(frame), FrameState::Allocated(owner));
             }
@@ -155,6 +176,7 @@ fn repeated_independent_transition_histories_match_owned_tags_and_never_lose_bac
             f.free(frame, owner).unwrap();
         }
         for p in 1..=4 {
+            assert_eq!(f.check_reclaimed(p), 0);
             f.retire_reservation(p).unwrap();
         }
         assert_eq!((f.free_frames(), f.idle_reserved_frames()), (64, 0));
@@ -163,20 +185,24 @@ fn repeated_independent_transition_histories_match_owned_tags_and_never_lose_bac
 
 #[test]
 fn admission_refuses_invalid_identity_capacity_and_full_metadata_without_side_effects() {
-    let mut f = pool(32);
+    let bound = crate::process::MAX_PROCESSES as u32;
+    let mut f = pool(2 * bound as usize);
     assert_eq!(f.admit(0, 1), Err(AdmissionError::Invalid));
     assert_eq!(f.admit(1, 0), Err(AdmissionError::Invalid));
     assert_eq!(
         f.admit(crate::memory::MAX_OWNER_ID + 1, 1),
         Err(AdmissionError::Invalid)
     );
-    for pid in 1..=16 {
+    for pid in 1..=bound {
         f.admit(pid, 1).unwrap();
     }
-    assert_eq!(f.admit(17, 1), Err(AdmissionError::NoRecord));
-    assert_eq!((f.free_frames(), f.idle_reserved_frames()), (32, 16));
+    assert_eq!(f.admit(bound + 1, 1), Err(AdmissionError::NoRecord));
+    assert_eq!(
+        (f.free_frames(), f.idle_reserved_frames()),
+        (2 * bound as usize, bound as usize)
+    );
     f.retire_reservation(8).unwrap();
-    f.admit(17, 1).unwrap();
+    f.admit(bound + 1, 1).unwrap();
     assert_eq!(f.reservation(8), None);
-    assert_eq!(f.reservation(17), Some((1, 0)));
+    assert_eq!(f.reservation(bound + 1), Some((1, 0)));
 }

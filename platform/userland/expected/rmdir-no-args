@@ -1,0 +1,10 @@
+status 1
+--- stdout
+--- stderr
+usage: /bin/rmdir [-p] dir ...
+--- directories
+dir
+empty-tree
+empty-tree/child
+tree
+tree/sub

@@ -16,13 +16,16 @@ pub fn count() -> usize {
 pub fn mask() -> u8 {
     (1u8 << count()) - 1
 }
+static COUNT_CONFIGURED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 pub fn configure_count(count: usize) {
     assert!(
         crate::smp_user::enabled()
-            && cfg!(feature = "smp-scheduler-test")
-            && is_bootstrap_processor()
+            && (cfg!(feature = "smp-scheduler-test") || crate::smp_operator::enabled())
+            && raw_is_bootstrap_processor()
     );
     assert!(matches!(count, 2 | 4 | 6));
+    assert!(!COUNT_CONFIGURED.swap(true, core::sync::atomic::Ordering::AcqRel));
     AP_CPU_COUNT.store(count as u32, core::sync::atomic::Ordering::Release);
 }
 pub const LOCAL_BYTES: usize = core::mem::size_of::<CpuLocal>();
@@ -178,6 +181,9 @@ fn anchor(pointer: DescriptorPointer) -> absd_kernel::arch::CpuAnchor {
 
 /// Cannot use console/panic: their ownership assertions need this identity.
 fn invalid_identity() -> ! {
+    if crate::smp_operator::enabled() {
+        crate::smp_operator::raw_backstop();
+    }
     // Separate direct diagnostic channel; never invokes console/lock identity.
     unsafe {
         asm!("cli", "out dx, al", in("dx") 0xe9u16, in("al") b'I', options(nostack));
@@ -441,6 +447,9 @@ pub fn raw_is_bootstrap_processor() -> bool {
 }
 
 pub fn refuse_application_processor() -> ! {
+    if crate::smp_operator::enabled() {
+        crate::smp_operator::raw_backstop();
+    }
     unsafe {
         asm!("cli", "out dx, eax", in("dx") 0xf4u16, in("eax") 5u32, options(nostack));
     }

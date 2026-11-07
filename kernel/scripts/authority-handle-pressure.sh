@@ -23,7 +23,8 @@ rustc --edition=2024 scripts/authority-handle-pressure.rs \
     -o "$out/trace"
 sha256sum "$out/trace" > "$out/executable.sha256"
 "$out/trace" > "$out/result.log"
-grep -qx 'HANDLE PRESSURE TRACE initial=61 startup-peak=64 pre-spawn=63 published=64 wait-copy=Full source-authority=unchanged' "$out/result.log"
-grep -qx 'HANDLE PRESSURE TRACE close-startup-reader=true wait-copy=granted right=WAIT limit=64' "$out/result.log"
+limit=$(python3 -c 'import sys;sys.path.insert(0,"scripts");from kernel_capacities import MAX_PROCESS_HANDLES;print(MAX_PROCESS_HANDLES)')
+grep -qx "HANDLE PRESSURE TRACE initial=$((limit - 3)) startup-peak=$limit pre-spawn=$((limit - 1)) published=$limit wait-copy=Full source-authority=unchanged" "$out/result.log"
+grep -qx "HANDLE PRESSURE TRACE close-startup-reader=true wait-copy=granted right=WAIT limit=$limit" "$out/result.log"
 grep -qx 'HANDLE PRESSURE TRACE reissued-slot=true stale-wait=Invalid stale-close=Invalid successor=unchanged' "$out/result.log"
 cat "$out/result.log"

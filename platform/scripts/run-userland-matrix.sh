@@ -6,7 +6,7 @@
 # userland/PORTS.tsv digests (the runner refuses any other bytes), with
 # commands/absd-sh, the boot ELFs and the rendered manpages/.
 # Environment: ABSD_KERNEL_RUN (required; a disposable kernel clone, never
-# the protected kernel source); ABSD_USERLAND_PLATFORM (required);
+# archived-occurrence); ABSD_USERLAND_PLATFORM (required);
 # ABSD_USERLAND_WORK (default <campaign>/userland-guest) for the logs, the
 # serial logs and the work directory; ABSD_USERLAND_ONLY=<prefix> runs only
 # the cases whose ID starts with it; ABSD_USERLAND_PINS (default
@@ -20,16 +20,14 @@
 # `ABSD USERLAND GUEST OK cases= agree= diverge= defects=0 demo= notrun=`.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/inputs.sh"
 camp=$(dirname "$root")
 out=${ABSD_USERLAND_WORK:-$camp/userland-guest}
 kernel=${ABSD_KERNEL_RUN:?set ABSD_KERNEL_RUN to a disposable kernel clone}
 platform=${ABSD_USERLAND_PLATFORM:?set ABSD_USERLAND_PLATFORM to the built platform tree carrying the nine ports}
 [ -d "$kernel" ] || { echo "run-userland-matrix: ABSD_KERNEL_RUN $kernel is not a directory" >&2; exit 1; }
 [ -d "$platform/ports" ] || { echo "run-userland-matrix: $platform/ports is not a directory" >&2; exit 1; }
-forbidden=/data/git/absd-kernel
-[ -d "$forbidden" ] && forbidden=$(CDPATH= cd -- "$forbidden" && pwd -P)
-[ "$(CDPATH= cd -- "$kernel" && pwd -P)" != "$forbidden" ] ||
-    { echo "run-userland-matrix: ABSD_KERNEL_RUN must not be /data/git/absd-kernel" >&2; exit 1; }
+absd_not_kernel_source "$kernel"
 
 if [ -z "${ABSD_RUN_USERLAND_CHILD:-}" ]; then
     niceness=$(nice)

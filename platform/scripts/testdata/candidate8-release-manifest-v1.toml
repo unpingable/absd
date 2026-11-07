@@ -1,6 +1,6 @@
 # Excerpt (verbatim tables) of the accepted candidate 8 release manifest:
 # schema, [release], [identity], [source], [build.kernel_image]. The full
-# file is /unavailable/development-record
+# file is archived-occurrence
 # (sha256 f5eba7419e71509e59efcfdbb9f6d5e176616f11608305c887dfc0ebb77ec3bb); the toolchain, build and
 # artifact tables, which record host paths, are left out.
 schema = "absd-release-manifest/1"
@@ -20,12 +20,12 @@ source = "release/src/lib.rs + release record"
 [source]
 kernel_commit = "2bfe825a980379583467e80572561f23834435c8"
 kernel_tree_clean = true
-kernel_repository = "/unavailable/development-record"
-kernel_remote = "/unavailable/development-record"
+kernel_repository = "archived-occurrence"
+kernel_remote = "archived-occurrence"
 platform_commit = "eb70b62f01681c0127095400b0625f5f831830c5"
 platform_tree_clean = true
-platform_repository = "/unavailable/development-record"
-platform_remote = "/unavailable/development-record"
+platform_repository = "archived-occurrence"
+platform_remote = "archived-occurrence"
 
 [source.coordination_pins]
 pulse_commit = "81c2354674990679f43be4f207349ff1b2429bc7"
@@ -38,7 +38,7 @@ ABSD_PULSE_SOURCE = "unknown"
 ABSD_AG_SOURCE = "unknown"
 ABSD_NIGHTSHIFT_SOURCE = "unknown"
 ABSD_NQ_SOURCE = "unknown"
-components_toml = "/unavailable/development-record"
+components_toml = "archived-occurrence"
 components_toml_sha256 = "5a5905947e97bfac7add069385320fa39f5c492b18c74bbfb040356de1d205a4"
 components_qualified_at = "2026-10-04"
 components_note = "the last qualified lineage; not a claim that this release was qualified with it"

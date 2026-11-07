@@ -1,0 +1,45 @@
+.Dd November 3, 2026
+.Dt SYNC 1
+.Os ABSD
+.Sh NAME
+.Nm sync
+.Nd commit accepted file-server changes and flush the device
+.Sh SYNOPSIS
+.Nm
+.Op Fl v
+.Sh DESCRIPTION
+Wait for the file server to commit all changes it has already accepted,
+from every session, and flush the backing device.
+This is a durability barrier for accepted work.
+It does not order writes still in flight in another process; arrange that
+process's completion before requesting the barrier.
+A successful call neither reserves space nor establishes a snapshot against
+later writers.
+.Pp
+Normally no text is printed.
+.Fl v
+prints
+.Ql commit Ar sequence
+on standard output, identifying the committed device sequence.
+No other argument forms are accepted, including
+.Ql --
+or repeated flags.
+.Pp
+The file server also commits on written-file close, session end, and at
+most about 200 ms after an unsynced write.
+This command requires an active file-server channel, not a block handle.
+An absent channel, one lent to a running child, refusal or commit failure
+is diagnosed on standard error.
+It grants no access to otherwise invisible files.
+.Sh EXIT STATUS
+0 after a successful barrier; 1 for file-server failure; 2 for usage.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+echo saved > /home/operator/note
+sync -v
+.Ed
+.Sh SEE ALSO
+.Xr cp 1 ,
+.Xr df 1 ,
+.Xr filesystem 7 ,
+.Xr handles 7

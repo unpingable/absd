@@ -31,7 +31,8 @@ Markers (each printed only when every check behind it held):
                                /etc/network.conf stops sshd before it
                                listens, with the file, line, and reason in
                                plain text on the console; nothing serves;
-                               replacing the file (--reconfigure) recovers
+                               failed-image reconfiguration refuses;
+                               correction serves a separate clean copy
   LOGS OK                      /var/log/sshd and /var/log/fsd hold stamped
                                lines of this boot, readable and not
                                writable from sessions, `tail` works, they
@@ -81,6 +82,18 @@ KEYGEN = "/usr/bin/ssh-keygen"
 SITE_SSHD = b"port 2200\nmax-connections 3\nlogin-grace-time 20\nidle-timeout 45\nmax-auth-tries 4\n"
 SITE_NETWORK = b"address 10.0.2.20\nnetmask 255.255.255.0\ngateway 10.0.2.2\n"
 LOG_LINE = re.compile(rb"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ (sshd|fsd): [ -~\t]*\n")
+
+
+def copy_fixture(source, destination):
+    """Copy a halted fixture with private image modes from its first byte."""
+    destination.mkdir(mode=0o700)
+    for name in (oi.ISO, oi.IMAGE, "MANIFEST"):
+        if name == oi.IMAGE:
+            fd = os.open(destination / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as output, (source / name).open("rb") as image:
+                shutil.copyfileobj(image, output)
+        else:
+            shutil.copyfile(source / name, destination / name)
 
 
 class Boot:
@@ -353,7 +366,8 @@ class OperatorMatrix(sm.Matrix):
 
     def malformed(self):
         """Copies of the image with a malformed file each: refused with the
-        reason on the console, nothing listens; the fix recovers."""
+        reason on the console, nothing listens. The failed disk refuses
+        host updates; correction is demonstrated on a separate clean copy."""
         cases = [
             ("sshd.conf", b"# typo\nPort 2200\n",
              'sshd: /etc/sshd.conf: line 2: unknown keyword "Port" (known: port, max-connections, '
@@ -366,9 +380,7 @@ class OperatorMatrix(sm.Matrix):
         bad = self.work / "operator-bad"
         for name, content, message in cases:
             shutil.rmtree(bad, ignore_errors=True)
-            bad.mkdir()
-            for f in (oi.ISO, oi.IMAGE, "MANIFEST"):
-                shutil.copyfile(self.out / f, bad / f)
+            copy_fixture(self.out, bad)
             etc = self.work / f"bad-{name}"
             etc.mkdir()
             (etc / name).write_bytes(content)
@@ -383,6 +395,10 @@ class OperatorMatrix(sm.Matrix):
                        and len(listed.splitlines()) == len(before.splitlines())
                        and set(listed.splitlines()) - set(before.splitlines())
                        == {f"file {hashlib.sha256(content).hexdigest()} /etc/{name}"}, listed[-600:])
+            # Preserve the clean malformed fixture before its failed boot.
+            # A successful repair of this copy is not recovery of the dirty disk.
+            repair = self.work / f"operator-repair-{name}"
+            copy_fixture(bad, repair)
             boot = self.start(bad)
             status, text = boot.status(300)
             console = boot.text()
@@ -393,10 +409,20 @@ class OperatorMatrix(sm.Matrix):
             good = self.work / f"good-{name}"
             good.mkdir()
             (good / name).write_bytes(SITE_SSHD if name == "sshd.conf" else SITE_NETWORK)
+            before_refusal = {f: hashlib.sha256((bad / f).read_bytes()).hexdigest()
+                              for f in (oi.IMAGE, "MANIFEST")}
             p = subprocess.run([str(here / "build-operator-image.sh"), "--reconfigure", "--etc", str(good), str(bad)],
                                env=self.env(), capture_output=True, text=True)
-            self.check("replacing the file again succeeds", p.returncode == 0, p.stdout[-800:] + p.stderr[-800:])
-            self.boot = self.start(bad)
+            after_refusal = {f: hashlib.sha256((bad / f).read_bytes()).hexdigest()
+                             for f in (oi.IMAGE, "MANIFEST")}
+            self.check("reconfiguration refuses the failed image without changing image or MANIFEST",
+                       p.returncode != 0 and "writable guard: unclean image; offline reconstruction required" in p.stdout + p.stderr
+                       and before_refusal == after_refusal, p.stdout[-800:] + p.stderr[-800:])
+            p = subprocess.run([str(here / "build-operator-image.sh"), "--reconfigure", "--etc", str(good), str(repair)],
+                               env=self.env(), capture_output=True, text=True)
+            self.check("correcting the separate clean malformed fixture succeeds", p.returncode == 0,
+                       p.stdout[-800:] + p.stderr[-800:])
+            self.boot = self.start(repair)
             self.serving()
             rc, out, err = self.ssh("echo recovered")
             self.check("and the image serves again", rc == 0 and out == b"recovered\n", f"rc={rc} {err!r}")

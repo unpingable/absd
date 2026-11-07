@@ -129,11 +129,13 @@ impl Reservation {
 /// ranges (low memory, kernel image, boot information) are removed before any
 /// allocation. Allocation and release are O(frames) scans guided by a hint;
 /// correctness and visibility matter more than speed at this stage.
-/// `frames_owned_by` scans only up to the highest frame ever allocated.
+/// `frames_owned_by` scans up to a conservative bound on the last live frame;
+/// the final process reclamation check tightens that bound.
 pub struct FrameAllocator {
     base: u64,
     tags: Tags,
-    /// One past the highest tag index ever allocated; never lowered.
+    /// One past the highest potentially live tag; allocation raises it and
+    /// the final process reclamation check tightens it from the actual tags.
     high_water: usize,
     hint: usize,
     /// Optional ceiling on `allocated_frames`, used to force exhaustion in
@@ -443,6 +445,23 @@ impl FrameAllocator {
             .count()
     }
 
+    /// Final ownership check after the caller returned a process's frames.
+    /// Keep the independent tag scan, and use the same pass to exclude a
+    /// reclaimed high-memory tail from later ownership/admission scans.
+    /// No tags, allocation counts, reservations or allocation hints change.
+    pub fn check_reclaimed(&mut self, pid: u32) -> usize {
+        let mut remaining = 0;
+        let mut high_water = 0;
+        for (index, &tag) in self.tags[..self.high_water].iter().enumerate() {
+            if let Some(owner) = FrameOwner::decode(tag) {
+                high_water = index + 1;
+                remaining += usize::from(owner.pid() == Some(pid));
+            }
+        }
+        self.high_water = high_water;
+        remaining
+    }
+
     pub fn allocate(&mut self, owner: FrameOwner) -> Option<Frame> {
         self.allocate_contiguous(1, owner)
     }
@@ -695,6 +714,96 @@ mod tests {
 
     fn allocator() -> Box<FrameAllocator> {
         Box::new(FrameAllocator::new())
+    }
+
+    #[test]
+    fn reclamation_check_matches_decoder_for_all_states_and_owner_boundaries() {
+        let mut frames = allocator();
+        let owners = [0, 1, 7, MAX_OWNER_ID - 1, MAX_OWNER_ID];
+        let mut length = 0;
+        for state in 0..16u32 {
+            for owner in owners {
+                frames.tags[length] = (state << TAG_SHIFT) | owner;
+                length += 1;
+            }
+        }
+        // The tag query must remain independent of cached allocation and
+        // reservation totals, including malformed/unavailable tag states.
+        assert_eq!(frames.allocated_frames(), 0);
+        frames.tags[length] = (STATE_USER_PAGE << TAG_SHIFT) | 7;
+        for end in [0, 1, 10, 13, length] {
+            for pid in [
+                0,
+                1,
+                2,
+                7,
+                MAX_OWNER_ID - 1,
+                MAX_OWNER_ID,
+                MAX_OWNER_ID + 1,
+                u32::MAX,
+            ] {
+                frames.high_water = end;
+                let expected = frames.tags[..end]
+                    .iter()
+                    .filter(|&&tag| FrameOwner::decode(tag).and_then(FrameOwner::pid) == Some(pid))
+                    .count();
+                let last_live = frames.tags[..end]
+                    .iter()
+                    .rposition(|&tag| FrameOwner::decode(tag).is_some())
+                    .map_or(0, |index| index + 1);
+                assert_eq!(frames.check_reclaimed(pid), expected, "end={end} pid={pid}");
+                assert_eq!(frames.high_water, last_live);
+                assert_eq!(frames.frames_owned_by(pid), expected);
+                assert_eq!(frames.allocated_frames(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn reclaimed_tail_preserves_live_owners_and_future_allocation_choices() {
+        let setup = || {
+            let mut f = allocator();
+            f.add_usable(0, 2 * PAGE_SIZE);
+            f.add_usable(TRACKED_PHYSICAL_LIMIT - PAGE_SIZE, TRACKED_PHYSICAL_LIMIT);
+            let kernel = f.allocate(FrameOwner::Kernel).unwrap();
+            let low = f.allocate(FrameOwner::UserPage(7)).unwrap();
+            let high = f.allocate(FrameOwner::KernelStack(9)).unwrap();
+            (f, kernel, low, high)
+        };
+        let (mut compact, kernel, low, high) = setup();
+        let (mut reference, _, _, _) = setup();
+        // A remaining victim frame must still be reported; another live
+        // owner at the high end must remain inside the scan bound.
+        assert_eq!(compact.check_reclaimed(7), 1);
+        assert_eq!(compact.high_water, MAX_TRACKED_FRAMES);
+        assert_eq!(compact.frames_owned_by(9), 1);
+        for f in [&mut compact, &mut reference] {
+            f.free(low, FrameOwner::UserPage(7)).unwrap();
+            f.free(high, FrameOwner::KernelStack(9)).unwrap();
+        }
+        assert_eq!(compact.check_reclaimed(7), 0);
+        assert_eq!(compact.high_water, 1);
+        assert_eq!(
+            compact.state(kernel),
+            FrameState::Allocated(FrameOwner::Kernel)
+        );
+        assert_eq!(compact.state(high), FrameState::Free);
+        for _ in 0..3 {
+            assert_eq!(
+                compact.allocate(FrameOwner::PageTable(8)),
+                reference.allocate(FrameOwner::PageTable(8))
+            );
+            assert_eq!(compact.free_frames(), reference.free_frames());
+            assert_eq!(compact.allocated_frames(), reference.allocated_frames());
+            assert_eq!(compact.frames_owned_by(8), reference.frames_owned_by(8));
+        }
+        // Reusing a high frame must raise the bound again and reject the
+        // retired identity's stale ownership claim exactly as before.
+        assert_eq!(compact.high_water, MAX_TRACKED_FRAMES);
+        assert_eq!(
+            compact.free(high, FrameOwner::KernelStack(9)),
+            Err(FrameError::WrongOwner(FrameOwner::PageTable(8)))
+        );
     }
 
     #[test]
@@ -1053,6 +1162,69 @@ mod tests {
         }
     }
 
+    /// Host-only cost after a real whole-table allocation/free history.
+    /// Resetting only the conservative bound repeats that reachable peak
+    /// state; tags, capacity and reservations stay unchanged between samples.
+    #[cfg(feature = "frame-admission-core")]
+    #[test]
+    #[ignore]
+    fn reclaimed_peak_scan_cost() {
+        for gib in [32u64, 64] {
+            let tracked = ((gib << 30) / PAGE_SIZE) as usize;
+            let mut frames = extended(tracked);
+            frames.add_usable(0, gib << 30);
+            for _ in 0..16 {
+                frames.allocate(FrameOwner::Kernel).unwrap();
+            }
+            while frames.allocate(FrameOwner::UserPage(7)).is_some() {}
+            for index in 16..tracked {
+                frames
+                    .free(Frame(index as u64 * PAGE_SIZE), FrameOwner::UserPage(7))
+                    .unwrap();
+            }
+            let mut samples: [std::vec::Vec<u128>; 4] =
+                core::array::from_fn(|_| std::vec::Vec::new());
+            for _ in 0..7 {
+                frames.high_water = tracked;
+                let start = std::time::Instant::now();
+                assert_eq!(core::hint::black_box(&frames).frames_owned_by(7), 0);
+                samples[0].push(start.elapsed().as_nanos());
+                let start = std::time::Instant::now();
+                core::hint::black_box(&mut frames).admit(9, 32).unwrap();
+                samples[1].push(start.elapsed().as_nanos());
+                frames.retire_reservation(9).unwrap();
+                let start = std::time::Instant::now();
+                assert_eq!(core::hint::black_box(&mut frames).check_reclaimed(7), 0);
+                samples[2].push(start.elapsed().as_nanos());
+                assert_eq!(frames.high_water, 16);
+                let start = std::time::Instant::now();
+                core::hint::black_box(&mut frames).admit(9, 32).unwrap();
+                samples[3].push(start.elapsed().as_nanos());
+                frames.retire_reservation(9).unwrap();
+                assert_eq!(
+                    (
+                        frames.allocated_frames(),
+                        frames.free_frames(),
+                        frames.idle_reserved_frames()
+                    ),
+                    (16, tracked - 16, 0)
+                );
+            }
+            for (phase, ns) in ["old_check", "admit_before", "reclaim_check", "admit_after"]
+                .iter()
+                .zip(samples.iter_mut())
+            {
+                ns.sort_unstable();
+                std::println!(
+                    "RECLAIMED PEAK SCAN gib={gib} phase={phase} min_ns={} median_ns={} max_ns={}",
+                    ns[0],
+                    ns[3],
+                    ns[6]
+                );
+            }
+        }
+    }
+
     #[test]
     fn extended_table_is_bounded_and_installed_once_before_use() {
         assert_eq!(
@@ -1140,11 +1312,24 @@ mod accounting_tests {
         assert!(f.admission_accounting().clean());
     }
     #[test]
+    #[cfg(feature = "builder-profile")]
+    fn builder_profile_admission_range_still_requires_backing() {
+        let mut f = FrameAllocator::new();
+        f.add_usable(4096, 9 * PAGE_SIZE);
+        // The accepted maximum is not a validation boundary in this profile,
+        // and numeric validity does not manufacture physical backing.
+        assert_eq!(f.admit(1, 65537), Err(AdmissionError::NoCapacity));
+        assert_eq!(f.admit(1, 131072), Err(AdmissionError::NoCapacity));
+        assert_eq!(f.admit(1, 131073), Err(AdmissionError::Invalid));
+        assert!(f.admission_accounting().clean());
+    }
+    #[test]
     fn admitted_high_frames_preserve_fixed_wire_cap() {
         let base = 1u64 << 32;
         let mut f = FrameAllocator::with_base(base);
         f.add_usable(base, base + 8 * PAGE_SIZE);
-        assert_eq!(f.admit(1, 65537), Err(AdmissionError::Invalid));
+        let cap = crate::syscall::MAX_FRAME_ADMISSION_FRAMES as usize;
+        assert_eq!(f.admit(1, cap + 1), Err(AdmissionError::Invalid));
         f.admit(1, 8).unwrap();
         assert!(f.allocate(FrameOwner::UserPage(2)).is_none());
         let page = f.allocate(FrameOwner::UserPage(1)).unwrap();

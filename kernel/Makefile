@@ -15,6 +15,8 @@ EXTERNAL_READER_ELF ?=
 EXTERNAL_READER_INPUT ?=
 # Optional file server for `fsd` durable boots (DURABLE_OPTIONS=fsd): the
 # only holder of the read-write block handle; the worker gets channels.
+LOGD_FAULT ?= 0
+LOGD_ELF ?=
 FILE_SERVER_ELF ?=
 # A qualification boot's NIC-worker deadline in ticks (init's default is an
 # hour); a served boot (DURABLE_OPTIONS="net fsd served") has none.
@@ -39,20 +41,30 @@ DURABLE_ISO = build/durable/absd-durable-$(DURABLE_STEP).iso
 # only when the boot option `nvme-write=` names its controller's serial, so
 # test ISOs name this one and nothing else.
 NVME_SERIAL := absd
-# Drive attachment for block-probe-test: `ata` (primary IDE master) or
-# `nvme` (one QEMU NVMe namespace). The block syscalls are the same.
+# QEMU's scratch SATA disk serial: a kernel uses an AHCI disk only when
+# `ahci-disk=` or `ahci-write=` names its IDENTIFY serial (src/ahci_block.rs).
+AHCI_SERIAL := absd
+# Drive attachment for block-probe-test and the durable ISOs: `ata` (primary
+# IDE master), `nvme` (one QEMU NVMe namespace) or `ahci` (one SATA disk on
+# QEMU's ich9-ahci). The block syscalls are the same. BLOCK_SELECT is the
+# boot option that selects the device writable.
 BLOCK_DEVICE ?= ata
+BLOCK_SELECT = nvme-write=$(NVME_SERIAL)
 ifeq ($(BLOCK_DEVICE),nvme)
 BLOCK_ATTACH = -drive if=none,id=nvm,file="$$image",format=raw -device nvme,serial=$(NVME_SERIAL),drive=nvm
 BLOCK_IRQS = [0-9]*
 else ifeq ($(BLOCK_DEVICE),ata)
 BLOCK_ATTACH = -drive file="$$image",format=raw,if=ide,index=0
 BLOCK_IRQS = [1-9][0-9]*
+else ifeq ($(BLOCK_DEVICE),ahci)
+BLOCK_ATTACH = -device ich9-ahci,id=ahci -drive if=none,id=sata,file="$$image",format=raw -device ide-hd,drive=sata,bus=ahci.0,serial=$(AHCI_SERIAL)
+BLOCK_IRQS = [0-9]*
+BLOCK_SELECT = ahci-write=$(AHCI_SERIAL)
 else
-$(error BLOCK_DEVICE must be ata or nvme)
+$(error BLOCK_DEVICE must be ata, nvme or ahci)
 endif
 
-.PHONY: nic-cold-rx-measure provenance-check provenance-full whole-ram-iso whole-ram-test machine-recover-iso machine-recover-test xhci-iso xhci-test net-iso net-test durable-iso durable-reader-test broker-test spawn-image-test elf-matrix-test disclosure-probe-test block-probe-iso block-probe-test nvme-iso nvme-test framebuffer-iso framebuffer-test physical-build physical-iso physical-iso-test physical-iso-gate survey-iso survey-gate laptop-test laptop-matrix check user build iso fault-iso kernel-fault-iso shell-iso fuzz-iso external-build external-iso external-test external-live-iso external-live-test external-live-reject external-live-negative run shell fault-test kernel-fault-test shell-test fuzz-test smoke mutants debug clean
+.PHONY: nic-cold-rx-measure provenance-check provenance-full whole-ram-iso whole-ram-test machine-recover-iso machine-recover-test xhci-iso xhci-test net-iso net-test durable-iso durable-reader-test broker-test spawn-image-test elf-matrix-test disclosure-probe-test block-probe-iso block-probe-test nvme-iso nvme-test ahci-iso ahci-test framebuffer-iso framebuffer-test physical-build physical-iso physical-iso-test physical-iso-gate survey-iso survey-gate laptop-test laptop-matrix check user build iso fault-iso kernel-fault-iso shell-iso fuzz-iso external-build external-iso external-test external-live-iso external-live-test external-live-reject external-live-negative run shell fault-test kernel-fault-test shell-test fuzz-test smoke mutants debug clean
 
 # The complete canonical verification, in the order HANDOFF.md lists it.
 # Third-party material, licences and release obligations against the recorded
@@ -68,6 +80,21 @@ provenance-full:
 check:
 	python3 scripts/provenance.py check
 	python3 scripts/test_provenance.py
+	python3 scripts/test-rust-build-flags.py
+	python3 scripts/test-serial-tx.py
+	python3 scripts/test-smp-startup-drain.py
+	python3 scripts/test-terminal-startup.py
+	python3 scripts/test-civil-syscalls.py --work target/civil-syscalls-host --target-dir target/civil-syscalls-host-target
+	python3 scripts/test-external-frame.py
+	python3 scripts/test-worker-console-lines.py
+	python3 scripts/test-logd-console.py
+	python3 scripts/test-logd-admission.py
+	python3 scripts/test-capacity-selftests.py
+	python3 scripts/test-smoke-accounting.py
+	python3 scripts/test-capacity-oracles.py
+	cargo run --example arm64_presentation
+	$(MAKE) diagnostics-startup-test
+	python3 scripts/test-observation-syscall.py
 	python3 scripts/models/rt-fixture.py
 	python3 scripts/models/smp-lifetime.py --self-test
 	python3 scripts/models/xhci-irq.py --self-test
@@ -76,12 +103,20 @@ check:
 	python3 scripts/xhci-observe.py --self-test
 	python3 scripts/xhci-controller-test.py --self-test
 	python3 scripts/usb-keyboard-test.py --self-test
+	python3 scripts/usb-dual-controller-test.py --self-test
 	python3 scripts/usb-keyboard-recovery-test.py --self-test
 	python3 scripts/test-i219-info.py
 	python3 scripts/check-nvme-probe-order.py --self-test
+	python3 scripts/ahci-image-check.py --self-test
+	python3 scripts/ahci-block-test.py --self-test
+	python3 scripts/evidence-digest.py --self-test
+	python3 scripts/amdvi-oracle-smoke.py --self-test
 	cargo test --workspace --exclude absd-user
+	$(MAKE) pcm-stop-fixture-test
+	$(MAKE) iommu-mutants
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets -- -D warnings
+	$(MAKE) external-input-close-test
 	$(MAKE) arm64-build
 	$(MAKE) smoke
 	$(MAKE) whole-ram-test
@@ -100,6 +135,21 @@ check:
 	$(MAKE) debug
 	@echo 'check: all canonical targets passed'
 
+# Real startup encoder against the shared diagnostics wire vector; host only.
+.PHONY: diagnostics-startup-test
+diagnostics-startup-test:
+	mkdir -p build/diagnostics-startup
+	rustc --edition=2024 --test scripts/fixtures/diagnostics-startup.rs -o build/diagnostics-startup/test
+	build/diagnostics-startup/test
+
+# The PCM stop fixture's sequence against controlled completion timing
+# (docs/NATIVE-PCM-EXPERIMENT.md). Host only; the module is plain Rust.
+.PHONY: pcm-stop-fixture-test
+pcm-stop-fixture-test:
+	mkdir -p build/pcm-stop-fixture
+	rustc --edition 2024 --test user/src/pcm_stop.rs -o build/pcm-stop-fixture/test
+	build/pcm-stop-fixture/test
+
 # File-level licensing metadata alone (docs/SOURCE-LICENSING.md). The
 # provenance check runs it too; this target is for working on provenance.toml.
 .PHONY: spdx-check
@@ -114,7 +164,7 @@ user:
 # The kernel is interrupted in ring 0 (boot timer test, controlled fault),
 # so it must not keep data below RSP.
 build:
-	$(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
+	$(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie -C link-arg=-Wl,--build-id=sha1
 
 iso: build
 	mkdir -p build/iso/boot/grub
@@ -292,22 +342,22 @@ hostile-test: hostile-iso
 	grep -qx 'HOSTILE CRASH CYCLES OK' $$output; \
 	grep -qx 'HOSTILE FLOOD WITNESS OK' $$output; \
 	grep -qx 'hostile: state handles done' $$output; \
-	grep -qx 'hostile: fork bomb spawned=13' $$output; \
+	grep -qx 'hostile: fork bomb spawned=29' $$output; \
 	grep -qx 'hostile: heap window filled pages=8192' $$output; \
 	grep -qx 'hostile: vm churn cycles=512' $$output; \
 	grep -qx 'hostile: case kill-mapped pages=96' $$output; \
 	grep -qx 'hostile: cells filled=32' $$output; \
-	grep -qx 'hostile: pipes filled=48' $$output; \
+	grep -qx 'hostile: pipes filled=127 limit=handles' $$output; \
 	grep -qx 'hostile: churn cycles=200' $$output; \
 	grep -q '^hostile: case exit-mapped' $$output; \
 	grep -q '^hostile: case exit-with-child-and-pipe' $$output; \
 	for ok in 'STATE HANDLES' 'STATE LIFECYCLE' 'STATE VM' 'STATE OBJECTS' 'STATE CHURN'; do \
 	  grep -qx "HOSTILE $$ok OK" $$output; \
 	done; \
-	test "$$(grep -c '^USER KILLED ' $$output)" -eq 21; \
+	test "$$(grep -c '^USER KILLED ' $$output)" -eq 37; \
 	grep -qx 'HOSTILE WITNESS OK' $$output; \
 	test "$$(grep -cx 'user-B: hello from ELF userspace' $$output)" -eq 2; \
-	grep -q '^HOSTILE status=0 frames=0 faults=46 kills=21 preempts=[1-9][0-9]* refused unknown=1[0-9][0-9][0-9][0-9][0-9][0-9]* pointer=17 handle=33 wait=2 spawn=1 map=12 cell=1 pipe=1 timeouts=2$$' $$output; \
+	grep -q '^HOSTILE status=0 frames=0 faults=46 kills=37 preempts=[1-9][0-9]* refused unknown=1[0-9][0-9][0-9][0-9][0-9][0-9]* pointer=17 handle=34 wait=2 spawn=1 map=12 cell=1 pipe=0 timeouts=2$$' $$output; \
 	grep -qx 'HOSTILE OK' $$output; grep -qx 'ABSD BOOT OK' $$output; grep -qx 'USERSPACE BOOTSTRAP OK' $$output; \
 	if grep -q 'PANIC\|KERNEL FAULT' $$output; then echo "hostile-test: unexpected output matching 'PANIC\|KERNEL FAULT' in $$output" >&2; exit 1; fi; \
 	if [ "$$status" -ne 3 ]; then echo "unexpected QEMU exit: $$status" >&2; exit 1; fi; \
@@ -323,17 +373,50 @@ external-build:
 	ABSD_EXTERNAL_READER_ELF="$$reader" ABSD_EXTERNAL_READER_INPUT="$$reader_input" \
 	ABSD_BROKER_POLICY="$(if $(BROKER_POLICY),$(abspath $(BROKER_POLICY)))" \
 	ABSD_FILE_SERVER_ELF="$(if $(FILE_SERVER_ELF),$(abspath $(FILE_SERVER_ELF)))" \
+	ABSD_LOGD_ELF="$(if $(LOGD_ELF),$(abspath $(LOGD_ELF)))" \
+	ABSD_LOGD_FAULT="$(LOGD_FAULT)" \
 	ABSD_NET_WAIT_TICKS="$(NET_WAIT_TICKS)" ABSD_ENROLL_STREAM="$(ENROLL_STREAM)" \
 	ABSD_OWNER_1_ELF="$(if $(OWNER_1_ELF),$(abspath $(OWNER_1_ELF)))" ABSD_OWNER_2_ELF="$(if $(OWNER_2_ELF),$(abspath $(OWNER_2_ELF)))" \
 	ABSD_OWNER_3_ELF="$(if $(OWNER_3_ELF),$(abspath $(OWNER_3_ELF)))" ABSD_OWNER_4_ELF="$(if $(OWNER_4_ELF),$(abspath $(OWNER_4_ELF)))" \
 	ABSD_EXTERNAL_USER_ELF="$$override" CARGO_TARGET_DIR="$(EXTERNAL_TARGET)" \
-	$(KERNEL_CARGO) rustc --bin absd-kernel $(if $(EXTERNAL_KERNEL_FEATURES),--features $(EXTERNAL_KERNEL_FEATURES)) -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
+	$(KERNEL_CARGO) rustc --bin absd-kernel $(if $(EXTERNAL_KERNEL_FEATURES),--features $(EXTERNAL_KERNEL_FEATURES)) -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie -C link-arg=-Wl,--build-id=sha1
 
 external-iso: external-build
 	mkdir -p build/external/iso/boot/grub
 	cp $(EXTERNAL_KERNEL) build/external/iso/boot/absd-kernel
 	printf '%s\n' 'set timeout=0' 'menuentry "ABSD external workload" {' '  multiboot2 /boot/absd-kernel external' '  boot' '}' > build/external/iso/boot/grub/grub.cfg
 	grub-mkrescue -o build/absd-external.iso build/external/iso
+
+.PHONY: mwm-build mwm-demo-iso mwm-fault-iso mwm-protocol-test
+mwm-protocol-test:
+	mkdir -p build/mwm-tests
+	rustc --edition 2024 --test -D warnings user/src/mwm_protocol_tests.rs -o build/mwm-tests/protocol
+	build/mwm-tests/protocol
+	rustc --edition 2024 --test -D warnings user/src/mwm_coordinator_tests.rs -o build/mwm-tests/coordinator
+	build/mwm-tests/coordinator --test-threads=1
+
+mwm-build:
+	ABSD_USER_MWM=1 sh scripts/build-user.sh build/mwm/user
+	ABSD_EXTERNAL_USER_ELF="$(CURDIR)/build/mwm/user/mwm.elf" CARGO_TARGET_DIR="$(CURDIR)/build/mwm/target" \
+	$(KERNEL_CARGO) rustc --bin absd-kernel --features mwm-experiment -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie -C link-arg=-Wl,--build-id=sha1
+	@set -eu; set -- build/mwm/target/debug/build/absd-kernel-*/out/init.elf; test "$$#" -eq 1; test -f "$$1"; \
+	sha256sum build/mwm/user/mwm.elf "$$1" build/mwm/target/debug/absd-kernel > build/mwm/source.sha256
+
+mwm-demo-iso: mwm-build
+	mkdir -p build/mwm/demo/iso/boot/grub
+	cp build/mwm/target/debug/absd-kernel build/mwm/demo/iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD MWM demo" {' '  multiboot2 /boot/absd-kernel mwm-demo halt-on-exit' '  boot' '}' > build/mwm/demo/iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/mwm/demo.iso build/mwm/demo/iso
+	@set -eu; set -- build/mwm/target/debug/build/absd-kernel-*/out/init.elf; test "$$#" -eq 1; \
+	sha256sum build/mwm/user/mwm.elf "$$1" build/mwm/target/debug/absd-kernel build/mwm/demo.iso > build/mwm/demo.sha256
+
+mwm-fault-iso: mwm-build
+	mkdir -p build/mwm/fault/iso/boot/grub
+	cp build/mwm/target/debug/absd-kernel build/mwm/fault/iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD MWM fault fixture" {' '  multiboot2 /boot/absd-kernel mwm-demo mwm-fault halt-on-exit' '  boot' '}' > build/mwm/fault/iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/mwm/fault.iso build/mwm/fault/iso
+	@set -eu; set -- build/mwm/target/debug/build/absd-kernel-*/out/init.elf; test "$$#" -eq 1; \
+	sha256sum build/mwm/user/mwm.elf "$$1" build/mwm/target/debug/absd-kernel build/mwm/fault.iso > build/mwm/fault.sha256
 
 # Opt-in generic integration boot. It is intentionally not a dependency of
 # `check`; callers may replace only the multi-start workload ELF and input.
@@ -346,6 +429,10 @@ external-test: external-iso
 	if grep -q 'PANIC\|KERNEL FAULT\|EXTERNAL WORKLOAD FAILED' $$output; then echo "external-test: unexpected output matching 'PANIC\|KERNEL FAULT\|EXTERNAL WORKLOAD FAILED' in $$output" >&2; exit 1; fi; \
 	if [ "$$status" -ne 3 ]; then echo "unexpected QEMU exit: $$status" >&2; exit 1; fi; \
 	echo 'external-test: embedded input and captured output matched exactly'
+
+.PHONY: external-input-close-test
+external-input-close-test:
+	python3 scripts/external-input-close-test.py --qemu "$(QEMU)"
 
 external-live-iso: external-build
 	mkdir -p build/external-live/iso/boot/grub
@@ -406,7 +493,7 @@ external-live-negative: external-live-iso
 block-probe-iso: build
 	mkdir -p build/block-probe-iso/boot/grub
 	cp $(KERNEL) build/block-probe-iso/boot/absd-kernel
-	printf '%s\n' 'set timeout=0' 'menuentry "ABSD block probe" {' '  multiboot2 /boot/absd-kernel block-probe nvme-write=$(NVME_SERIAL)' '  boot' '}' > build/block-probe-iso/boot/grub/grub.cfg
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD block probe" {' '  multiboot2 /boot/absd-kernel block-probe $(BLOCK_SELECT)' '  boot' '}' > build/block-probe-iso/boot/grub/grub.cfg
 	grub-mkrescue -o build/absd-block-probe.iso build/block-probe-iso
 
 block-probe-test: block-probe-iso
@@ -473,6 +560,65 @@ nvme-test: nvme-iso
 	rm -f "$$image"; \
 	echo 'nvme-test: NVME BLOCK OK, NVME FLUSH OK, bounds, reinit, read-only default, 4 KiB refusal'
 
+# Kernel-level AHCI qualification ISOs (src/ahci_check.rs): write with the
+# disk selected by `ahci-write=`, verify read-only with `ahci-disk=`, a wrong
+# serial, a boot naming no disk, and the fault boots. Run by
+# scripts/ahci-block-test.py under QEMU's ich9-ahci with two disks.
+AHCI_PHASES := write:'ahci-qualify-write ahci-write=$(AHCI_SERIAL)' \
+	verify:'ahci-qualify-verify ahci-disk=$(AHCI_SERIAL)' \
+	verify-none:'ahci-qualify-verify' \
+	other:'ahci-qualify-write ahci-write=not-$(AHCI_SERIAL)' \
+	device-error:'ahci-qualify-device-error ahci-write=$(AHCI_SERIAL)' \
+	timeout:'ahci-qualify-timeout ahci-write=$(AHCI_SERIAL)' \
+	stuck-stop:'ahci-qualify-stuck-stop ahci-write=$(AHCI_SERIAL)' \
+	pending:'ahci-qualify-write ahci-write=$(AHCI_SERIAL) ahci-pretend-pending=1' \
+	decode-off:'ahci-qualify-write ahci-write=$(AHCI_SERIAL) ahci-pretend-decode-off'
+.PHONY: ahci-iso ahci-test
+ahci-iso: build
+	@set -eu; for phase in $(AHCI_PHASES); do \
+	  name=$${phase%%:*}; line=$${phase#*:}; \
+	  mkdir -p build/ahci-$$name-iso/boot/grub; cp $(KERNEL) build/ahci-$$name-iso/boot/absd-kernel; \
+	  printf '%s\n' 'insmod all_video' 'set timeout=0' 'menuentry "ABSD AHCI qualification" {' "  multiboot2 /boot/absd-kernel $$line" '  boot' '}' > build/ahci-$$name-iso/boot/grub/grub.cfg; \
+	  grub-mkrescue -o build/absd-ahci-$$name.iso build/ahci-$$name-iso >/dev/null 2>&1; \
+	done
+
+# Known-block writes and read-back, an eight-sector run, FLUSH CACHE EXT,
+# bounds, fresh-boot re-read, read-only default, wrong serial, no selection,
+# an injected device error, both retirement paths, and refusal of a
+# controller with a port not idle before any controller-wide write; the host checks both
+# disk images after every boot (scripts/ahci-image-check.py).
+ahci-test: ahci-iso
+	python3 scripts/ahci-image-check.py --self-test
+	python3 scripts/ahci-block-test.py --self-test
+	python3 scripts/ahci-block-test.py --qemu '$(QEMU)'
+
+# GPT partition qualification ISOs (docs/hardware/GPT-PARTITION.md): the
+# device is one GPT partition of the AHCI disk, named by its unique GUID.
+# Run by scripts/gpt-partition-test.py on images it builds (an ESP and the
+# ABSD partition on a 128 MiB disk); the script checks this GUID.
+GPT_PARTITION_GUID := 5a8b3c2d-1e4f-4a6b-8c9d-0e1f2a3b4c5d
+GPT_PHASES := read:'block-partition-qualify ahci-disk=$(AHCI_SERIAL) block-partition=$(GPT_PARTITION_GUID)' \
+	write-selected:'block-partition-qualify ahci-write=$(AHCI_SERIAL) block-partition=$(GPT_PARTITION_GUID)' \
+	wrong-guid:'block-partition-qualify ahci-disk=$(AHCI_SERIAL) block-partition=5a8b3c2d-1e4f-4a6b-8c9d-0e1f2a3b4c5e' \
+	malformed:'block-partition-qualify ahci-disk=$(AHCI_SERIAL) block-partition=not-a-guid' \
+	durable:'block-probe ahci-write=$(AHCI_SERIAL) block-partition=$(GPT_PARTITION_GUID)'
+.PHONY: gpt-partition-iso gpt-partition-test
+gpt-partition-iso: build
+	@set -eu; for phase in $(GPT_PHASES); do \
+	  name=$${phase%%:*}; line=$${phase#*:}; \
+	  mkdir -p build/gpt-$$name-iso/boot/grub; cp $(KERNEL) build/gpt-$$name-iso/boot/absd-kernel; \
+	  printf '%s\n' 'insmod all_video' 'set timeout=0' 'menuentry "ABSD GPT partition qualification" {' "  multiboot2 /boot/absd-kernel $$line" '  boot' '}' > build/gpt-$$name-iso/boot/grub/grub.cfg; \
+	  grub-mkrescue -o build/absd-gpt-$$name.iso build/gpt-$$name-iso >/dev/null 2>&1; \
+	done
+
+# Block-layer reads of the partition (its first and last sectors, a run,
+# bounds at its length), refusals by name with no device and no fallback,
+# block-probe's durable workload inside a writable partition, and host
+# checks that nothing outside the ABSD partition (the ESP included) changed.
+gpt-partition-test: gpt-partition-iso
+	python3 scripts/gpt-partition-test.py --self-test
+	python3 scripts/gpt-partition-test.py --qemu '$(QEMU)'
+
 # The hybrid BIOS+EFI ISO for a first physical boot (docs/PHYSICAL-BOOT.md).
 # No entry selects a writable disk: the NVMe namespace, if any, is
 # identified and read only. `halt-on-exit` keeps the last screen instead of
@@ -485,7 +631,7 @@ OVMF ?= /usr/share/ovmf/OVMF.fd
 PHYSICAL_TARGET := build/physical/target
 PHYSICAL_KERNEL := $(PHYSICAL_TARGET)/debug/absd-kernel
 physical-build:
-	CARGO_TARGET_DIR=$(PHYSICAL_TARGET) $(KERNEL_CARGO) rustc --bin absd-kernel --features block-read-only -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
+	CARGO_TARGET_DIR=$(PHYSICAL_TARGET) $(KERNEL_CARGO) rustc --bin absd-kernel --features block-read-only -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie -C link-arg=-Wl,--build-id=sha1
 
 physical-iso: physical-build
 	rm -rf build/physical-iso
@@ -515,7 +661,25 @@ survey-iso: physical-build
 	grub-mkrescue -o $(SURVEY_ISO) build/survey-iso
 	@sha256sum $(SURVEY_ISO) $(PHYSICAL_KERNEL)
 
-# The AHCI census ISO (docs/hardware/SATA-AHCI-CENSUS.md):
+# coordination record #109 (docs/RTL8125.md): the read-only kernel with one RTL8125
+# bring-up mode as its only GRUB entry, for a VFIO guest on reference_host.
+# RTL8125_MODE is the command line, e.g. `make rtl8125-iso
+# RTL8125_MODE=rtl8125-probe`. Exits QEMU through isa-debug-exit when the
+# guest is given that device; halts otherwise.
+RTL8125_MODE ?= rtl8125-probe
+RTL8125_ISO := build/absd-rtl8125.iso
+.PHONY: rtl8125-iso
+rtl8125-iso: physical-build
+	rm -rf build/rtl8125-iso
+	mkdir -p build/rtl8125-iso/boot/grub
+	cp $(PHYSICAL_KERNEL) build/rtl8125-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'set default=0' \
+	  'menuentry "ABSD RTL8125: $(RTL8125_MODE)" {' '  multiboot2 /boot/absd-kernel $(RTL8125_MODE)' '  boot' '}' \
+	  > build/rtl8125-iso/boot/grub/grub.cfg
+	grub-mkrescue -o $(RTL8125_ISO) build/rtl8125-iso
+	@sha256sum $(RTL8125_ISO) $(PHYSICAL_KERNEL)
+
+# The AHCI census ISO (coordination record #45, docs/hardware/SATA-AHCI-CENSUS.md):
 # the read-only kernel with the census as its default entry (exits QEMU) and
 # a halting entry for a physical machine. Gate: scripts/ahci-census-check.py
 # under q35/ich9-ahci with two disks and a CD, QEMU traces showing IDENTIFY
@@ -692,7 +856,7 @@ usb-keyboard-iso: build
 	  printf '%s\n' 'set timeout=0' 'menuentry "ABSD USB keyboard" {' "  multiboot2 /boot/absd-kernel $$line" '  boot' '}' > build/usb-keyboard-$$name-iso/boot/grub/grub.cfg; \
 	  grub-mkrescue -o build/absd-usb-keyboard-$$name.iso build/usb-keyboard-$$name-iso >/dev/null 2>&1; \
 	done
-	CARGO_TARGET_DIR=build/usb-keyboard-smp-target cargo rustc --bin absd-kernel --features smp-user-test -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie
+	CARGO_TARGET_DIR=build/usb-keyboard-smp-target cargo rustc --bin absd-kernel --features smp-user-test -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie -C link-arg=-Wl,--build-id=sha1
 	mkdir -p build/usb-keyboard-combo-user-iso/boot/grub
 	cp build/usb-keyboard-smp-target/debug/absd-kernel build/usb-keyboard-combo-user-iso/boot/absd-kernel
 	sha256sum build/usb-keyboard-smp-target/debug/absd-kernel > build/usb-keyboard-combo-user-kernel.txt
@@ -822,7 +986,7 @@ disclosure-probe-test:
 durable-iso: external-build
 	mkdir -p build/durable/iso-$(DURABLE_STEP)/boot/grub
 	cp $(EXTERNAL_KERNEL) build/durable/iso-$(DURABLE_STEP)/boot/absd-kernel
-	printf '%s\n' 'insmod all_video' 'set timeout=0' 'menuentry "ABSD durable step" {' '  multiboot2 /boot/absd-kernel durable=$(DURABLE_STEP) $(DURABLE_OPTIONS) nvme-write=$(NVME_SERIAL)' '  boot' '}' > build/durable/iso-$(DURABLE_STEP)/boot/grub/grub.cfg
+	printf '%s\n' 'insmod all_video' 'set timeout=0' 'menuentry "ABSD durable step" {' '  multiboot2 /boot/absd-kernel durable=$(DURABLE_STEP) $(DURABLE_OPTIONS) $(BLOCK_SELECT)' '  boot' '}' > build/durable/iso-$(DURABLE_STEP)/boot/grub/grub.cfg
 	grub-mkrescue -o $(DURABLE_ISO) build/durable/iso-$(DURABLE_STEP)
 	@echo "durable-iso: $(DURABLE_ISO)"
 
@@ -906,6 +1070,7 @@ smoke: iso
 	grep -qx 'init: cancellation verified' $$output; \
 	grep -qx 'init: bounded transfers verified' $$output; \
 	grep -qx 'MULTI HANDLE SPAWN OK' $$output; \
+	grep -qx 'user-multi-handle: full 64-entry read-only vector verified' $$output; \
 	grep -qx 'PIPE INFO OK' $$output; \
 	grep -qx 'CHILD CONSOLE RIGHTS OK' $$output; \
 	grep -qx 'HANDLE TRANSFER OK' $$output; grep -qx 'PIPE CELL COMPOSE OK' $$output; \
@@ -1041,7 +1206,7 @@ mutants:
 		( scratch="$$(mktemp -d $${TMPDIR:-/tmp}/absd-mutant.XXXXXX)"; \
 		  trap 'rm -rf "$$scratch"' EXIT INT TERM; \
 		  CARGO_TARGET_DIR="$$scratch/target" RUSTFLAGS="--cfg $$mutant" \
-		    $(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie; \
+		    $(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie -C link-arg=-Wl,--build-id=sha1; \
 		  mkdir -p "$$scratch/iso/boot/grub"; \
 		  cp "$$scratch/target/debug/absd-kernel" "$$scratch/iso/boot/absd-kernel"; \
 		  cp grub.cfg "$$scratch/iso/boot/grub/grub.cfg"; \
@@ -1053,6 +1218,146 @@ mutants:
 		  fi; \
 		  echo "mutants: $$mutant rejected (qemu status $$status)" ); \
 	done
+
+# AMD-Vi discovery and the DMA seam (#111): each mutant disables one
+# refusal in src/ivrs.rs or src/dma_policy.rs, or (strict_overlap) refuses
+# the one accepted alias shape, or (broad_alias, plain_overlap) restores the
+# overlaps increment 2 first accepted; pci_raw_bme disables the pure guard
+# function `pci::write32` calls (the writer itself is kernel-only). The host
+# tests must fail for every one. The kernel-side amdvi_claim_disabled
+# mutant is exercised by acpi-test instead (lane record).
+.PHONY: iommu-mutants
+iommu-mutants:
+	@set -eu; mkdir -p build/iommu-mutants; \
+	for mutant in absd_mutant_ivrs_skip_checksum absd_mutant_ivrs_accept_ivmd absd_mutant_ivrs_unpaired \
+		absd_mutant_ivrs_alias_overlap absd_mutant_ivrs_strict_overlap absd_mutant_ivrs_alias_target \
+		absd_mutant_ivrs_second_unit absd_mutant_ivrs_any_capability absd_mutant_ivrs_ignore_reserved \
+		absd_mutant_ivrs_skip_constraints absd_mutant_ivrs_broad_alias absd_mutant_ivrs_plain_overlap \
+		absd_mutant_ivrs_hats_used_only absd_mutant_ivrs_silent_alias \
+		absd_mutant_amdvi_quirk_any absd_mutant_amdvi_ignore_tolerated absd_mutant_amdvi_ignore_closure \
+		absd_mutant_amdvi_invalidate_target_only absd_mutant_amdvi_blocked_passthrough_form \
+		absd_mutant_amdvi_grant_first absd_mutant_amdvi_priority_late absd_mutant_amdvi_ignore_unit_errors absd_mutant_amdvi_failed_admits \
+		absd_mutant_amdvi_ignore_table_errors \
+		absd_mutant_amdvi_overflow_forgotten absd_mutant_amdvi_contained_unchecked absd_mutant_amdvi_settles \
+		absd_mutant_amdvi_regrant_retained \
+		absd_mutant_amdvi_quirk_ppr absd_mutant_amdvi_quirk_ncounter absd_mutant_amdvi_quirk_banks \
+		absd_mutant_amdvi_quirk_reserved_count absd_mutant_amdvi_quirk_ppr_bits \
+		absd_mutant_amdvi_tolerated_selected_target absd_mutant_amdvi_counter_read \
+		absd_mutant_amdvi_efr_unsupported \
+		absd_mutant_dma_enforced_arms absd_mutant_dma_witness_ignored absd_mutant_amdvi_irq_forward absd_mutant_amdvi_irq_pass_bits absd_mutant_amdvi_irq_no_invalidate absd_mutant_amdvi_tail_unchecked absd_mutant_amdvi_tail_record_kept absd_mutant_amdvi_tail_health_kept absd_mutant_dma_inherited_overflow_ignored absd_mutant_pci_raw_bme \
+		absd_mutant_amdvi_overlap_unchecked absd_mutant_dma_registry_ignored absd_mutant_amdvi_msix_unmasked absd_mutant_dma_release_ignored \
+		absd_mutant_contain_conflict_ignored absd_mutant_rtl8125_exhaustion_ignored absd_mutant_rtl8125_stall_unbounded absd_mutant_operator_last_fault_only absd_mutant_operator_overflow_ignored absd_mutant_operator_target_fault_ignored absd_mutant_check_retired_passes absd_mutant_check_ignores_submission absd_mutant_contain_grant_before_clear absd_mutant_refusal_clears_display_path absd_mutant_contain_gate_open absd_mutant_contain_latch_ignored absd_mutant_contain_owner_ignored absd_mutant_contain_reregister absd_mutant_mcfg_unreadable_absent absd_mutant_scope_sibling_any absd_mutant_scope_path_ignored absd_mutant_scope_peers_ignored absd_mutant_scope_ats_ignored absd_mutant_scope_fixture_any; do \
+		log="build/iommu-mutants/$$mutant.log"; \
+		if CARGO_TARGET_DIR=build/iommu-mutants/target RUSTFLAGS="--cfg $$mutant" \
+			cargo test --lib -- ivrs:: dma_policy:: amdvi:: dma_contain:: mcfg:: rtl8125_ring:: >"$$log" 2>&1; then \
+			echo "iommu-mutants: $$mutant survived ($$log)" >&2; exit 1; \
+		fi; \
+		grep -q '^test result: FAILED' "$$log" || { echo "iommu-mutants: $$mutant did not reach a test verdict ($$log)" >&2; exit 1; }; \
+		echo "iommu-mutants: $$mutant killed by $$(grep -c '^test .* FAILED$$' "$$log") test(s)"; \
+	done
+
+# The AMDVI HANDOFF check in acpi-test must be able to fail: a kernel built
+# with absd_mutant_amdvi_claim_disabled prints the unobserved IOMMU state as
+# values (`iommu-en=0 translation=none`), and acpi-test must reject it.
+# Not part of check (it repeats acpi-test's boots); lane evidence for #111.
+.PHONY: amdvi-handoff-mutant
+amdvi-handoff-mutant:
+	@set -eu; scratch="$$(mktemp -d $${TMPDIR:-/tmp}/absd-amdvi-mutant.XXXXXX)"; \
+	trap 'rm -rf "$$scratch"' EXIT INT TERM; \
+	CARGO_TARGET_DIR="$$scratch/target" RUSTFLAGS="--cfg absd_mutant_amdvi_claim_disabled" \
+	  $(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie -C link-arg=-Wl,--build-id=sha1; \
+	mkdir -p "$$scratch/run/build/iso/boot"; cp "$$scratch/target/debug/absd-kernel" "$$scratch/run/build/iso/boot/absd-kernel"; \
+	mkdir -p build/amdvi-handoff-mutant; log="$$PWD/build/amdvi-handoff-mutant/acpi-test.log"; \
+	if (cd "$$scratch/run" && sh "$(CURDIR)/scripts/acpi-test.sh" none) >"$$log" 2>&1; then \
+	  echo "amdvi-handoff-mutant: survived ($$log)" >&2; exit 1; fi; \
+	grep -q 'live IOMMU state not printed as unobserved' "$$log" || { echo "amdvi-handoff-mutant: failed for another reason ($$log)" >&2; exit 1; }; \
+	echo "amdvi-handoff-mutant: killed by acpi-test ($$(tail -1 "$$log"))"
+
+# AMD-Vi enforce test (#111 increment 3): one domain for QEMU's `edu`,
+# every other DeviceID blocked. Needs a QEMU whose IVRS the backend admits
+# (QEMU 10.2.1 under the registered quirk; 8.2.2 is refused on EFRSup), so
+# it is not part of check: the ISO builds anywhere, the boot runs with
+# QEMU=<10.2.1 binary> (lane record).
+amdvi-enforce-iso: build
+	mkdir -p build/amdvi-enforce-iso/boot/grub
+	cp $(KERNEL) build/amdvi-enforce-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD AMD-Vi enforce test" {' '  multiboot2 /boot/absd-kernel amdvi-enforce-test' '  boot' '}' > build/amdvi-enforce-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-amdvi-enforce.iso build/amdvi-enforce-iso >/dev/null 2>&1
+	sha256sum $(KERNEL) build/absd-amdvi-enforce.iso
+
+# The oracle's boot word (amdvi-oracle INTERFACE.md v2), for the producer's
+# protocol smoke (scripts/amdvi-oracle-smoke.py); the oracle builds its own.
+amdvi-oracle-iso: build
+	mkdir -p build/amdvi-oracle-iso/boot/grub
+	cp $(KERNEL) build/amdvi-oracle-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD AMD-Vi oracle" {' '  multiboot2 /boot/absd-kernel amdvi-oracle=1' '  boot' '}' > build/amdvi-oracle-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-amdvi-oracle.iso build/amdvi-oracle-iso >/dev/null 2>&1
+	sha256sum $(KERNEL) build/absd-amdvi-oracle.iso
+
+.PHONY: amdvi-enforce-test
+amdvi-enforce-test:
+	sh scripts/amdvi-enforce-test.sh build/absd-amdvi-enforce.iso
+
+# #123: the AHCI controller at 00:07.0 as the second contained target. The
+# enforce boot's self-check (scripts/amdvi-enforce-test.sh EXPECT=ahci) and
+# the oracle smoke's two-device-ahci mode (scripts/amdvi-oracle-smoke.py),
+# both with `ahci-disk=$(AHCI_SERIAL)`. Not part of check, as above.
+amdvi-enforce-ahci-iso: build
+	mkdir -p build/amdvi-enforce-ahci-iso/boot/grub
+	cp $(KERNEL) build/amdvi-enforce-ahci-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD AMD-Vi enforce test, AHCI target" {' '  multiboot2 /boot/absd-kernel amdvi-enforce-test ahci-disk=$(AHCI_SERIAL)' '  boot' '}' > build/amdvi-enforce-ahci-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-amdvi-enforce-ahci.iso build/amdvi-enforce-ahci-iso >/dev/null 2>&1
+	sha256sum $(KERNEL) build/absd-amdvi-enforce-ahci.iso
+
+amdvi-oracle-ahci-iso: build
+	mkdir -p build/amdvi-oracle-ahci-iso/boot/grub
+	cp $(KERNEL) build/amdvi-oracle-ahci-iso/boot/absd-kernel
+	printf '%s\n' 'set timeout=0' 'menuentry "ABSD AMD-Vi oracle, AHCI target" {' '  multiboot2 /boot/absd-kernel amdvi-oracle=1 ahci-disk=$(AHCI_SERIAL)' '  boot' '}' > build/amdvi-oracle-ahci-iso/boot/grub/grub.cfg
+	grub-mkrescue -o build/absd-amdvi-oracle-ahci.iso build/amdvi-oracle-ahci-iso >/dev/null 2>&1
+	sha256sum $(KERNEL) build/absd-amdvi-oracle-ahci.iso
+
+# The optional physical containment bring-up ISO: the read-only
+# physical kernel, without contain-qemu-fixture, one menu entry per step. The
+# addresses are the E5's; the census prints what a machine actually has. Edit an
+# entry at the GRUB menu (`e`) to change one or to fill in the disk serial.
+HARDWARE_FIXTURE_AHCI ?=
+HARDWARE_FIXTURE_RTL8125 ?=
+HARDWARE_FIXTURE_ISO := build/absd-hardware_fixture-bringup.iso
+.PHONY: hardware_fixture-iso
+hardware_fixture-iso: physical-build
+	@test -n "$(HARDWARE_FIXTURE_AHCI)" -a -n "$(HARDWARE_FIXTURE_RTL8125)" || { echo "set both explicit hardware BDF inputs" >&2; exit 1; }
+	rm -rf build/hardware_fixture-iso
+	mkdir -p build/hardware_fixture-iso/boot/grub
+	cp $(PHYSICAL_KERNEL) build/hardware_fixture-iso/boot/absd-kernel
+	printf '%s\n' 'insmod all_video' 'set timeout=-1' 'set default=0' \
+	  'menuentry "1 Census: IOMMU on, nothing armed" {' '  multiboot2 /boot/absd-kernel dma-contain=none halt-on-exit' '  boot' '}' \
+	  'menuentry "3a First DMA: read the disk serial (no disk selected)" {' '  multiboot2 /boot/absd-kernel block-probe dma-contain=ahci@$(HARDWARE_FIXTURE_AHCI) ahci-disk=none-selected dma-contain-check halt-on-exit' '  boot' '}' \
+	  'menuentry "3b Forbidden-transfer check: edit SERIAL first" {' '  multiboot2 /boot/absd-kernel block-probe dma-contain=ahci@$(HARDWARE_FIXTURE_AHCI) ahci-disk=SERIAL dma-contain-check halt-on-exit' '  boot' '}' \
+	  'menuentry "4 Network: needs a peer running the reflector" {' '  multiboot2 /boot/absd-kernel net-probe dma-contain=rtl8125@$(HARDWARE_FIXTURE_RTL8125) net-rtl8125 halt-on-exit' '  boot' '}' \
+	  > build/hardware_fixture-iso/boot/grub/grub.cfg
+	grub-mkrescue -o $(HARDWARE_FIXTURE_ISO) build/hardware_fixture-iso >/dev/null 2>&1
+	@sha256sum $(HARDWARE_FIXTURE_ISO) $(PHYSICAL_KERNEL)
+
+# Operator-mode containment (docs/superpowers/specs/2026-11-04-amdvi-operator-design.md).
+# Q10 fixtures only: this kernel carries contain-qemu-fixture, which no
+# physical ISO does. scripts/amdvi-operator-smoke.py names the boot lines.
+OPERATOR_TARGET := build/operator/target
+OPERATOR_KERNEL := $(OPERATOR_TARGET)/debug/absd-kernel
+.PHONY: amdvi-operator-build amdvi-operator-iso
+amdvi-operator-build:
+	CARGO_TARGET_DIR=$(OPERATOR_TARGET) $(KERNEL_CARGO) rustc --bin absd-kernel --features contain-qemu-fixture -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-no-pie
+OPERATOR_LINE ?= dma-contain=none
+OPERATOR_ISO ?= build/absd-amdvi-operator.iso
+amdvi-operator-iso:
+	rm -rf build/operator-iso
+	mkdir -p build/operator-iso/boot/grub
+	cp $(OPERATOR_KERNEL) build/operator-iso/boot/absd-kernel
+	printf '%s\n' 'insmod all_video' 'set timeout=0' 'menuentry "ABSD AMD-Vi operator" {' '  multiboot2 /boot/absd-kernel $(OPERATOR_LINE)' '  boot' '}' > build/operator-iso/boot/grub/grub.cfg
+	grub-mkrescue -o $(OPERATOR_ISO) build/operator-iso >/dev/null 2>&1
+
+.PHONY: amdvi-enforce-ahci-iso amdvi-oracle-ahci-iso amdvi-enforce-ahci-test
+amdvi-enforce-ahci-test:
+	EXPECT=ahci sh scripts/amdvi-enforce-test.sh build/absd-amdvi-enforce-ahci.iso
 
 clean:
 	rm -rf build
@@ -1148,7 +1453,7 @@ fpu-mutants:
 		( scratch="$$(mktemp -d $${TMPDIR:-/tmp}/absd-mutant.XXXXXX)"; \
 		  trap 'rm -rf "$$scratch"' EXIT INT TERM; \
 		  CARGO_TARGET_DIR="$$scratch/target" RUSTFLAGS="--cfg $$mutant" \
-		    $(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie; \
+		    $(KERNEL_CARGO) rustc --bin absd-kernel -- -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C link-arg=-Tlinker.ld -C link-arg=-nostdlib -C link-arg=-no-pie -C link-arg=-Wl,--build-id=sha1; \
 		  mkdir -p "$$scratch/iso/boot/grub"; \
 		  cp "$$scratch/target/debug/absd-kernel" "$$scratch/iso/boot/absd-kernel"; \
 		  $(FPU_GRUB) > "$$scratch/iso/boot/grub/grub.cfg"; \
@@ -1203,7 +1508,7 @@ arm64-gic-test:
 portability-x86-test:
 	sh scripts/portability-x86-test.sh
 
-# Host-only frame v0 gate. No emulator or external effects.
+# Host-only frame v0 gate. No emulator or external effects. Run on build_host
 # with nice 19, CARGO_BUILD_JOBS<=4 and a load monitor (stop above 8).
 .PHONY: check-frame-admission-host
 check-frame-admission-host:
@@ -1229,3 +1534,33 @@ check-frame-admission-host:
 .PHONY: usb-keyboard-recovery-test
 usb-keyboard-recovery-test: usb-keyboard-iso
 	python3 scripts/usb-keyboard-recovery-test.py "$(QEMU)"
+# The YY3568 first-light image (docs/arm64-first-light/README.md) and its
+# QEMU virt check: the same diagnostic path with the PL011 early console,
+# GICv3 and GICv2, EL1 and EL2 entry, under TCG.
+.PHONY: arm64-first-light-build arm64-first-light-test
+arm64-first-light-build:
+	sh scripts/arm64-first-light-media.sh
+arm64-first-light-test:
+	ABSD_ARM_BUILD=$(CURDIR)/build/arm64-first-light-virt ABSD_ARM_FEATURES=arm64,arm64-first-light sh scripts/build-arm64.sh
+	python3 scripts/arm64-first-light-check.py --image build/arm64-first-light-virt/kernel.img \
+	    --work "$(or $(ARM64_FIRST_LIGHT_WORK),build/arm64-first-light-check)"
+# The device-tree reader against real compiled trees (QEMU virt dumps, the
+# YY3568 as U-Boot passes it), which live outside the repository:
+# ABSD_ARM64_REAL_DTB_DIR names the directory. The tests print one line per
+# tree read, which is the evidence they did not skip.
+.PHONY: arm64-fdt-real-test
+arm64-fdt-real-test:
+	@test -n "$(ABSD_ARM64_REAL_DTB_DIR)" || { echo 'arm64-fdt-real-test: set ABSD_ARM64_REAL_DTB_DIR' >&2; exit 1; }
+	ABSD_ARM64_REAL_DTB_DIR="$(ABSD_ARM64_REAL_DTB_DIR)" cargo test --lib arm64_fdt_tests -- --nocapture
+
+.PHONY: mwm-successor-test mwm-successor-iso mwm-successor-mutants
+mwm-successor-test:
+	mkdir -p build/mwm-tests
+	rustc --edition 2024 --test -O -D warnings user/src/mwm_successor_tests.rs -o build/mwm-tests/successor
+	build/mwm-tests/successor --test-threads=1
+
+mwm-successor-mutants:
+	python3 -I scripts/mwm-successor-mutants.py
+
+mwm-successor-iso:
+	sh scripts/mwm-successor-build.sh

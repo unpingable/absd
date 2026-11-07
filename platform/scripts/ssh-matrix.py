@@ -185,6 +185,15 @@ class Matrix:
     def ssh(self, command=None, **kw):
         return self.client.run(self.op, command, **kw)
 
+    def pty_shell_step(self, term, line, want, timeout=60):
+        term.type(line)
+        good = term.expect(want, timeout=timeout) and term.between == b""
+        if good and self.t.pty_prompt and line.endswith(b"\x03"):
+            # Native prompt cancellation wakes the shell's read. Consume its
+            # regenerated prompt before typing another command.
+            good = term.expect(self.t.pty_prompt, timeout=timeout) and term.between == b""
+        return good
+
     def pty(self):
         """PTY sessions: sshd's line discipline (ssh/src/tty.rs)."""
         t = self.t
@@ -210,7 +219,8 @@ class Matrix:
                 (b"hellp\x7fo\r", b"hellp\x08 \x08o\r\nhello\r\n"),
                 (b"ab\x15xy\x08z\r", b"ab\x08 \x08\x08 \x08xy\x08 \x08z\r\nxz\r\n"),
                 ("\u00e9t\u00e9\x7f\x7fa\r".encode(), "\u00e9t\u00e9\x08 \x08\x08 \x08a\r\n\u00e9a\r\n".encode()),
-                (b"tab\x01\x7f!\r", b"tab^A\x08 \x08\x08 \x08!\r\ntab!\r\n"),
+                # Redraw erases the two displayed cells of ^A together.
+                (b"tab\x01\x7f!\r", b"tab^A\x08\x08  \x08\x08!\r\ntab!\r\n"),
             ]
             shown = []
             for keys, screen in steps:
@@ -269,8 +279,7 @@ class Matrix:
                     # wanted) and nothing in the session uses the size.
                     term.resize(50, 132)
                     resized = True
-                term.type(line)
-                good = term.expect(want, timeout=60) and term.between == b""
+                good = self.pty_shell_step(term, line, want)
                 ok.append(good)
                 if not good:
                     break
@@ -495,18 +504,18 @@ class Matrix:
         self.mark("SSH LISTENER SURVIVES SESSION OK")
 
         # Host key persistence and deliberate regeneration.
-        second = t.restart()
+        second = self.restart(host_key)
         self.check("host key loaded, not regenerated, after restart",
                    not second["generated"] and second["public"] == host_key, str(second))
         rc, out, err = self.ssh("echo again")
         self.check("strict known_hosts still matches after restart", rc == 0 and out == b"again\n", f"rc={rc} err={err!r}")
-        third = t.restart(regenerate=True)
+        third = self.restart(host_key, regenerate=True)
         self.check("deliberate regeneration gives a new key", third["generated"] and third["public"] != host_key,
                    str(third))
         rc, out, err = self.ssh("echo changed")
         self.check("strict client refuses the regenerated key", rc == 255 and b"HOST IDENTIFICATION HAS CHANGED" in err,
                    f"rc={rc} err={err[:300]!r}")
-        fourth = t.restart()
+        fourth = self.restart(third["public"])
         self.check("regenerated key persists", not fourth["generated"] and fourth["public"] == third["public"],
                    str(fourth))
         self.client.trust(third["public"])
@@ -515,9 +524,30 @@ class Matrix:
         if hasattr(t, "check_host_key_custody"):
             t.check_host_key_custody(self)
         self.mark("SSH HOST KEY PERSISTENCE OK")
+        # The entropy control must reach its own refusal condition, rather
+        # than an unrelated refusal from an abruptly stopped writable boot.
+        self.clean_halt(third["public"])
         t.stop()
         if hasattr(t, "negative_controls"):
             t.negative_controls(self)
+
+    def restart(self, public, regenerate=False):
+        self.clean_halt(public)
+        return self.t.restart(regenerate=regenerate)
+
+    def clean_halt(self, public):
+        # Host-key persistence tests use a clean administrative halt. Keep
+        # this client separate so trusting the current boot for shutdown
+        # does not alter the strict known_hosts checks above after rotation.
+        if hasattr(self.t, "wait_clean_halt"):
+            work = self.work / f"clean-halt-{self.checks}"
+            work.mkdir()
+            client = Client(work, self.t.port)
+            client.trust(public)
+            rc, out, err = client.run(self.op, "shutdown")
+            self.check("host-key test shutdown request succeeds", rc == 0,
+                       f"rc={rc} out={out!r} err={err!r}")
+            self.t.wait_clean_halt()
 
 
 class LinuxTarget:

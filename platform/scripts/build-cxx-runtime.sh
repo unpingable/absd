@@ -54,6 +54,8 @@ jobs=${ABSD_CXX_JOBS:-4}
 max_load=${ABSD_CXX_MAX_LOAD:-8}
 die() { echo "build-cxx-runtime: $*" >&2; exit 1; }
 [ "$jobs" -le 4 ] 2>/dev/null || die "ABSD_CXX_JOBS=$jobs: at most 4"
+# The shared kit must be this checkout's, built cleanly (scripts/c_kit_source.py).
+python3 -I "$root/scripts/c_kit_source.py" kit "$root" "$kit"
 
 version=$(grep -v '^#' "$root/cxx/PIN" | awk -F'\t' 'NF == 6 { print $2 }')
 commit=$(grep -v '^#' "$root/cxx/PIN" | awk -F'\t' 'NF == 6 { print $3 }')

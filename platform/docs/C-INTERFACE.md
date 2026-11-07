@@ -18,7 +18,7 @@ Pieces and where they live:
 
 | piece | file | what it is |
 |---|---|---|
-| runtime hooks | `c/include/absd/runtime.h` | the 38 `__absd_std_*` C-ABI functions the runtime exports, `ABSD_FS_*` open flags, `struct absd_raw_attr`; each one specified in section 12 |
+| runtime hooks | `c/include/absd/runtime.h` | the 41 `__absd_std_*` C-ABI functions the runtime exports, `ABSD_FS_*` open flags, `struct absd_raw_attr`; each one specified in section 12 |
 | kit interface | `c/include/absd/kit.h` | `ABSD_FD_MAX`, `ABSD_STACK_PRETOUCH_BYTES`, the descriptor-table helpers the POSIX lane builds on |
 | raw syscall shim | `c/include/absd/syscall.h` | `absd_sys3` (`int $0x80`), `ABSD_SYS_TIME` 17, `ABSD_SYS_SLEEP` 18; the kit uses it only for sleep |
 | C entry | `c/libabs/crt0.c` | `__absd_program_main`, stack pre-touch, `environ`, `_exit` |
@@ -26,7 +26,7 @@ Pieces and where they live:
 | descriptors | `c/libabs/fd.c` | descriptor table, open/close/read/write/lseek, fsync/ftruncate/fstat/unlink, `absd_fd_*` |
 | errno | `c/libabs/errno_map.c` | native refusal to errno, by name |
 | clocks and OS stubs | `c/libabs/clock.c` | gettimeofday, times, clock, getentropy, getpid, sbrk, isatty, raise, kill, sleeps, sysconf, pathconf, sigprocmask |
-| locale | `c/libabs/locale.c` | setlocale: the C locale's names only ("C", "POSIX", "", "C.ASCII", "C.US-ASCII"), NULL for any other name (R14, CPA-048); `newlocale`/`uselocale` stay Picolibc's and still accept e.g. "pt_BR" (residual, outside R14; unreached by every Stage 2 program, tcc and the adapter) |
+| locale | `c/libabs/locale.c` | setlocale: the C locale's names only ("C", "POSIX", "", "C.ASCII", "C.US-ASCII"), NULL for any other name (R14, CPA-048); `newlocale`/`uselocale` stay Picolibc's and still accept e.g. "pt_BR" (residual, outside R14; unreached by every Stage 2 program and the adapter) |
 | error text | `c/libabs/strerror_hook.c` | Picolibc's `_user_strerror` hook (R13): ESTALE's text and "Unknown error N" for numbers Picolibc's table has no text for; `crt0.c` references it so every link pulls it (section 5) |
 | panic handler | `c/absd-c/src/lib.rs` | the Rust panic handler for a link without std (status 101) |
 | driver, link form | `c/bin/absd-cc`, `c/absd-c.ld`, `scripts/check-c-elf.py` | section 8 |
@@ -295,7 +295,7 @@ or truncate has already happened).
 |---|---|---|
 | -1 | EPERM | the kernel's rights refusal; the filesystem device refused for rights; a stdio write with no output handle |
 | -2 | ENOENT | no such name; a path outside every mount of the channel that is not on the way to one; an unformatted filesystem; on the no-filesystem route (no channel, no mounted view: section 12) every path except `ledger`, `""` and `.`, and `ledger` without a durable boot's block handle |
-| -5 | EIO | device failure; the RTC has no stable reading (`gettimeofday`) |
+| -5 | EIO | device failure; software civil time is unknown (`gettimeofday`), or the compatibility RTC fallback has no stable reading |
 | -9 | EBADF | a runtime handle the server or filesystem does not know |
 | -10 | ECHILD | process wait with no such child (process hooks only) |
 | -11 | EAGAIN | a lock held by another handle; the channel is lent to a child; no free process slot |
@@ -407,7 +407,7 @@ the writes succeed.
 
 | call | behaviour |
 |---|---|
-| `gettimeofday(tv, tz)` | `tv_sec` from the kernel's RTC (syscall 30): whole seconds since the epoch, UTC, no correction; `tv_usec` always 0; `tz` ignored. Without a stable RTC reading: -1 with EIO |
+| `gettimeofday(tv, tz)` | `tv_sec` from the runtime's software civil clock, truncated to whole Unix seconds; `tv_usec` always 0; `tz` ignored. Unknown civil time returns -1 with EIO; malformed clock info returns -1 with EINVAL; other native refusals map through the kit's errno table |
 | `time(t)` | Picolibc's, over `gettimeofday` |
 | `times(buf)` | returns timer ticks since boot (syscall 17, PIT, a tick is 1193/1193181.67 s, about 0.99985 ms); `tms_utime` = ticks, the other fields 0. It is boot time, not process CPU time |
 | `clock()` | the kit's (`clock.c`, ruling R12): the tick count of `times()` taken as milliseconds and scaled to `CLOCKS_PER_SEC` (1000000) units, ticks × (`CLOCKS_PER_SEC` / 1000), saturating at the `clock_t` maximum (`clock_t` is 64-bit unsigned). Like `times()` it counts from boot, not process CPU time. Picolibc's unscaled `clock()` is never linked (the map check refuses its member) |
@@ -415,6 +415,30 @@ the writes succeed.
 | `nanosleep(req, rem)` | EINVAL for a NULL `req`, negative fields or `tv_nsec` above 999999999. Otherwise the duration is rounded up to whole milliseconds and the kernel sleep (syscall 18) is asked for that many ticks (1 ms = 1 tick); the kernel returns after at least that many full ticks. A zero duration makes no call. Saturates at `LONG_MAX` ticks. Always returns 0 and sets `*rem` to zero (nothing interrupts a sleep) |
 | `usleep(us)` | `ceil(us / 1000)` ticks; returns 0 |
 | `sleep(s)` | `s * 1000` ticks; returns 0 |
+
+The current paired runtime reads boot-local software civil time through
+`civil_clock::info` (0x7fb0), not a fresh raw RTC reading on each C call.
+The clock starts from an unverified RTC sample or unknown time. The clock owner
+can apply operator assertions or explicitly configured unauthenticated
+SNTP estimates; these corrections affect ordinary `gettimeofday` and `time`.
+They do not write the RTC, survive reboot, or change the monotonic ticks used
+by `times`, `clock` and deadlines. Neither an epoch value nor successful
+`gettimeofday` establishes accurate or authenticated UTC.
+
+The seconds-only C hook omits source, sample age, stale state and last-attempt
+failure. A known value continues advancing even when an estimate is stale or
+a later synchronization attempt fails; those conditions alone do not make
+`gettimeofday` fail. See [date(1)](../man/date.1),
+[clock(1)](../man/clock.1), [time.conf(5)](../man/time.conf.5) and
+[runtime/src/civil_clock.rs](../runtime/src/civil_clock.rs) for quality/status.
+
+Only civil-info ENOSYS (-38), on an older kernel without that call, triggers
+the runtime's raw RTC compatibility fallback. Malformed new records and
+other refusals never trigger fallback. The fallback has no civil source,
+staleness or cross-process correction guarantee. Raw SYS30 and
+`hardware_rtc_seconds` remain separate RTC observations for old prebuilt
+callers and consumers whose TLS/observation policy explicitly names that
+source; software civil correction does not change their trust policy.
 
 Known limitations at Stage 1:
 
@@ -506,11 +530,11 @@ data segment is accepted. On success: `C ELF OK <path> loads=<n>` (with
 `map=checked`).
 
 **Header check.** `scripts/build-c-kit.sh` runs
-`scripts/check-c-headers.py` and fails the build unless every prototype in
-`runtime.h` matches the Rust definition and every Rust hook is declared, every `ABSD_FS_*` constant equals
+`scripts/check-c-headers.py` and fails the build unless every `__absd_std_*` prototype in
+`runtime.h` matches the Rust definition and every Rust standard-library hook is declared, every `ABSD_FS_*` constant equals
 the bit both the runtime's and the file server's open test, and
 `struct absd_raw_attr` matches `RawAttr`
-(`C HEADERS OK hooks=38 constants=5`). `--self-test` shows it refusing an
+(`C HEADERS OK hooks=41 constants=5`). `--self-test` shows it refusing an
 injected parameter, return, constant and struct-field change and a removed
 prototype.
 
@@ -520,7 +544,7 @@ usable; gcc is usable with a restriction (libgcc.a only without its
 decimal-float, split-stack and `_eprintf` members; the builtins archive is
 the fallback). `absd-cc` drives clang only. The Stage 0 gcc build
 (`c/tests/stage0/build.sh`) used the same code-generation flags plus
-`-fcf-protection=none` and the same linker script, outside the driver. **Link sets differ by driver.** `absd-cc` links crt0, `libabs.a`, `libc.a` (Picolibc), `libm.a`, `libabs_builtins.a` and the clang builtins (`c/bin/absd-cc:52-54`); it does not link the POSIX adapter. `/share/absd-c/lib/libc.a` for tcc is a GROUP of `libabsd-posix.a libabs.a libc-picolibc.a libm.a libabs_builtins.a` (`tcc/build/libc.a.group:2`), so every tcc-compiled program carries the adapter, including the A17 range-lock recognition (CPA-057; STAGE3 section 7).
+`-fcf-protection=none` and the same linker script, outside the driver. **Link sets differ by driver.** `absd-cc` links crt0, `libabs.a`, `libc.a` (Picolibc), `libm.a`, `libabs_builtins.a` and the clang builtins (`c/bin/absd-cc:52-54`); it does not link the POSIX adapter. The C++ link (`cxx/bin/absd-llvm-link`) puts the POSIX adapter (`libabsd-posix.a`) at the head of the kit's group.
 
 ## 9. Formats that cross the language line
 
@@ -625,7 +649,7 @@ time (section 8).
 
 ## 12. Runtime hooks (`c/include/absd/runtime.h`)
 
-The 38 `__absd_std_*` functions are the runtime's C ABI; the kit's C code
+The 41 `__absd_std_*` functions are the runtime's C ABI; the kit's C code
 and the POSIX lane's adapter are built on them. Each is checked against
 its Rust definition by `scripts/check-c-headers.py` (both directions).
 
@@ -676,7 +700,7 @@ its Rust definition by `scripts/check-c-headers.py` (both directions).
 | `_Noreturn void __absd_std_exit(int32_t code)` | ends the process with `code` as its status | never returns |
 | `const size_t (*__absd_std_environ(size_t *count))[2]` | the record's environment: stores the entry count at `*count` and returns an array of `count` `[pointer, length]` pairs, each a `KEY=VALUE` byte string without a NUL, in record order; valid until exit (lib.rs:88-99) | with no environment, `*count` is 0 and the pointer is NULL |
 | `uint64_t __absd_std_ticks(void)` | timer ticks since boot (about 0.99985 ms each) | always succeeds |
-| `int64_t __absd_std_wall_clock_seconds(void)` | seconds since the epoch from the RTC, whole seconds, UTC (lib.rs:205-228) | seconds, or the kernel's refusal: -5 without a stable reading, -38 from a kernel without the call |
+| `int64_t __absd_std_wall_clock_seconds(void)` | software civil Unix seconds, truncated from the native nanosecond value (`runtime/src/lib.rs::wall_clock_seconds`); quality is separate (section 7) | seconds; -5 for unknown civil time; -22 for malformed civil info; other info-call refusals propagate. Only civil-info ENOSYS (-38) falls back to raw RTC, whose seconds or refusal then propagate |
 
 **Working directory** (`runtime/src/cwd.rs`)
 
@@ -741,7 +765,27 @@ Records correction (2026-10-12; R19, N9 and the integration steward's POSIX boun
 - (c) section 4, `table full`: the EMFILE close is cited at `fd.c:116-120` (was `fd.c:106-109`); records correction; no behaviour change.
 - (d) section 4, `file with O_APPEND`: separate positions per descriptor, cross-process append atomicity not provided; records correction; no behaviour change.
 - (e) section 4, `inherited handle`: recorded `O_RDWR` (`fd.c:64-66`), rights decided by the runtime, the table never widens authority; records correction; no behaviour change.
-- (f) section 8, `Compilers`: link sets differ by driver (absd-cc without the adapter; tcc's GROUP with it); records correction; no behaviour change.
+- (f) section 8, `Compilers`: link sets differ by driver (absd-cc without the adapter); records correction; no behaviour change.
 - (g) sections 1, 8 and 10: cross-references CPA-062 (TLS) and CPA-063 (static ET_EXEC only); records correction; no behaviour change.
 
-Kernel ABI facts (consistency lane, 2026-10-12; `docs/consistency-20261012/RECORD.md`; no contract change): the values section 2 takes "from the kernel" are now compared with kernel source on every `scripts/check-all.sh` run, both profiles, right after the ABI-generation check. `python3 -I scripts/check-abi-elf.py --kernel KERNEL_DIR [--root PLATFORM_DIR]` reads `MAX_LOAD_SEGMENTS` (`src/elf.rs`), `USER_IMAGE_MIN`/`USER_IMAGE_MAX` and `USER_HEAP_PAGES` (`abi/src/layout.rs`), `MAX_SPAWN_IMAGE_BYTES` and `MAX_MAP_PAGES` (`abi/src/syscall.rs`) by anchored patterns at their definitions and enforcing sites, and compares each with these copies: the `heap window` and `image` rows of section 2, `check-abi-elf.py`'s own constants, `check-c-elf.py`'s window and segment cap, the link scripts (`c/absd-c.ld`, `user-linker.ld`, also read through `ssh/user-linker.ld` and `integration/user-linker.ld`, which are symlinks to it today) and the runtime (`process.rs` `MAX_IMAGE`, `allocator.rs` `MAX_MAP_PAGES`, `MAX_GROW_PAGES`). It prints one `ABI FACT <name> kernel=<v> <file:line>=<v> OK|MISMATCH|NARROWER|UNKNOWN` line per comparison, one `ABI FACTS NOT_CHECKED` line naming what it does not cover, and `ABI FACTS OK checked=N narrower=M` (exit 0), `ABI FACTS MISMATCH ...` (exit 1) or `ABI FACTS UNKNOWN ...` (exit 2: an anchor that does not match exactly one line; never OK). A copy that may be stricter than the kernel (the kit's two-PT_LOAD link form against the loader's eight) is NARROWER, named and not a failure. The check reports disagreement; it rewrites nothing and does not decide which side is right. Restatements elsewhere (section 3 prose, CPA-060, `SSH-HEAP.md`, the c-ecosystem SPEC, `build-tcc.sh`'s `-Ttext`, the exec probe's boundary) are named NOT_CHECKED. Passing it says these 27 comparisons (23 distinct, over 7 files) agree, nothing more.
+Kernel ABI facts (consistency lane, 2026-10-12; `docs/consistency-20261012/RECORD.md`; no contract change): the values section 2 takes "from the kernel" are now compared with kernel source on every `scripts/check-all.sh` run, both profiles, right after the ABI-generation check. `python3 -I scripts/check-abi-elf.py --kernel KERNEL_DIR [--root PLATFORM_DIR]` reads `MAX_LOAD_SEGMENTS` (`src/elf.rs`), `USER_IMAGE_MIN`/`USER_IMAGE_MAX` and `USER_HEAP_PAGES` (`abi/src/layout.rs`), `MAX_SPAWN_IMAGE_BYTES` and `MAX_MAP_PAGES` (`abi/src/syscall.rs`) by anchored patterns at their definitions and enforcing sites, and compares each with these copies: the `heap window` and `image` rows of section 2, `check-abi-elf.py`'s own constants, `check-c-elf.py`'s window and segment cap, the link scripts (`c/absd-c.ld`, `user-linker.ld`, also read through `ssh/user-linker.ld` and `integration/user-linker.ld`, which are symlinks to it today) and the runtime (`process.rs` `MAX_IMAGE`, `allocator.rs` `MAX_MAP_PAGES`, `MAX_GROW_PAGES`). It prints one `ABI FACT <name> kernel=<v> <file:line>=<v> OK|MISMATCH|NARROWER|UNKNOWN` line per comparison, one `ABI FACTS NOT_CHECKED` line naming what it does not cover, and `ABI FACTS OK checked=N narrower=M` (exit 0), `ABI FACTS MISMATCH ...` (exit 1) or `ABI FACTS UNKNOWN ...` (exit 2: an anchor that does not match exactly one line; never OK). A copy that may be stricter than the kernel (the kit's two-PT_LOAD link form against the loader's eight) is NARROWER, named and not a failure. The check reports disagreement; it rewrites nothing and does not decide which side is right. Restatements elsewhere (section 3 prose, CPA-060, `SSH-HEAP.md`, the c-ecosystem SPEC, the exec probe's boundary) are named NOT_CHECKED. Passing it says these 27 comparisons (23 distinct, over 7 files) agree, nothing more.
+
+### Attribute v2 and private terminal observation
+
+The existing `__absd_std_fs_stat_v2`, `__absd_std_fs_fstat_v2`, and
+`__absd_std_fs_readdir_v2` hooks use the corresponding unversioned hook's
+arguments and result/refusal rules, with `struct absd_raw_attr_v2 *out`.
+That 48-byte structure appends `uint64_t mtime` to the 40-byte attribute
+layout: whole UTC Unix seconds, zero when unknown. The unversioned hooks
+retain their original 40-byte layout. The header check covers all 41
+`__absd_std_*` prototypes, including these three v2 entries.
+
+`int __absd_terminal_size(uint32_t *columns, uint32_t *rows)` is a separate
+private native-command helper in `runtime/src/terminal.rs`, outside that
+standard-library hook set. It returns 1 and writes both outputs when the
+session has a valid, nonzero dimension observation. It returns 0 without
+writing outputs when the metadata is absent/invalid/unknown or either
+pointer is null. Non-null output pointers must be valid writable `uint32_t`
+objects. The session owner retains the writer; this is read-only client
+metadata, not a hardware measurement, termios, ioctl, or raw terminal mode.
+The helper adds no supported kernel ABI or process authority.

@@ -1,0 +1,55 @@
+.Dd November 5, 2026
+.Dt TR 1
+.Os ABSD
+.Sh NAME
+.Nm tr
+.Nd translate, delete, or squeeze characters
+.Sh SYNOPSIS
+.Nm
+.Op Fl cCds
+.Ar set1
+.Op Ar set2
+.Sh DESCRIPTION
+Read standard input and write the transformed characters to standard output.
+With two sets, translate characters from
+.Ar set1
+to the corresponding characters of
+.Ar set2 .
+A short second set repeats its last character.
+Sets accept literals, ranges and character classes such as
+.Ql [:lower:]
+and
+.Ql [:upper:] .
+.Pp
+.Fl d
+deletes characters in the first set.
+.Fl s
+squeezes repeated output characters in the selected set.
+.Fl c
+and
+.Fl C
+complement the first set.
+Quote sets that contain shell metacharacters or spaces.
+.Sh UNSUPPORTED ON ABSD
+This is the unmodified sbase 0.1 implementation from the pinned archive,
+using its UTF-8 rune routines, not locale-dependent collation.
+It opens no files and uses only its inherited input and output streams.
+GNU-specific options are not provided.
+No filesystem, process or kernel interface is added by this port.
+Host reference cases and ABSD ELF checks are distinct from guest execution;
+see
+.Xr sbase 7 .
+.Sh EXIT STATUS
+0 on success, nonzero for invalid options, missing operands, invalid sets
+or stream errors.
+Diagnostics use standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+/bin/echo "first hour" | tr a-z A-Z
+/bin/echo a123b | tr -d 0-9
+/bin/echo "two  spaces" | tr -s " "
+.Ed
+.Sh SEE ALSO
+.Xr cut 1 ,
+.Xr sed 1 ,
+.Xr sbase 7

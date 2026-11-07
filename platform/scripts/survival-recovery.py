@@ -8,9 +8,16 @@ Each component is faulted `--faults` times in one QEMU process. With
 guest reset and a further served boot, and the last boot halts on
 `shutdown`. With `--expect stop` the last fault must instead end the
 machine with the budget's named stop (code 20, QEMU status 83) and no
-further boot. `--then-clear` boots the same image again afterwards (the
-streak carries), clears it with an orderly `reboot`, and halts;
-`--then-exit0` then shows an unexpected sshd exit 0 does not clear it.
+further boot. Under the owner's storage fence and decision (2026-10-19,
+coordination record #63) the budget is retained but inert: only the first fault and
+its reset run as before, the next boot must be the strict pre-ready
+refusal, and the countdown prints `WRITABLE RECOVERY UNSUPPORTED (owner
+2026-10-19; #63)`, never a pass. `--then-clear` after a clean halt boots
+the same image again and clears with an orderly `reboot` (fence (a)); with
+`--expect stop` the image the first fault fenced is refused again. `--then-exit0`, `--then-escalated-reboot`
+and `--then-fault-at-end` each use a fresh image: the unclean end they
+cause must be refused on the next boot with zero writes and the image
+unchanged (fence (b)).
 `--no-recovery-lines` runs the same sequence against a build that
 predates the budget (the bounded negative control: it only shows the
 resets kept coming). The controls are absent from the installed sshd
@@ -57,7 +64,12 @@ spec = importlib.util.spec_from_file_location("served_matrix", here / "served-ma
 served = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(served)
 from e1000_rx import wait_rx_setup
+import storage_fence_guest as fence_guest
 
+# The countdown's disclosure line (coordination record #63): automatic writable
+# recovery stays unsupported; the operator act (release.py recover) is the
+# only writable recovery, and it is never exercised here.
+UNSUPPORTED = "AUTOMATIC WRITABLE RECOVERY UNSUPPORTED (owner 2026-10-19; #63: operator act only)"
 BUDGET = 3
 BUDGET_STOP_STATUS = "83"
 UNREAPED_STOP_STATUS = "71"
@@ -65,6 +77,13 @@ UNREAPED_STOP_STATUS = "71"
 # ledger (set from --no-recovery-lines for the baseline negative control).
 NAMED = True
 LIVENESS_BOUND = 60000
+# Owner decision 2026-10-19 (coordination record #63): the three-reset recovery
+# budget is retained and disclosed but inert. A served recovery reset is an
+# unclean end, so the strict storage fence refuses the next generation
+# before readiness; writable recovery after an unclean stop is unsupported
+# and the budget's multi-boot countdown cannot be exercised. The fault loop
+# checks the first fault and its reset as before, then the refused
+# successor, and prints the UNSUPPORTED capability line (never a pass).
 CONTROL_TIMEOUT = 20
 
 # component -> fault kind -> what the host sends, the ISO option the file
@@ -417,9 +436,7 @@ def serve_and_check(target, client, key, index, runner_pid, marker, args, streak
     return boot_id
 
 
-def one_case(args, component, key):
-    work = pathlib.Path(args.work) / component
-    work.mkdir(parents=True, exist_ok=False)
+def new_target(args, component, work):
     target = RecoveryTarget.__new__(RecoveryTarget)
     target.kernel = pathlib.Path(args.kernel).resolve()
     target.root = pathlib.Path(args.platform).resolve()
@@ -431,8 +448,14 @@ def one_case(args, component, key):
     target.fault = args.fault
     target.sshd_elf = pathlib.Path(args.sshd_controls).resolve()
     target.fsd_elf = target.root / "absd-fsd.elf"
-    public = key.with_suffix(".pub").read_text()
-    target.setup(work, public)
+    target.case_root = work
+    return target
+
+
+def first_start(target, key, work):
+    """Builds an image in `work` and boots it served in a new QEMU (guest
+    resets allowed); returns (client, runner pid)."""
+    target.setup(work, key.with_suffix(".pub").read_text())
     os.environ["ABSD_QEMU_REBOOT"] = "allow"
     try:
         info = target.start()
@@ -440,81 +463,210 @@ def one_case(args, component, key):
         os.environ.pop("ABSD_QEMU_REBOOT", None)
     client = served.sm.Client(work, target.port)
     client.trust(info["public"])
-    runner_pid = target.proc.pid
-    boot_ids = []
+    return client, target.proc.pid
+
+
+def fresh_start(target, key, name):
+    """A new image for one fence case. Its first served boot has no history
+    and is admitted; an image an unclean end has fenced is never reused."""
+    target.stop()
+    work = target.case_root / name
+    work.mkdir()
+    return first_start(target, key, work)
+
+
+def kernel_reason(target):
+    declared = getattr(target, "storage_fence", None)
+    if declared:
+        raise RuntimeError(f"the successor refusal predicates cover undeclared served boots only "
+                           f"(storage-fence={declared})")
+    return "not_declared"
+
+
+def refused_in_place(target, runner_pid, index, timeout=300):
+    """The same-QEMU successor of an unfinalized end (a guest reset after
+    an escalated reboot or a fault): QEMU ends with status 7 after exactly
+    `index + 1` boots, and boot `index + 1` is the strict pre-ready refusal
+    with zero block writes, flushes and errors. A ready or writable
+    successor, a missing line or a further boot raises RuntimeError."""
+    if target.proc is None or target.proc.pid != runner_pid:
+        raise RuntimeError("the qualified QEMU process is not the one that took the unclean end")
+    status = target.status(timeout)
+    return fence_guest.require_successor_in_log(target.log.read_bytes(), status, index, kernel_reason(target))
+
+
+MARKER_PATH = "/home/operator/recovery-marker"
+
+
+def marker_on_image(image, marker):
+    """Owner fence (d), and the durability check the writable successor
+    used to make: the refused image, read by the host's own filesystem
+    reader (read-only), still holds the synced marker byte for byte."""
+    absd_fs = served.ssh_absd.absd_fs
+    region = absd_fs.fs_region(image, served.ssh_absd.DEVICE_SECTORS)
+    selected = absd_fs.select(region)
+    record = absd_fs.tree(region, selected).get(MARKER_PATH)
+    if record is None or not served.ssh_absd.record_is_file(region, selected, record):
+        raise RuntimeError(f"the refused image has no {MARKER_PATH}: the synced marker was lost")
+    if absd_fs.content(region, selected, record) != marker:
+        raise RuntimeError("the refused image's synced marker differs from what was written")
+
+
+def refused_restart(target, name, marker):
+    """Replaces restart() after an unfinalized end: the same image booted
+    cold in a new QEMU is refused before readiness, with zero writes and
+    flushes and the image sha256 unchanged (refused_cold_boot); then the
+    unchanged image is read on the host and must still hold the synced
+    marker that boot 1 wrote (marker_on_image)."""
+    refusal = fence_guest.refused_cold_boot(target, os.environ.get("ABSD_BLOCK_ATTACH", "ata"), name, served=True)
+    fence_guest.require_served_successor_refusal(pathlib.Path(refusal["log"]).read_bytes(), refusal["status"])
+    marker_on_image(target.image, marker)
+    print(f"RECOVERY MARKER EXTRACTED OK case={name} path={MARKER_PATH} bytes={len(marker)} reader=host_read_only",
+          flush=True)
+    return refusal
+
+
+class Outcome:
+    """Honest case accounting: OK (exit 0) only when every planned case ran
+    with its fence expectation. A capability the fence makes unexercisable
+    is printed as UNSUPPORTED and is never counted as a case or a pass."""
+
+    def __init__(self, planned):
+        self.planned, self.done, self.unsupported_lines = list(planned), [], []
+
+    def ran(self, case):
+        self.done.append(case)
+
+    def unsupported(self, case, detail):
+        line = f"{UNSUPPORTED} case={case} {detail}"
+        print(line, flush=True)
+        self.unsupported_lines.append(line)
+
+    def verdict(self):
+        if sorted(self.done) != sorted(self.planned):
+            print(f"SERVED RECOVERY MATRIX FAILED: case count planned={self.planned} ran={self.done}",
+                  file=sys.stderr, flush=True)
+            return 1
+        for line in self.unsupported_lines:
+            print(line, flush=True)
+        print(f"SERVED RECOVERY MATRIX OK cases={len(self.done)}", flush=True)
+        return 0
+
+
+FOLLOW_ONS = (("then_exit0", "exit0"), ("then_escalated_reboot", "escalated-reboot"),
+              ("then_fault_at_end", "fault-at-end"))
+
+
+def components(args):
+    return ("sshd", "fsd") if args.component == "both" else (args.component,)
+
+
+def planned_cases(args):
+    cases = []
+    for component in components(args):
+        if args.expect == "silent":
+            cases.append(f"{component}:silent")
+            continue
+        cases.append(f"{component}:fault-loop")
+        if args.then_clear:
+            cases.append(f"{component}:" + ("clear-after-stop" if args.expect == "stop" else "clear-after-clean-halt"))
+        cases += [f"{component}:{name}" for flag, name in FOLLOW_ONS if getattr(args, flag)]
+    return cases
+
+
+def one_case(args, component, key, outcome):
+    work = pathlib.Path(args.work) / component
+    work.mkdir(parents=True, exist_ok=False)
+    target = new_target(args, component, work)
     marker = bytes(i % 251 for i in range(32))
-    expect_stop = args.expect == "stop"
-    faults = args.faults
+    try:
+        if args.expect == "silent":
+            client, runner_pid = first_start(target, key, work)
+            command = fault_plan(component, args.fault)["command"]
+            silent_case(args, target, client, key, runner_pid, marker, component, args.fault, command)
+            outcome.ran(f"{component}:silent")
+            return
+        fault_loop(args, component, target, key, work, marker, outcome)
+        outcome.ran(f"{component}:fault-loop")
+        if args.then_clear:
+            if args.expect == "stop":
+                # The first fault's unfinalized reset fenced the image; the
+                # budget stop it once preceded is unreachable (UNSUPPORTED).
+                clear_case(args, target, None, key, marker, 1)
+                outcome.ran(f"{component}:clear-after-stop")
+            else:
+                client = clean_halt_predecessor(args, target, key, marker)
+                clear_case(args, target, client, key, marker, 0)
+                outcome.ran(f"{component}:clear-after-clean-halt")
+        if args.then_exit0:
+            exit0_case(args, target, key, marker)
+            outcome.ran(f"{component}:exit0")
+        if args.then_escalated_reboot:
+            escalated_reboot_case(args, target, key, marker)
+            outcome.ran(f"{component}:escalated-reboot")
+        if args.then_fault_at_end:
+            fault_at_end_case(args, target, key, marker)
+            outcome.ran(f"{component}:fault-at-end")
+    finally:
+        target.stop()
+
+
+def fault_loop(args, component, target, key, work, marker, outcome):
+    """The first served fault under the owner's storage fence (decision
+    2026-10-19, coordination record #63). The first boot serves, the fault is sent
+    with a session running, and init names it and spends one recovery reset
+    exactly as before (recover_record: BEGIN, census, RESET, MACHINE RECOVER
+    RESET, no escalation, the session's residue or reap). The reset is not
+    finalized, so the next boot in the same QEMU is the strict pre-ready
+    refusal (status 7, no FSD READY or SSH LISTENING, zero writes, flushes
+    and errors, no further reset), and a cold retry of the same image is
+    refused with the image unchanged. The budget's multi-boot countdown
+    (--faults > 1, --expect stop) cannot be exercised: UNSUPPORTED."""
+    client, runner_pid = first_start(target, key, work)
     fault = args.fault
     hangs = is_liveness_fault(fault)
     command = fault_plan(component, fault)["command"]
     # A hang is judged only after the 60000-tick bound, then reset and boot
     # under TCG on a loaded host.
     after_fault = 600 if hangs else 300
+    serve_and_check(target, client, key, 0, runner_pid, marker, args, 0, "none")
+    active, session_pid = active_session(client, key, target, 0, runner_pid)
     try:
-        if args.expect == "silent":
-            silent_case(args, target, client, key, runner_pid, marker, component, fault, command)
-            return
-        for index in range(faults + 1):
-            previous = "none" if index == 0 else "failed"
-            boot_id = serve_and_check(target, client, key, index, runner_pid, marker, args, index, previous)
-            if boot_id in boot_ids:
-                raise RuntimeError("repeated boot identity across a guest reset")
-            boot_ids.append(boot_id)
-            if index == faults:
-                break
-            last = index == faults - 1
-            active, session_pid = active_session(client, key, target, index, runner_pid)
-            try:
-                if hangs:
-                    outcome = control_without_reply(client, key, command)
-                    print(f"RECOVERY FAULT SENT component={component} fault={fault} boot={index + 1} "
-                          f"control={outcome}", flush=True)
-                else:
-                    triggered = ssh(client, key, command)
-                    if triggered.returncode == 0:
-                        raise RuntimeError("fault control returned a successful SSH command")
-                if last and expect_stop:
-                    status = target.status(after_fault)
-                    if status != BUDGET_STOP_STATUS:
-                        raise RuntimeError(f"the fault past the budget did not stop the machine: status {status}")
-                    parts = boot_parts(target)
-                    if len(parts) != faults:
-                        raise RuntimeError(f"{len(parts)} boots after the terminal stop, expected {faults}")
-                    recover_record(target, index, session_pid, True)
-                    print(f"RECOVERY BUDGET STOP OK component={component} boot={index + 1} status={status}", flush=True)
-                    break
-                ready(target, index + 1, runner_pid, timeout=after_fault)
-                recover_record(target, index, session_pid, False)
-            finally:
-                end_session(active)
-        if expect_stop:
-            if len(boot_ids) != faults:
-                raise RuntimeError(f"{len(boot_ids)} ready boots before the stop, expected {faults}")
-            resets = faults - 1
+        if hangs:
+            sent = control_without_reply(client, key, command)
+            print(f"RECOVERY FAULT SENT component={component} fault={fault} boot=1 control={sent}", flush=True)
         else:
-            if len(boot_ids) != faults + 1:
-                raise RuntimeError(f"{faults} faults did not produce {faults + 1} distinct ready boots")
-            halted = ssh(client, key, "shutdown")
-            if halted.returncode != 0:
-                raise RuntimeError(f"final clean shutdown request failed: {halted.stderr!r}")
-            status = target.status(300)
-            if status != "3":
-                raise RuntimeError(f"last boot did not halt cleanly: {status}")
-            no_stale(boot_parts(target)[faults][0], f"last boot {faults + 1}")
-            resets = faults
-        print(f"SERVED RECOVERY CASE OK component={component} fault={fault} faults={faults} resets={resets} "
-              f"expect={args.expect} boots={','.join(boot_ids)} runner_pid={runner_pid} synced_marker=32", flush=True)
-        if args.then_clear:
-            clear_case(args, target, client, key, marker, faults if expect_stop else 0)
-        if args.then_exit0:
-            exit0_case(args, target, client, key, marker)
-        if args.then_escalated_reboot:
-            escalated_reboot_case(args, target, client, key, marker)
-        if args.then_fault_at_end:
-            fault_at_end_case(args, target, client, key, marker)
+            triggered = ssh(client, key, command)
+            if triggered.returncode == 0:
+                raise RuntimeError("fault control returned a successful SSH command")
+        refused_in_place(target, runner_pid, 1, timeout=after_fault)
     finally:
-        target.stop()
+        end_session(active)
+    recover_record(target, 0, session_pid, False)
+    refused_restart(target, f"{component}-fault-retry", marker)
+    print(f"SERVED RECOVERY FIRST FAULT REFUSED OK component={component} fault={fault} resets=1 successor=refused "
+          f"status=7 block_writes=0 block_flushes=0 image_unchanged=true runner_pid={runner_pid}", flush=True)
+    outcome.unsupported(f"{component}:fault-loop", f"budget={BUDGET} countdown=not_exercisable "
+                        f"faults_requested={args.faults} expect={args.expect}")
+
+
+def clean_halt_predecessor(args, target, key, marker):
+    """Owner fence (a) for clear_case, since the fault loop now ends refused: a
+    fresh image serves once, writes the synced marker, and halts on
+    `shutdown` with a finalized orderly end (status 3)."""
+    client, runner_pid = fresh_start(target, key, "clear")
+    serve_and_check(target, client, key, 0, runner_pid, marker, args, 0, "none")
+    halted = ssh(client, key, "shutdown")
+    if halted.returncode != 0:
+        raise RuntimeError(f"shutdown of the clean predecessor failed: {halted.stderr!r}")
+    status = target.status(300)
+    if status != "3":
+        raise RuntimeError(f"the clean predecessor did not halt cleanly: {status}")
+    serial = boot_parts(target)[0][0]
+    if "FSD FINALIZED boot=" not in serial or "SERVED SHUTDOWN FINALIZED status=0" not in serial:
+        raise RuntimeError(f"the clean predecessor's end was not finalized: {serial[-1500:]}")
+    print("RECOVERY CLEAN PREDECESSOR OK status=3 finalized=yes", flush=True)
+    return client
 
 
 def silent_case(args, target, client, key, runner_pid, marker, component, fault, command):
@@ -571,9 +723,16 @@ def restart(target):
 
 
 def clear_case(args, target, client, key, marker, carried):
-    """After the terminal stop the streak carries (the stopped generation
-    was ready and never ended); the image still serves, an orderly
-    `reboot` clears the streak, and the next boot starts at zero."""
+    """After a clean halt (owner fence (a), carried 0) the image serves
+    again, an orderly `reboot` keeps the streak clear, and the next boot
+    starts at zero. After an unfinalized end (carried > 0: the fault loop's
+    first reset; the budget's terminal stop is no longer reachable) the
+    same image is refused before readiness (fence (b)); nothing clears it."""
+    if carried:
+        refused_restart(target, "clear-after-stop-refused", marker)
+        print(f"RECOVERY STREAK CLEAR REFUSED OK carried={carried} successor=refused status=7 "
+              f"block_writes=0 block_flushes=0 image_unchanged=true", flush=True)
+        return
     runner_pid = restart(target)
     serve_and_check(target, client, key, 0, runner_pid, marker, args, carried, "failed" if carried else "ended")
     rebooted = ssh(client, key, "reboot")
@@ -632,13 +791,15 @@ def shell_session(client, key, target, index, runner_pid, line):
     raise RuntimeError("the shell session did not start its child")
 
 
-def escalated_reboot_case(args, target, client, key, marker):
+def escalated_reboot_case(args, target, key, marker):
     """A `reboot` whose orderly end escalates after the file server stopped
     (a shell killed without END leaves a child init cannot reap, audit D2):
     sshd recorded the request and the file server committed, but init never
-    finalized, so the next generation counts a failure, not an end."""
-    runner_pid = restart(target)
-    serve_and_check(target, client, key, 0, runner_pid, marker, args, 0, "ended")
+    finalized, so the next generation (same QEMU, after the reset) is
+    refused before readiness with zero writes (owner fence (b)), and a cold
+    retry of the same image is refused with the image unchanged."""
+    client, runner_pid = fresh_start(target, key, "escalated-reboot")
+    serve_and_check(target, client, key, 0, runner_pid, marker, args, 0, "none")
     session = shell_session(client, key, target, 0, runner_pid, "/bin/sshtest sleep 600000")
     try:
         killed = ssh(client, key, "qualification-kill-shells")
@@ -648,7 +809,7 @@ def escalated_reboot_case(args, target, client, key, marker):
         rebooted = ssh(client, key, "reboot")
         if rebooted.returncode != 0:
             raise RuntimeError(f"reboot request failed: {rebooted.stderr!r}")
-        serve_and_check(target, client, key, 1, runner_pid, marker, args, 1, "failed")
+        refused_in_place(target, runner_pid, 1)
     finally:
         end_session(session)
     serial = boot_parts(target)[0][0]
@@ -660,27 +821,25 @@ def escalated_reboot_case(args, target, client, key, marker):
             raise RuntimeError(f"escalated reboot lacks {marker_line}: {serial[-1500:]}")
     if "FSD FINALIZED" in serial or "SERVED SHUTDOWN FINALIZED" in serial:
         raise RuntimeError("an escalated end must not be finalized")
-    halted = ssh(client, key, "shutdown")
-    if halted.returncode != 0:
-        raise RuntimeError(f"shutdown after the escalated reboot failed: {halted.stderr!r}")
-    status = target.status(300)
-    if status != "3":
-        raise RuntimeError(f"boot after the escalated reboot did not halt cleanly: {status}")
-    print("RECOVERY ESCALATED REBOOT NOT CLEARED OK streak_after=1", flush=True)
+    refused_restart(target, "escalated-reboot-retry", marker)
+    print("RECOVERY ESCALATED REBOOT REFUSED OK successor=refused status=7 block_writes=0 block_flushes=0 "
+          "image_unchanged=true", flush=True)
 
 
-def fault_at_end_case(args, target, client, key, marker):
+def fault_at_end_case(args, target, key, marker):
     """sshd faults right after writing its requested-end fact: init sees a
-    fault, not a request, resets, and the next generation counts a failure."""
-    runner_pid = restart(target)
-    serve_and_check(target, client, key, 0, runner_pid, marker, args, 0, "ended")
+    fault, not a request, and resets without finalizing, so the next
+    generation (same QEMU) is refused before readiness with zero writes
+    (owner fence (b)), and a cold retry is refused with the image unchanged."""
+    client, runner_pid = fresh_start(target, key, "fault-at-end")
+    serve_and_check(target, client, key, 0, runner_pid, marker, args, 0, "none")
     armed = ssh(client, key, "qualification-sshd-fault-at-end")
     if armed.returncode == 0:
         raise RuntimeError("the fault-at-end control returned a successful SSH command")
     rebooted = ssh(client, key, "reboot")
     if rebooted.returncode != 0:
         raise RuntimeError(f"reboot request failed: {rebooted.stderr!r}")
-    serve_and_check(target, client, key, 1, runner_pid, marker, args, 1, "failed")
+    refused_in_place(target, runner_pid, 1)
     serial, worker = boot_parts(target)[0]
     if "SERVED SERVICE FAULT component=sshd reason=qualification_at_end" not in worker:
         raise RuntimeError("the fault after the end fact is absent")
@@ -688,21 +847,18 @@ def fault_at_end_case(args, target, client, key, marker):
         raise RuntimeError(f"the fault after the end fact did not take the fault path: {serial[-1500:]}")
     if "SERVED SHUTDOWN action=" in serial or "FSD FINALIZED" in serial:
         raise RuntimeError("a fault after the end fact must not be an orderly end")
-    halted = ssh(client, key, "shutdown")
-    if halted.returncode != 0:
-        raise RuntimeError(f"shutdown after the fault-at-end case failed: {halted.stderr!r}")
-    status = target.status(300)
-    if status != "3":
-        raise RuntimeError(f"boot after the fault-at-end case did not halt cleanly: {status}")
-    print("RECOVERY FAULT AT END NOT CLEARED OK streak_after=1", flush=True)
+    refused_restart(target, "fault-at-end-retry", marker)
+    print("RECOVERY FAULT AT END REFUSED OK successor=refused status=7 block_writes=0 block_flushes=0 "
+          "image_unchanged=true", flush=True)
 
 
-def exit0_case(args, target, client, key, marker):
+def exit0_case(args, target, key, marker):
     """An unexpected sshd exit 0 with a session running: init reads it as
-    a halt request and stops with code 17 (as before); the next boot
-    counts the generation as failed, not ended."""
-    runner_pid = restart(target)
-    serve_and_check(target, client, key, 0, runner_pid, marker, args, 0, "ended")
+    a halt request and stops with code 17 (as before) without finalizing;
+    the same image booted again is refused before readiness with zero
+    writes and the image unchanged (owner fence (b))."""
+    client, runner_pid = fresh_start(target, key, "exit0")
+    serve_and_check(target, client, key, 0, runner_pid, marker, args, 0, "none")
     boot_id = ready(target, 0, runner_pid)[0]
     active, _ = active_session(client, key, target, 0, runner_pid)
     try:
@@ -727,15 +883,9 @@ def exit0_case(args, target, client, key, marker):
         raise RuntimeError(f"the stopped fact does not name this boot: {stopped!r}")
     if ended.strip(b"\0") != b"":
         raise RuntimeError(f"an end fact exists after an unexpected exit 0: {ended!r}")
-    runner_pid = restart(target)
-    serve_and_check(target, client, key, 0, runner_pid, marker, args, 1, "failed")
-    halted = ssh(client, key, "shutdown")
-    if halted.returncode != 0:
-        raise RuntimeError(f"shutdown after the exit-0 case failed: {halted.stderr!r}")
-    status = target.status(300)
-    if status != "3":
-        raise RuntimeError(f"boot after the exit-0 case did not halt cleanly: {status}")
-    print("RECOVERY EXIT0 NOT CLEARED OK streak_after=1", flush=True)
+    refused_restart(target, "exit0-successor", marker)
+    print("RECOVERY EXIT0 REFUSED OK successor=refused status=7 block_writes=0 block_flushes=0 "
+          "image_unchanged=true", flush=True)
 
 
 def main():
@@ -748,10 +898,13 @@ def main():
     parser.add_argument("--qemu", default="qemu-system-x86_64 -cpu max,vendor=GenuineIntel,+rdrand")
     parser.add_argument("--component", choices=("sshd", "fsd", "both"), default="both")
     parser.add_argument("--faults", type=int, default=2,
-                        help="faults injected in one QEMU process (default 2)")
+                        help="recorded only: under the owner storage fence (2026-10-19, #63) one fault is "
+                             "injected, its reset's successor is refused, and the budget's countdown is "
+                             "reported UNSUPPORTED (default 2)")
     parser.add_argument("--expect", choices=("reset", "stop", "silent"), default="reset",
-                        help="what the last fault does: a further reset, the budget's named stop, "
-                             "or (baseline init without liveness) nothing at all")
+                        help="reset and stop are recorded only (the countdown is UNSUPPORTED: the first "
+                             "reset's successor is refused); silent is the baseline init without liveness, "
+                             "where the fault does nothing at all")
     parser.add_argument("--fault", choices=("exit", "hang", "block"), default="exit",
                         help="service fault kind: voluntary exit 7, user-mode spin, or kernel sleep (sshd only)")
     parser.add_argument("--silent-seconds", type=int, default=240,
@@ -759,7 +912,8 @@ def main():
     parser.add_argument("--no-recovery-lines", dest="recovery_lines", action="store_false",
                         help="do not require the ledger lines (a build before the recovery budget)")
     parser.add_argument("--then-clear", action="store_true",
-                        help="afterwards boot the image again, clear the streak with reboot, halt")
+                        help="afterwards: after the fault loop the same image is refused (fence (b)); the "
+                             "streak-clearing reboot runs on a fresh image after a clean halt (fence (a))")
     parser.add_argument("--then-exit0", action="store_true",
                         help="afterwards show an unexpected sshd exit 0 does not clear the streak")
     parser.add_argument("--then-escalated-reboot", action="store_true",
@@ -786,16 +940,15 @@ def main():
         parser.error("--faults must be at least 1")
     if args.expect == "stop" and args.faults != BUDGET + 1:
         parser.error(f"--expect stop needs --faults {BUDGET + 1}: three resets, then the fourth failure stops")
-    if (args.then_exit0 or args.then_escalated_reboot or args.then_fault_at_end) and not args.then_clear:
-        parser.error("the follow-on cases start from the cleared streak of --then-clear")
     key = pathlib.Path(args.key).resolve()
     if not key.is_file() or not key.with_suffix(".pub").is_file():
         parser.error("exact campaign key and public key must already exist")
     work = pathlib.Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=False)
-    for component in (("sshd", "fsd") if args.component == "both" else (args.component,)):
-        one_case(args, component, key)
-    print("SERVED RECOVERY MATRIX OK", flush=True)
+    outcome = Outcome(planned_cases(args))
+    for component in components(args):
+        one_case(args, component, key, outcome)
+    sys.exit(outcome.verdict())
 
 
 if __name__ == "__main__":

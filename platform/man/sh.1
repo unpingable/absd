@@ -1,0 +1,29 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd November 5, 2026
+.Dt SH 1
+.Os ABSD
+.Sh NAME
+.Nm sh
+.Nd native ABSD shell alias
+.Sh SYNOPSIS
+.Nm
+.Op Fl c Ar command Op Ar name Op Ar argument ...
+.Nm
+.Fl s
+.Op Ar argument ...
+.Nm
+.Ar file
+.Op Ar argument ...
+.Sh DESCRIPTION
+.Pa /bin/sh
+is byte-identical to
+.Pa /bin/absd-sh .
+Use it for ordinary script files and the
+.Ql #!/bin/sh
+interpreter declaration.
+The syntax, builtins, supported expansions, authority, exit statuses and
+operating limits are documented in
+.Xr absd-sh 1 .
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr ed 1

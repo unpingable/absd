@@ -81,7 +81,7 @@ owner_projects = ["ag-*", "pulse-*", "nq-*", "nightshift*", "absd-*"]
 # c/tests/kit/inputs/bytes.bin is first-party random input for the C kit's
 # shell-route stdio case; c/vectors/startup/*.bin are the broker's emitted
 # startup vectors (see provenance.toml).
-binary_ok = ["fixtures/native-quic/pki/*.der", "fixtures/native-tls/pki/*.der", "fixtures/*", "fs/testdata/*", "compat/data/*", "docs/*", "c/tests/kit/inputs/*", "c/vectors/startup/*", "userland/tar-vectors/basic.ustar", "ssh/enroll-cases/*"]
+binary_ok = ["broker/fixtures/terminal-startup.bin", "fixtures/native-quic/pki/*.der", "fixtures/native-tls/pki/*.der", "fixtures/*", "fs/testdata/*", "compat/data/*", "docs/*", "c/tests/kit/inputs/*", "c/vectors/startup/*", "userland/tar-vectors/basic.ustar", "userland/expected/tee-binary", "userland/expected/paste-nul-parallel", "ssh/enroll-cases/*"]
 # Build manifests known to name absolute development paths (obligation
 # PORT-ABSOLUTE-PATHS tracks them; new ones elsewhere fail the check).
 path_ok = ["Cargo.toml", ".cargo/config.toml"]
@@ -92,6 +92,10 @@ path_ok = ["Cargo.toml", ".cargo/config.toml"]
 
 [[artifact]]
 name = "operator-image"
+# Distributed: the boot ISO and disk image of a release carry it. Its
+# inventory rows used as linked or compiler-input, its components and the
+# member tables naming it are the shipped closure the licence gate audits.
+distributed = true
 
   # /bin commands built from the root package. Only the dependencies each
   # installed binary's sources name are counted (the package also carries
@@ -101,8 +105,15 @@ name = "operator-image"
   lock = "Cargo.lock"
   package = "absd-std-probe"
   evidence = "target/x86_64-unknown-absd/release/deps"
-  bins_from = "scripts/operator_image.py:NATIVE"
-  bins = ["absd_sh"]
+  # NATIVE also installs the SSH workspace's absd-sftp. Keep this list
+  # scoped to this package; test_operator_provenance_units.py checks the
+  # complete installed-program mapping against both Cargo workspaces.
+  bins = [
+    "absd_sh", "echo", "pwd", "ls", "cat", "printenv", "uname", "mkdir",
+    "rm", "mv", "cp", "head", "tail", "wc", "sha256sum", "stat", "df",
+    "sync", "man", "date", "uptime", "release", "sysinfo", "health",
+    "net-status", "terminal-size", "ps", "interfaces", "dmesg", "logs",
+  ]
 
   # /bin ports: unmodified crates.io programs, one pinned lock each.
   [[artifact.unit]]
@@ -113,7 +124,7 @@ name = "operator-image"
   # Staging adds the ABSD runtime to each port as a target dependency; the
   # pinned lock carries it, the registry manifest does not.
   roots = ["absd-runtime"]
-  evidence = "../absd-std-staged-compat/target-ports/x86_64-unknown-absd/release/deps"
+  evidence = "{root}.staged-compat/target-ports/*/x86_64-unknown-absd/release/deps"
   evidence_exact = true
 
   # /bin ports in C: the base userland's sbase utilities (userland/README.md),
@@ -126,9 +137,12 @@ name = "operator-image"
   name = "userland-ports"
   c_ports = "userland/PORTS.tsv"
   pin = "userland/PIN"
-  notice_files = ["userland/sbase.LICENSE", "userland/diff/LICENSE", "userland/hexdump/LICENSE"]
+  # Toybox's diff and hexdump copies carry the same upstream LICENSE bytes.
+  # Select by pinned upstream; never copy both upstreams into every port.
+  notice_files = { "sbase-0.1" = ["userland/sbase.LICENSE"], "toybox-0.8.15" = ["userland/diff/LICENSE"] }
 
-  # sshd and the file server, embedded in the boot ISO.
+  # The SSH workspace: sshd and the file server in the boot ISO, and the
+  # absd-sftp worker installed on disk. This unit covers the whole package.
   [[artifact.unit]]
   name = "sshd"
   lock = "ssh/Cargo.lock"
@@ -152,6 +166,7 @@ name = "operator-image"
   sources = "~/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library"
   manifest_dir = "std"
   source_id = "rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch"
+  linked_source_notes = { compiler_builtins = "toolchain library/compiler-builtins/libm (manifest version 0.2.16; not a content-equivalence claim with the registry crate)" }
   notice_files = [
     "~/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/share/doc/rust/COPYRIGHT-library.html",
     "~/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/share/doc/rust/licenses",
@@ -173,20 +188,83 @@ name = "operator-image"
 
   [[artifact.component]]
   name = "GNU Unifont"
-  version = "as shipped in host package grub-common (unicode.pf2)"
+  version = "15.1.01"
   origin = "host-package"
-  license = "not recorded by the host package (upstream: GPL-2.0-or-later with a font embedding exception; verify for the shipped version)"
+  # Owner election, 2026-10-19, for the exact font identified below. Upstream
+  # COPYING and the compiled font's copyright offer OFL-1.1 as an alternative
+  # to GPL-2.0-or-later with the font embedding exception. This component's
+  # declared terms record the elected alternative, not terms for its tools.
+  license = "OFL-1.1"
   use = "included"
-  source = "/usr/share/grub/unicode.pf2 copied by grub-mkrescue"
-  notice_files = []
+  source = "Unifont 15.1.01 font/precompiled/unifont-15.1.01.pcf.gz, converted by grub-mkfont 2.12-1ubuntu7.3; unicode.pf2 2411806 bytes, SHA256 662eb86fc1ea89635e4bba8413590b79eb714ade5a2b5a5aa3dc5cf5f53a4463"
+  notice_files = ["provenance/boot-font/unifont-15.1.01.NOTICE", "LICENSES/OFL-1.1.txt"]
   actions = [
-    "Separately licensed font carried on the ISO. The host package's copyright file does not mention it, so no licence text is collected: obtain the text for the shipped version, or build the ISO without the font (grub-mkrescue --fonts=).",
+    "OFL-1.1 election applies to the exact 15.1.01 font identified here. Verify each release's actual ISO font against this size and SHA256; changed font bytes require a new source and licence eligibility check before reusing this record.",
+    "Distribute the font's copyright notice and the full OFL-1.1 text. Do not apply this font election to Unifont's non-font programs or documentation, and retain OFL conditions for modified fonts and reserved names.",
   ]
 
+  # The C kit's link inputs for the C ports in /bin (unit userland-ports):
+  # c/bin/absd-cc links crt0, libabs, Picolibc's libc.a and libm.a, the Rust
+  # compiler_builtins member and clang's builtins archive into each port.
+  # These rows are declared because no Cargo lock reaches them (the c-kit
+  # runtime unit is unlisted). Inclusion is recorded from retained link maps,
+  # not from a per-symbol proof.
+  # Named as the member table names it, so that the notice bundle has one
+  # picolibc-1.8.12/ directory (NOTICES.txt and COPYING.picolibc).
+  [[artifact.component]]
+  name = "picolibc"
+  version = "1.8.12"
+  origin = "upstream-tarball"
+  # Its licence is the member table's: the consumed rows' expressions, each
+  # judged per linked member there. The gate fails if the two disagree.
+  member_table = "c/picolibc/PROVENANCE.tsv"
+  license = "(Apache-2.0 OR BSL-1.0) AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND LicenseRef-picolibc-FreeBSD-1 AND LicenseRef-picolibc-Other-1 AND LicenseRef-picolibc-Other-15 AND LicenseRef-picolibc-Other-16 AND LicenseRef-picolibc-Other-4 AND LicenseRef-picolibc-Other-5 AND LicenseRef-picolibc-UCB-1 AND LicenseRef-picolibc-UCB-2 AND SunPro"
+  use = "linked"
+  source = "c/picolibc/PIN picolibc-1.8.12.tar.xz sha256:64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa (libc.a sha256:7924073af8c975a4d623917070cbe098276632f0e332accfd82e11cdb7975f20); libc.a members linked into all 12 userland/PORTS.tsv ports by c/bin/absd-cc"
+  notice_files = ["provenance/linked-notices/picolibc-1.8.12/COPYING.picolibc"]
+  actions = [
+    "Carry COPYING.picolibc (verbatim from the pinned archive) with any image whose /bin holds a C port. It is the upstream aggregate; it also names files ABSD does not build (GPL-2.0 test-printf sources, excluded by -Dtests=false, and the AGPL-3.0 GeneratePicolibcCrossFile.sh script, unused), which are not part of any shipped object.",
+  ]
+
+  [[artifact.component]]
+  name = "LLVM compiler-rt builtins"
+  version = "clang 18 (host package libclang-rt-18-dev)"
+  origin = "host-package"
+  license = "Apache-2.0 WITH LLVM-exception"
+  use = "compiler-input"
+  source = "libclang_rt.builtins-x86_64.a from clang -print-resource-dir, last on the c/bin/absd-cc link line; the retained RC2-source link maps select no member of it in any of the 12 ports"
+  notice_files = ["cxx/llvm-project.LICENSE"]
+  actions = [
+    "Listed conservatively because its archive is on the C link line. If a later link map selects a member, the LLVM licence text here applies to that binary; the text is LLVM's llvmorg-18.1.8 LICENSE.TXT, the same project licence as the host package build.",
+  ]
+
+  # Intel's BSD-3-Clause notice for the kernel's I219 driver (src/i219.rs is
+  # compiled into the shipped kernel). The kernel's own notice generator
+  # lists the action without the text (kernel obligation I219-ON-MERGE), so
+  # this image's notices carry the verbatim header, copied from the kernel
+  # candidate named in source. A changed kernel header needs a fresh copy.
+  [[artifact.component]]
+  name = "Intel e1000 shared code (kernel I219 driver)"
+  version = "FreeBSD 833d39bd2e38421a14ea489a956261a0fa993fbc"
+  origin = "kernel-adapted"
+  license = "BSD-3-Clause"
+  use = "included"
+  source = "absd-kernel 101c61d82534b8c25b7295eb5a2fcd0e72cc5b3a src/i219.rs, adapted from e1000_ich8lan.c, e1000_phy.c and if_em.c; header lines 1-33 copied verbatim"
+  notice_files = ["provenance/kernel-notices/i219-intel-BSD-3-Clause.NOTICE"]
+  actions = [
+    "BSD-3-Clause clause 2: reproduce Intel's notice (the header of kernel src/i219.rs, carried here verbatim) with any image whose kernel contains the I219 driver.",
+  ]
+
+  # Built and audited in the kernel repository: the paired-audit record
+  # states that repository's distribution gate result for the commit it names.
   [[artifact.component]]
   name = "ABSD kernel and init"
   version = "kernel repository, pinned commit"
   origin = "first-party"
+  cross_repository = "absd-kernel"
+  paired_artifact = "kernel-image"
+  incorporated_commit = "1a44e3c207e514e1f776f3d745d62eb870d0c608"
+  paired_audit = "provenance/paired/kernel-image.toml"
   license = ""
   use = "included"
   source = "see the kernel repository's provenance/inventory/kernel-image.tsv for its third-party content (Rust core/alloc, console font)"
@@ -200,6 +278,8 @@ name = "operator-image"
 [[artifact]]
 name = "workload-images"
 inventoried = false
+# Test programs, never distributed: repository inventory, not the closure.
+distributed = false
 
   # The extended integration programs (integration/): test programs that run
   # Pulse and AG code on ABSD. Never installed on an operator image; like
@@ -209,6 +289,12 @@ inventoried = false
   # programs a developer builds with absd-cc; no distributed artifact contains
   # it. Its registry crates are the root package's runtime dependencies,
   # inventoried for the operator image.
+  [[artifact.unit]]
+  name = "shell-host-workflows"
+  lock = "sh/Cargo.lock"
+  listed = false
+  note = "Standalone production-AST/executor host tests; no host binary ships. Native shell dependencies are inventoried under the operator-image commands unit in Cargo.lock."
+
   [[artifact.unit]]
   name = "health-observation-host-tests"
   lock = "tests/Cargo.lock"
@@ -287,3 +373,435 @@ inventoried = false
 # deployment is not coupled to these checks.
 [website]
 statement = "absd.dev was audited at main 52290eb / gh-pages 4cd4e67 (audit-20261010): no blocking finding. It describes ABSD and distributes none of it, so OS licensing decisions do not gate it. Site wording that depends on OS facts is listed below."
+
+# Activated only by `provenance.py notices operator-image-document` with
+# explicit release, native AppA receipt and actual-target dep-info inputs.
+# It never changes the default operator-image inventory or `update` output.
+[document_application]
+artifact = "operator-image-document"
+base = "operator-image"
+binary = "tree/bin/https-document"
+
+[document_application.unit]
+name = "https-document"
+lock = "tls/Cargo.lock"
+manifest_dir = "tls"
+package = "absd-native-tls-fixture"
+# The application calls this package's library as well as its direct deps.
+# Resolve the complete library roots, not a textual binary-only projection.
+features = []
+
+# ---------------------------------------------------------------- licence policy
+# The standing licence-policy gate (docs/PROVENANCE.md, "Licence policy gate"),
+# run by `provenance.py check` and `full`. Owner policy 2026-10-19: code
+# distributed as part of ABSD is permissive only and never LGPL-derived;
+# derived code is never labelled Apache-2.0. Owner 2026-10-29: a standing
+# process for auditing code by licence. Every licence the records name
+# (provenance.toml rules, lock closures, image components, pins, and tags or
+# wording in tracked files) must be on `allowed`, or be taken from an OR whose
+# alternative is, or be covered by a named exception. A recorded `decision`
+# in provenance.toml does not waive it. Keep this table identical to the
+# kernel repository's, except for paths.
+# Owner 2026-11-05 (integration steward): accept SPDX blessing for the pinned
+# SQLite core, whose exact dedication the platform carries as
+# LICENSES/blessing.txt (sha256 06545a6ec25fbbff6c62f205f94a35be49e38f33bea827a8cfb07d7b82e4b083).
+# This adds one identifier; other terms and the sqlite-src mixed tree stay unchanged.
+[licence_policy]
+# Each entry is permissive and used by one of the two repositories today
+# (as of 2026-10-29); the comment names a user. Add one only with a user.
+allowed = [
+  "MIT",               # most crates; sbase (userland/PIN)
+  "Apache-2.0",        # ABSD first-party; Rust std; crates; the owner's projects
+  "BSD-3-Clause",      # curve25519/ed25519/x25519-dalek, subtle, encoding_rs; kernel src/i219.rs (Intel)
+  "BSD-2-Clause",      # Picolibc headers and sources linked into the userland ports (c/picolibc/PROVENANCE.tsv)
+  "ISC",               # ring (with Apache-2.0), rustls-webpki, untrusted, is_ci
+  "0BSD",              # smoltcp, managed, sunset; Toybox diff and hexdump
+  "Zlib",              # foldhash, zlib-rs
+  "blessing",          # SQLite 3.54.0 core and carried clock context; owner 2026-11-05
+  "Unicode-3.0",       # icu_* and the zerovec family
+  "Unicode-DFS-2016",  # unicode-ident 1.0.13 (with MIT OR Apache-2.0)
+  "BSL-1.0",           # clipboard-win, error-code (Boost Software License)
+  "Apache-2.0 WITH LLVM-exception",  # compiler_builtins, wasi crates, llvm-project (cxx/PIN), libc++ in the C++ kit
+  "LicenseRef-font-misc-misc-public-domain",  # kernel console font (X.Org misc-fixed 8x13) and its component record
+]
+# Copyleft and source-available families, by SPDX id glob. A term here fails
+# even inside an OR, unless another alternative is allowed (that one is then
+# taken and the run lists it). WITH never rescues a denied licence. Weak
+# copyleft fails by default too. Anything not on `allowed` fails anyway; this
+# list names why.
+denied = [
+  "GPL-*", "LGPL-*", "AGPL-*", "SSPL-*", "EUPL-*", "OSL-*", "CPAL-*", "RPL-*", "RPSL-*", "Sleepycat",
+  "MPL-*", "EPL-*", "CDDL-*", "GFDL-*", "CC-BY-SA-*", "CC-BY-NC-*",
+]
+
+# Permissive terms awaiting the owner's acceptance would be listed here as
+# [[licence_policy.pending]]: each fails the distribution audit as "pending
+# owner acceptance" until the owner decides. None is pending.
+# Terms the owner accepted for one member table only (decision 2026-10-29,
+# record PICOLIBC-LICENCE-TEXTS.md in the latest-integration lane): bound to
+# the table, Picolibc 1.8.12 and the pinned tarball's sha256; nowhere else.
+# Their conditions are checked against the linked members on every run (the
+# table's notice and acknowledgements) and recorded in
+# provenance/obligations.toml (LIC-PICOLIBC-NOTICES).
+[[licence_policy.accepted]]
+licence = "LicenseRef-picolibc-Other-1"
+member_table = "c/picolibc/PROVENANCE.tsv"
+name = "picolibc"
+version = "1.8.12"
+source_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa"
+conditions = "preserve this notice: the exact licence text and each linked file's copyright notice in the distribution notices (c/picolibc/NOTICES.txt)"
+decision = "Owner, 2026-10-29: accepted on conditions (PICOLIBC-LICENCE-TEXTS.md, latest-integration-20261029 lane)"
+
+[[licence_policy.accepted]]
+licence = "LicenseRef-picolibc-Other-4"
+member_table = "c/picolibc/PROVENANCE.tsv"
+name = "picolibc"
+version = "1.8.12"
+source_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa"
+conditions = "duplicate the copyright notice and the following paragraph in all forms: exact texts in the distribution notices"
+decision = "Owner, 2026-10-29: accepted on conditions (PICOLIBC-LICENCE-TEXTS.md, latest-integration-20261029 lane)"
+
+[[licence_policy.accepted]]
+licence = "LicenseRef-picolibc-Other-5"
+member_table = "c/picolibc/PROVENANCE.tsv"
+name = "picolibc"
+version = "1.8.12"
+source_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa"
+conditions = "include the entire notice in all copies: exact texts in the distribution notices"
+decision = "Owner, 2026-10-29: accepted on conditions (PICOLIBC-LICENCE-TEXTS.md, latest-integration-20261029 lane)"
+
+[[licence_policy.accepted]]
+licence = "LicenseRef-picolibc-Other-15"
+member_table = "c/picolibc/PROVENANCE.tsv"
+name = "picolibc"
+version = "1.8.12"
+source_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa"
+conditions = "the copyright notice and this notice in all copies: exact texts in the distribution notices"
+decision = "Owner, 2026-10-29: accepted on conditions (PICOLIBC-LICENCE-TEXTS.md, latest-integration-20261029 lane)"
+
+[[licence_policy.accepted]]
+licence = "LicenseRef-picolibc-Other-16"
+member_table = "c/picolibc/PROVENANCE.tsv"
+acknowledgement = "This product includes software developed at Cygnus Support, Inc."
+name = "picolibc"
+version = "1.8.12"
+source_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa"
+conditions = "exact texts in the distribution notices; the release documentation acknowledges that the software was developed at Cygnus Support, Inc.; nothing implies Cygnus Support endorses ABSD"
+decision = "Owner, 2026-10-29: accepted on conditions (PICOLIBC-LICENCE-TEXTS.md, latest-integration-20261029 lane)"
+
+[[licence_policy.accepted]]
+licence = "LicenseRef-picolibc-UCB-1"
+member_table = "c/picolibc/PROVENANCE.tsv"
+acknowledgement = "This product includes software developed by the University of California, Berkeley."
+name = "picolibc"
+version = "1.8.12"
+source_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa"
+conditions = "exact texts in the distribution notices; the release documentation acknowledges the University of California, Berkeley; nothing implies the University endorses ABSD"
+decision = "Owner, 2026-10-29: accepted on conditions (PICOLIBC-LICENCE-TEXTS.md, latest-integration-20261029 lane)"
+
+[[licence_policy.accepted]]
+licence = "LicenseRef-picolibc-UCB-2"
+member_table = "c/picolibc/PROVENANCE.tsv"
+acknowledgement = "This product includes software developed by the University of California, Berkeley and its contributors"
+name = "picolibc"
+version = "1.8.12"
+source_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa"
+conditions = "exact texts in the distribution notices; the release documentation displays \"This product includes software developed by the University of California, Berkeley and its contributors\"; nothing implies the University or its contributors endorse ABSD"
+decision = "Owner, 2026-10-29: accepted on conditions (PICOLIBC-LICENCE-TEXTS.md, latest-integration-20261029 lane)"
+
+[[licence_policy.accepted]]
+licence = "SunPro"
+member_table = "c/picolibc/PROVENANCE.tsv"
+name = "picolibc"
+version = "1.8.12"
+source_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa"
+conditions = "preserve the SunPro notice: its exact text and each linked file's copyright notice in the distribution notices"
+decision = "Owner, 2026-10-29 (second): SunPro accepted as permissive, notice preservation (PICOLIBC-LICENCE-TEXTS.md)"
+
+# An owner interpretation, not an automatic SPDX match: the one input under
+# FreeBSD-1, read as BSD-2-Clause (PICOLIBC-LICENCE-TEXTS.md, second decision).
+[[licence_policy.accepted]]
+licence = "LicenseRef-picolibc-FreeBSD-1"
+member_table = "c/picolibc/PROVENANCE.tsv"
+name = "picolibc"
+version = "1.8.12"
+source_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa"
+inputs = ["libc/include/fenv.h"]
+input_sha256 = { "libc/include/fenv.h" = "876d003fe9013e4db147ef9e2471004527084b9b796206e79770d30eb32a24c7" }
+interpretation = "BSD-2-Clause"
+conditions = "the SiFive copyright notice, the header's grant text and the BSD-2-Clause terms in the distribution notices"
+reasoning = "the header grants use 'subject to the terms and conditions of the FreeBSD License' and points to opensource.org/licenses, whose listing names BSD-2-Clause the Simplified BSD or FreeBSD License; the alternative, BSD-2-Clause-Views, adds only a non-binding views disclaimer with the same obligations; the six linked members take only unreferenced declarations from it; it is in no RC2 artifact"
+caveat = "Reviewer (Codex, round 2): the header text alone does not uniquely certify the SPDX id (BSD-2-Clause or BSD-2-Clause-Views); this is the owner's interpretation, not a certified match"
+review_again_when = "the Picolibc version or this header's bytes change, or a linked member begins to incorporate code from it"
+decision = "Owner, 2026-10-29 (second): FreeBSD-1 accepted, interpreted as BSD-2-Clause, scoped to Picolibc 1.8.12 libc/include/fenv.h at the sha256 above (PICOLIBC-LICENCE-TEXTS.md)"
+
+# The only exceptions. Each is bound to exact identities: a component
+# exception to the component's name, version, the artifacts it may ship in
+# and its source identity (source, equal; or sha256, which the component's
+# source states); a path exception to exact paths and the wording families it
+# covers there. Nothing else may be added without an owner decision.
+[[licence_policy.exception]]
+id = "GRUB"
+component = "GRUB"
+version = "host package grub-common"
+artifacts = ["operator-image"]
+source = "boot images, modules and locale catalogues copied by grub-mkrescue"
+licence = "GPL-3.0-or-later"
+paths = ["media/z2-usb.toml", "docs/media-20261016/MEDIA-RECEIPT.json"]
+markers = ["gpl"]
+scope = "boot component placed on the ISO by the host's grub-mkrescue; disclosed: its licence text and corresponding source must accompany a distributed ISO (provenance/obligations.toml); no ABSD code links it"
+decision = "Owner licence policy 2026-10-19 (GRUB, GPL-3.0+, is a disclosed boot component whose source ships)"
+
+[[licence_policy.exception]]
+id = "unifont-font"
+component = "GNU Unifont"
+version = "15.1.01"
+artifacts = ["operator-image"]
+sha256 = "662eb86fc1ea89635e4bba8413590b79eb714ade5a2b5a5aa3dc5cf5f53a4463"
+licence = "OFL-1.1"
+paths = ["provenance/boot-font/unifont-15.1.01.NOTICE", "LICENSES/OFL-1.1.txt"]
+markers = ["gpl"]
+scope = "the compiled Unifont 15.1.01 boot font only (unicode.pf2, SHA256 662eb86f...), under the elected OFL-1.1 alternative; Unifont's GPL programs and documentation are not distributed; the NOTICE quotes the alternative not elected"
+decision = "Owner, 2026-10-19: elect OFL-1.1 for the exact RC1 font (provenance.toml boot-font rule)"
+
+# The SPDX licence library the gate validates every expression with: a
+# versioned policy input, not a routine tool. Its wheels' sha256, its version
+# and the SPDX licence list version it embeds define which identifiers the
+# gate recognises; changing any of them is a policy change that `check`
+# reports for review until `decision` names the new license_expression wheel
+# sha256. The wheels are host tooling (not in the source tree), looked up in
+# $ABSD_PROVENANCE_WHEELS or ~/.cache/absd/provenance-wheels.
+[licence_policy.spdx_library]
+license_expression_version = "30.4.1"
+boolean_py_version = "5.0"
+spdx_license_list_version = "3.26"
+license_index_sha256 = "fada395d3ec3f960cd39a69b3e82f44ff8d13550965b0a43bca01e5157dd9edc"
+decision = "Owner direction 2026-10-29: adopt license-expression 30.4.1 (wheel 679646bc3261a17690494a3e1cada446e5ee342dbd87dcfa4a0c24cc5dce13ee) with boolean.py 5.0, SPDX licence list 3.26"
+
+[licence_policy.spdx_library.wheels]
+"license_expression-30.4.1-py3-none-any.whl" = "679646bc3261a17690494a3e1cada446e5ee342dbd87dcfa4a0c24cc5dce13ee"
+"boolean_py-5.0-py3-none-any.whl" = "ef28a70bd43115208441b53a045d1549e2f0ec6e3d08a9d142cbc41c1938e8d9"
+
+# Which proof obligations gate the claim is fixed in scripts/provenance.py,
+# not configured (review round 3, owner stopping rule): O1 strict expression
+# parsing with the verified wheels and G3 exact byte comparisons gate; O2-O5,
+# collector completeness and SPDX database consistency are report-only and
+# listed UNVERIFIED on every run (docs/PROVENANCE.md).
+
+# Pinned upstream inputs that are not Cargo crates. Without licence_column a
+# table records no licence: each row is UNKNOWN, and fails in full.
+[[licence_policy.pin]]
+path = "userland/PIN"
+licence_column = 5
+
+[[licence_policy.pin]]
+path = "cxx/PIN"
+licence_column = 6
+
+# c/picolibc/PIN: the shipped Picolibc code is the member table below; this
+# row stands for the whole upstream tree, which also holds GPL-2.0 test
+# files and an AGPL-3.0 helper script (COPYING.picolibc) that nothing builds
+# into libc.a. meson and ninja are host tools (licences from their pinned
+# wheels' METADATA). Evidence for each recorded licence is beside it.
+[[licence_policy.pin]]
+path = "c/picolibc/PIN"
+evidence = "meson-1.9.1 and ninja-1.13.0 wheels (sha256 as pinned): METADATA License Apache 2.0; picolibc: COPYING.picolibc in the pinned tarball"
+licences = { "meson 1.9.1" = "Apache-2.0", "ninja 1.13.0" = "Apache-2.0", "picolibc 1.8.12" = "LicenseRef-picolibc-whole-tree", "picolibc-libc.a 1.8.12" = "LicenseRef-picolibc-whole-tree", "picolibc-libm.a 1.8.12" = "LicenseRef-picolibc-whole-tree" }
+
+# Stage 2 C ports harness: built and run only by the test matrices, in no
+# artifact. Read from the pinned downloads (sha256 equal to the pins).
+[[licence_policy.pin]]
+path = "cports/programs.tsv"
+evidence = "lua 5.4.9 src/lua.h and lua-5.4.9-tests all.lua: MIT notice (Lua.org, PUC-Rio); zlib 1.3.2 zlib.h: zlib licence; sqlite amalgamation sqlite3.h: public-domain dedication; sqlite-src LICENSE.md: public domain for the SQLite sources, 'almost every file', other build files under their own terms"
+licences = { "lua 5.4.9" = "MIT", "lua-tests 5.4.9" = "MIT", "zlib 1.3.2" = "Zlib", "sqlite-amalgamation 3.54.0" = "blessing", "sqlite-src 3.54.0" = "LicenseRef-sqlite-src-mixed" }
+
+# Recorded elections (owner decision 2026-10-29): an OR that also offers a
+# denied licence. Expression as the crate declares it, and the alternative taken.
+[[licence_policy.election]]
+component = "self_cell"
+versions = ["1.3.0"]
+expression = "Apache-2.0 OR GPL-2.0-only"
+elected = "Apache-2.0"
+decision = "Owner, 2026-10-29: elect Apache-2.0 for self_cell (linked into the operator image)"
+
+[[licence_policy.election]]
+component = "r-efi"
+versions = ["5.3.0", "6.0.0"]
+expression = "MIT OR Apache-2.0 OR LGPL-2.1-or-later"
+elected = "MIT"
+decision = "Owner, 2026-10-29: elect MIT for r-efi (not built for ABSD; recorded so a future build takes the same terms)"
+
+# The picolibc code the userland ports link (decision 2026-10-29: file-level
+# review): each linked libc.a member and every file it was compiled from,
+# generated by scripts/picolibc-provenance.py from the pinned tarball and
+# build and the link maps of the gated port ELFs (userland/PORTS.tsv).
+# Bound to its sealed receipt: receipt_sha256 is the receipt's sha256, and
+# the receipt binds the table's sha256, members, row counts and the files it
+# was generated from. Regenerate both and update this pin together.
+[[licence_policy.member_table]]
+path = "c/picolibc/PROVENANCE.tsv"
+artifact = "operator-image"
+name = "picolibc"
+version = "1.8.12"
+component = "picolibc 1.8.12 libc.a members linked into the userland ports"
+receipt = "c/picolibc/PROVENANCE.receipt.json"
+# The distribution notice the table's linked members require: the reviewed
+# text of each label (labels) and every consumed input's own header, and the
+# acknowledgements, checked against the table's rows on every run.
+notice = "c/picolibc/NOTICES.txt"
+labels = "c/picolibc/LICENCE-LABELS.tsv"
+# The pinned source the notice is verified against (its sha256 must be the
+# receipt's source_sha256); $ABSD_SOURCE_ARCHIVE_PICOLIBC overrides.
+source_archives = ["../picolibc/dl/picolibc-1.8.12.tar.xz"]
+receipt_sha256 = "047e337d2dbddf90bc853015fb00b76a53cfd122a24e0269030fb071f646f0bf"
+
+# Build variants the gate does not cover: refused while selected.
+[[licence_policy.variant]]
+name = "operator-image with the opt-in https-document command (operator-image-document)"
+env = ["ABSD_HTTPS_DOCUMENT"]
+reason = "installs tree/bin/https-document (scripts/operator_image.py), whose closure is bound only by `notices operator-image-document` with its build receipt; audit that closure before distributing the variant"
+
+# Lock roots and staged copies have no checksum in their lock: the checksum
+# each one's own pin records (compat/programs.tsv SHA256, the crates.io
+# checksum; scripts/stage-ssh.sh for sunset).
+[licence_policy.crate_checksums]
+"ripgrep 15.2.0" = "a30750b6d0743bfdd2656ebbaf4555aa278c43144b84bc389bcbfa399485ec71"
+"uu_base64 0.12.0" = "bd6b72f857b343f12c7f4be39917343a00d214a8250eaf49509cf9df6f6c8ddc"
+"uu_basename 0.12.0" = "b29c8c798465d8001a90b6231554f8e00e9c4cf781a9f7d0b96224dcaac77ecd"
+"uu_cut 0.12.0" = "d2087dececd3be61b5671c0978605e0fa9ecbe707294137896efdb2848094326"
+"uu_fold 0.12.0" = "b28755578b0b98318371e055fcc70b94c9198bacfce0d125d3049ab1c2d2beb2"
+"uu_nl 0.12.0" = "6ab04808b361b764c96380882db6e593d12c7ae5d62582fcee0ca670ba356349"
+"uu_seq 0.12.0" = "ad149ba156667c2ce8d1d87411e091632db5608d5c8777fbe1a134856e89eae0"
+"uu_uniq 0.12.0" = "53c59563ff6419f674e2cd5b50cef9f3a0f0e73a06291dd635c006fc253ad268"
+"sunset 0.6.0" = "3b52312b804ac95f10d3963f6ef5889117ad678bd6ce977be4aa4cf491bad78f"
+
+# Host tools (README.md "Host tools"): run on the build or test host, never
+# distributed. Distributing one is a separate decision with these obligations.
+[[licence_policy.host_tool]]
+name = "license-expression 30.4.1 and boolean.py 5.0 (pinned wheels)"
+licence = "Apache-2.0 AND BSD-2-Clause; the embedded licence database is CC-BY-4.0"
+use = "the licence gate parses and validates every SPDX expression with them ([licence_policy.spdx_library])"
+obligation = "none while only run; they are not in the source tree or any image"
+
+[[licence_policy.host_tool]]
+name = "QEMU 8.2.2 and its Python packages (qemu.machine, qemu.qmp)"
+licence = "GPL-2.0-only; qemu.machine GPL-2.0-only, console_socket GPL-2.0-or-later, qemu.qmp LGPL-2.0-or-later"
+use = "boots test images; the App A VM runner imports its Python helpers from a separately staged pinned package (docs/APP-A-VM-RUNNER.md)"
+obligation = "none while only run; not vendored into ABSD source or any image. Shipping it would require corresponding source and its licence texts"
+
+[[licence_policy.host_tool]]
+name = "clang 18, ld.lld 17, llvm-ar/strip/nm 18, libclang-rt-18-dev"
+licence = "Apache-2.0 WITH LLVM-exception"
+use = "compile and link the C kit and ports; the userland link maps show no libclang_rt.builtins member linked"
+obligation = "none while only run; a builtins member linked into a shipped program is covered by the LLVM exception, record it as a component if one appears"
+
+[[licence_policy.host_tool]]
+name = "GCC and glibc (libc6-dev)"
+licence = "GPL-3.0-or-later WITH GCC-exception-3.1; glibc LGPL-2.1-or-later"
+use = "host reference builds of the ports (build-userland.sh linux side) and host tests; no ABSD-target compilation reads a glibc header (scripts/test_target_host_headers.py, scripts/build-picolibc.sh)"
+obligation = "none while only run; a glibc header compiled into shipped code is a distribution finding, not a host-tool use"
+
+[[licence_policy.host_tool]]
+name = "meson 1.9.1 and ninja 1.13.0"
+licence = "Apache-2.0"
+use = "Picolibc's build (c/picolibc/PIN, a private venv)"
+obligation = "none while only run"
+
+[[licence_policy.host_tool]]
+name = "grub-mkrescue, xorriso, groff"
+licence = "GPL-3.0-or-later"
+use = "assemble the ISO (GRUB's own binaries on it are the GRUB exception) and render manual pages"
+obligation = "none for the tools themselves; GRUB's binaries on the ISO carry the GRUB exception's obligations"
+
+[[licence_policy.host_tool]]
+name = "Rust toolchains 1.95.0 and 1.98.0 (rustup)"
+licence = "MIT OR Apache-2.0"
+use = "build everything; the standard library linked into programs is an inventory row of each artifact"
+obligation = "the linked standard library's notices (provenance/obligations.toml)"
+
+# Files whose licence wording is not scanned (d), each with the reason.
+# Records the gate reads structurally are here; so are documents that only
+# discuss the policy. Not a directory skip: name files.
+# record = true: a record the gate reads structurally, whose wording is not
+# listed again. Otherwise the file only discusses licences (owner decision
+# 2026-10-29): its wording is listed in the inventory, not failed. Licence
+# tags are judged in every file whatever this list says.
+[[licence_policy.marker_exempt]]
+path = "provenance.toml"
+record = true
+reason = "the file-level record; every rule's licence fields are judged"
+
+[[licence_policy.marker_exempt]]
+path = "provenance/config.toml"
+record = true
+reason = "this policy table and the artifacts' components, judged"
+
+[[licence_policy.marker_exempt]]
+path = "provenance/inventory/*.tsv"
+record = true
+reason = "generated dependency inventory; the closure is judged from the same resolution"
+
+[[licence_policy.marker_exempt]]
+path = "provenance/baseline/*.tsv"
+record = true
+reason = "the inventory frozen at the 2026-10-10 baseline; a historical record, not shipped"
+
+[[licence_policy.marker_exempt]]
+path = "provenance/obligations.toml"
+record = true
+reason = "obligation register: names the terms of GRUB, Unifont and other recorded obligations"
+
+[[licence_policy.marker_exempt]]
+path = "c/picolibc/LICENCE-LABELS.tsv"
+record = true
+reason = "the reviewed label-to-licence map the member table is generated from"
+
+[[licence_policy.marker_exempt]]
+path = "media/boot-source-pins.json"
+reason = "source archive filename/hash inventory; GPL-3 names the pinned accompanying licence-text file, not the licence of this first-party JSON; actual component terms and notices remain separately judged"
+lines = { "8" = "    \"GPL-3\": \"3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986\"," }
+
+[[licence_policy.marker_exempt]]
+path = "docs/PROVENANCE.md"
+reason = "describes this policy and its exceptions"
+
+[[licence_policy.marker_exempt]]
+path = "scripts/test_provenance.py"
+record = true
+reason = "the gate's own tests: fixtures quote denied licences as test data"
+
+[[licence_policy.marker_exempt]]
+path = "scripts/provenance-counterexamples.toml"
+record = true
+reason = "the gate's counterexample corpus: describes reproductions that quote denied licences"
+
+[[licence_policy.marker_exempt]]
+path = "docs/APP-A-VM-RUNNER.md"
+reason = "host-tool notes: names the licences of QEMU's Python helpers the VM runner uses on the host (a host tool above)"
+
+# A verbatim upstream notice: one exact reviewed tuple (path, sha256, PIN row,
+# archive sha256, member); changing it is a reviewed change. The archive must
+# be on this machine, else no exemption. Its wording is listed, not
+# failed; licence tags in it are still judged, and nothing else is exempted:
+# the linked Picolibc members are judged per member by the member table.
+# COPYING.picolibc's AGPL-3.0 text covers only upstream
+# scripts/GeneratePicolibcCrossFile.sh, a build script nothing builds or ships.
+[[licence_policy.marker_exempt]]
+path = "provenance/linked-notices/picolibc-1.8.12/COPYING.picolibc"
+upstream = { pin = "c/picolibc/PIN", pin_row = "picolibc 1.8.12", archive_sha256 = "64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa", member = "picolibc-1.8.12/COPYING.picolibc", sha256 = "80a8d14adb2548513e9e86803bbc4b3c97423533efcea8e04fe9814996fb2974", source_archives = ["../picolibc/dl/picolibc-1.8.12.tar.xz"] }
+reason = "Picolibc's upstream aggregate COPYING, carried verbatim as the Picolibc component's notice; it names terms of upstream files ABSD does not build"
+decision = "Owner, 2026-11-01: scanner exception for verified verbatim upstream notice files, restricted to identified notice files with pinned provenance; per-member Picolibc licence expressions stay authoritative"
+
+# The provenance tools are one implementation in the kernel and platform
+# repositories. Both configurations pin the same sha256; scripts/provenance.py
+# check fails on drift, so the files and both pins change together.
+[shared_tools]
+# `full` refuses to pass without the other repository (--peer DIR or
+# $ABSD_PROVENANCE_PEER): the pins below must equal the peer's, file for file.
+peer_required = true
+
+[shared_tools.sha256]
+"scripts/provenance.py" = "cf0211241e7565ce9be9d801e40e8500452d766f0291c0ef660c594555e39697"
+"scripts/spdx-check.py" = "c2f2d8e1d7d6af4b1bc0fe6cad0ce2b361a0e53186c087b85cbb6cc746211c93"
+"scripts/provenance-counterexamples.toml" = "39a72947d8a004595bd8892345c9a23fccc327a87ffafcf846639b4c0a1c9f34"
+"scripts/test_provenance.py" = "e21e8e3c5e755e20cdbae61332b478937da32859652ef71500d4d111c6275a40"

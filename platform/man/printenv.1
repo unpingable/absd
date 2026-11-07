@@ -1,0 +1,30 @@
+.Dd November 3, 2026
+.Dt PRINTENV 1
+.Os ABSD
+.Sh NAME
+.Nm printenv
+.Nd print the process environment
+.Sh SYNOPSIS
+.Nm
+.Op Ar name ...
+.Sh DESCRIPTION
+With no operands, print sorted
+.Ql KEY=VALUE
+entries, one per line.
+Otherwise print each named value in operand order; unset or invalid names
+produce no value and set status 1.
+There are no options: dash-leading words are variable names.
+An ordinary SSH session has an empty environment.
+This command cannot modify its parent shell or grant authority through
+environment variables.
+.Sh EXIT STATUS
+0 if all requested values exist, or the full environment was printed;
+1 if any requested value is unavailable.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+printenv
+printenv HOME
+.Ed
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr process 7

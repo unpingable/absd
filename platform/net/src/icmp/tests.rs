@@ -411,6 +411,113 @@ fn real_udp_submission_reaches_native_capability_and_revoke_discards_observation
 }
 
 #[test]
+fn q27_real_session_ignores_equal_ip_mtu_but_reports_lower_advice() {
+    for mtu in [1228u16, 1200] {
+        let (wire, mut a, mut b) = pair(0);
+        let grant = udp_grant(7826, 2, 4443);
+        let mut session = datagram::Session::grant(&mut a, grant).unwrap();
+        let learn = udp_grant(1077, 15, grant.local_port);
+        let learning_endpoint = b.datagram_bind(learn).unwrap();
+        // Resolve the actual stack's ARP neighbor without an authorized reply.
+        b.datagram_send(learning_endpoint, learn.peer, b"learn")
+            .unwrap();
+        for _ in 0..20 {
+            step(&wire, &mut a, &mut b);
+        }
+        assert!(wire.borrow().queues.iter().all(VecDeque::is_empty));
+
+        let capture = |payload: &[u8]| {
+            let sent = wire.borrow_mut().queues[1].pop_front().unwrap();
+            assert!(wire.borrow().queues[1].is_empty());
+            assert_eq!(sent.len(), 14 + 28 + payload.len());
+            assert_eq!(&sent[..6], &[2, 0, 0, 0, 0, 2]);
+            assert_eq!(&sent[6..12], &MAC);
+            assert_eq!(&sent[12..14], &[8, 0]);
+            let ip = &sent[14..];
+            assert_eq!(ip[0], 0x45);
+            assert_eq!(u16::from_be_bytes([ip[2], ip[3]]) as usize, ip.len());
+            assert_eq!(&ip[6..8], &[0x40, 0], "actual submission must emit DF");
+            assert_eq!(ip[9], 17);
+            assert_eq!(&ip[12..16], &LOCAL);
+            assert_eq!(&ip[16..20], &grant.peer.ip);
+            assert_eq!(checksum(&ip[..20]), 0);
+            assert_eq!(&ip[20..22], &grant.local_port.to_be_bytes());
+            assert_eq!(&ip[22..24], &grant.peer.port.to_be_bytes());
+            assert_eq!(
+                u16::from_be_bytes([ip[24], ip[25]]) as usize,
+                8 + payload.len()
+            );
+            assert_eq!(&ip[28..], payload);
+            let mut pseudo = Vec::from(LOCAL);
+            pseudo.extend(grant.peer.ip);
+            pseudo.extend([0, 17]);
+            pseudo.extend(((8 + payload.len()) as u16).to_be_bytes());
+            pseudo.extend(&ip[20..]);
+            assert_eq!(checksum(&pseudo), 0);
+            sent
+        };
+        let payload = [42; 1200];
+        let send = udp_request(datagram::SEND, grant.peer, &payload, 0);
+        let mut reply = [0; datagram::MAX_MESSAGE];
+        assert_eq!(session.request(&mut a, &send, &mut reply), 12);
+        assert_eq!(
+            &reply[..12],
+            &[1, datagram::SEND, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        a.poll();
+        let sent = capture(&payload);
+        assert_eq!(sent.len() - 14, 1228);
+
+        // Quote the real Link::send frame; do not seed feedback history.
+        wire.borrow_mut().queues[0].push_back(error_frame(&sent, 3, 4, mtu));
+        a.poll();
+        let receive = udp_request(
+            datagram::RECEIVE,
+            datagram::Address {
+                ip: [0; 4],
+                port: 0,
+            },
+            &[],
+            datagram::MAX_DATAGRAM,
+        );
+        assert_eq!(session.request(&mut a, &receive, &mut reply), 12);
+        if mtu == 1228 {
+            assert_eq!(
+                &reply[..12],
+                &[1, datagram::RECEIVE, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            );
+            // Equality leaves the full default UDP ceiling available, not 1200.
+            let maximum = [43; datagram::MAX_DATAGRAM];
+            let request = udp_request(datagram::SEND, grant.peer, &maximum, 0);
+            assert_eq!(session.request(&mut a, &request, &mut reply), 12);
+            assert_eq!(
+                &reply[..12],
+                &[1, datagram::SEND, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            );
+            a.poll();
+            let full = capture(&maximum);
+            assert_eq!(full.len() - 14, 1500);
+        } else {
+            assert_eq!(
+                &reply[..12],
+                &[1, datagram::RECEIVE, 14, 0, 0, 0, 0, 0, 0, 0, 4, 176]
+            );
+            assert_eq!(session.request(&mut a, &send, &mut reply), 12);
+            assert_eq!(
+                &reply[..12],
+                &[1, datagram::SEND, 15, 0, 0, 0, 0, 0, 0, 0, 4, 148]
+            );
+            a.poll();
+            assert!(wire.borrow().queues[1].is_empty());
+        }
+        session.revoke(&mut a);
+        b.datagram_close(learning_endpoint).unwrap();
+        assert_eq!(a.socket_count(), 0);
+        assert_eq!(b.socket_count(), 0);
+    }
+}
+
+#[test]
 fn failed_nic_submission_never_records_a_quote_candidate() {
     use smoltcp::phy::TxToken as _;
     struct Refusing;
@@ -441,8 +548,10 @@ fn failed_nic_submission_never_records_a_quote_candidate() {
         buffer: &mut buffer,
         stats: &mut stats,
         feedback: &mut f,
+        tcp_mtu: &mut crate::stream::mtu::Feedback::new(MAC),
         ipv6_feedback: &mut ipv6_feedback,
         server_rules: &mut [None; stream::MAX_ENDPOINTS],
+        ipv6_server_rules: &mut [None; ipv6::stream::MAX_ENDPOINTS],
     }
     .consume(sent.len(), |b| b.copy_from_slice(&sent));
     assert_eq!(stats.link_errors, 1);

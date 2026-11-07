@@ -1,6 +1,0 @@
-ctor
-main
-abort
---
---
-status=134

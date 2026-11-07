@@ -3,9 +3,11 @@
 parsing (no QEMU)."""
 
 import importlib.util
+import os
 import pathlib
 import re
 import unittest
+import unittest.mock
 
 here = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("survival_recovery", here / "survival-recovery.py")
@@ -23,6 +25,44 @@ def stale(component, idle, sshd, fsd, bound=60000):
 
 def lines(*parts):
     return "\n".join(parts) + "\n"
+
+
+class StorageFence(unittest.TestCase):
+    """The harness declaration (served-matrix.py ServedTarget.storage_fence)
+    reaches only served boots, and None leaves the undeclared default."""
+
+    def options_for(self, fence, options):
+        seen = {}
+        served = sr.served
+        real = served.subprocess.run
+
+        def fake(argv, **_):
+            seen["options"] = next(word for word in argv if word.startswith("DURABLE_OPTIONS="))
+        target = served.ServedTarget.__new__(served.ServedTarget)
+        target.work = pathlib.Path("/nonexistent")
+        target.kernel = pathlib.Path("/kernel")
+        target.storage_fence = fence
+        served.subprocess.run = fake
+        try:
+            with unittest.mock.patch.object(pathlib.Path, "write_bytes", lambda *_: None):
+                target.iso(0, "worker", options=options)
+        finally:
+            served.subprocess.run = real
+        return seen["options"]
+
+    def test_served_boots_declare_the_harness_fence(self):
+        self.assertEqual(self.options_for("external", "net fsd served"),
+                         "DURABLE_OPTIONS=net fsd served storage-fence=external")
+        self.assertEqual(self.options_for("external", "net fsd served served-fsd-exit-test"),
+                         "DURABLE_OPTIONS=net fsd served served-fsd-exit-test storage-fence=external")
+
+    def test_other_boots_and_none_declare_nothing(self):
+        self.assertEqual(self.options_for("external", "net fsd"), "DURABLE_OPTIONS=net fsd")
+        self.assertEqual(self.options_for(None, "net fsd served"), "DURABLE_OPTIONS=net fsd served")
+
+    @unittest.skipIf("ABSD_HARNESS_STORAGE_FENCE" in os.environ, "the environment overrides the default")
+    def test_the_default_declares_no_unverified_fence(self):
+        self.assertIsNone(sr.served.ServedTarget.storage_fence)
 
 
 class Plans(unittest.TestCase):

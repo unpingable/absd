@@ -63,11 +63,6 @@ class Tests(unittest.TestCase):
             self.assertEqual(cases['C11']['sessions'],4)
             self.assertFalse(any(x.get('checks_failed') for x in cases.values()))
         self.assertNotIn('reboot',self.g.sent)
-    def test_candidate_two_includes_real_compile_case_contract(self):
-        self.r.candidate = 2
-        a = self.adapter(); self.assertTrue(a.run()[1])
-        self.assertIn('C12b', a.shapes)
-        self.assertIn(aw.ROOT + '/t', self.g.files)
     def test_missing_cancel_evidence_fails_original_checks(self):
         c=next(c for c in self.r.calls if c.id=='C8')
         r=self.r.call(c);r['lines']['kernel_ended']=[]
@@ -76,26 +71,6 @@ class Tests(unittest.TestCase):
         c=next(c for c in self.r.calls if c.id=='C11')
         r=self.r.call(c);r['lines']['conn_refused']=[]
         self.assertTrue(any('REFUSED' in x for x in self.r.check(c,r)))
-    def test_rehearsal_content_change_cannot_establish_plateau(self):
-        self.r.candidate=2
-        a=self.adapter()
-        self.g.dirs.add(aw.ROOT)
-        self.g.files[aw.ROOT+'/in.txt']=next(c.stdin for c in self.r.calls if c.id=='C3b')
-        # Complete canonical C12 inventory; controlled fake Runner changes only
-        # the compiler output on the next group. Same object count is insufficient.
-        self.g.files[aw.ROOT+'/t.c']=next(c.stdin for c in self.r.calls if c.id=='C12a')
-        self.g.files[aw.ROOT+'/t']=b'old ELF'
-        a.final=a.verify_end(a.state())
-        old=dict(a.final)
-        def run_changed(r):
-            self.g.dirs.add(aw.ROOT)
-            self.g.files[aw.ROOT+'/in.txt']=next(c.stdin for c in self.r.calls if c.id=='C3b')
-            self.g.files[aw.ROOT+'/t.c']=next(c.stdin for c in self.r.calls if c.id=='C12a')
-            self.g.files[aw.ROOT+'/t']=b'new ELF'
-            return 'controlled',True
-        with patch.object(ae.Runner,'run',run_changed):
-            with self.assertRaisesRegex(aw.wb.BaselineError,'logical end state changed'):a.group(2)
-        self.assertEqual(a.final,old)
     def test_subset_or_changed_case_refuses(self):
         self.r.calls=self.r.calls[:-1]
         with self.assertRaises(aw.wb.BaselineError):self.adapter()

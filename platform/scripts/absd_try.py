@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """absd-try: run an ABSD developer preview under QEMU without building it
-(design docs/preview-pipeline-20261015/DESIGN.md, slice C).
+(coordination record #31, design docs/preview-pipeline-20261015/DESIGN.md, slice C).
 
 Python 3.11+ standard library only, plus the platform's own host reader
 (scripts/absd_fs.py and scripts/absd_image.py, also standard library only),
@@ -9,7 +9,7 @@ which the preview producer ships beside this file or bundles with it.
     absd-try verify ASSETS
     absd-try create DIR --assets ASSETS --key KEY.pub [--replace]
     absd-try enroll DIR --key KEY.pub
-    absd-try boot DIR [--port 2222] [--accel auto|kvm|tcg]
+    absd-try boot DIR [--port 2222] [--accel auto|kvm|tcg] [--login-key KEY]
 
 ASSETS is a directory holding one release's downloaded files. DIR is one
 machine: disk.img (the writable disk), operator.iso, enroll.iso,
@@ -42,6 +42,7 @@ the network, and a changed host key stops the machine.
 import argparse
 import base64
 import contextlib
+import errno
 import fcntl
 import hashlib
 import lzma
@@ -49,18 +50,25 @@ import os
 import pathlib
 import re
 import shutil
+import shlex
+import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 import tomllib
 
+# The helper modules are imported from the user's download directory; never
+# leave a __pycache__ there (coordination record #62 item 7). Set before any import.
+sys.dont_write_bytecode = True
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
 from served_ram import served_qemu
 
 SCHEMA = "absd-preview-manifest/1"
+CPU_TCG = "max,vendor=GenuineIntel,+rdrand"
 SUMS = "SHA256SUMS"
 MANIFEST = "MANIFEST.toml"
 DISK = "disk.img"
@@ -92,6 +100,9 @@ HOST_KEY = re.compile(r"^SSH HOST KEY (GENERATED|LOADED) (ssh-ed25519 [A-Za-z0-9
 LISTENING = re.compile(r"^SSH LISTENING port=", re.M)
 
 ENROLL_TIMEOUT = 600
+# Same host shutdown allowance as media_operator.operator_boot; one deadline
+# covers both the authenticated request and observed QEMU termination here.
+SHUTDOWN_TIMEOUT = 180
 QEMU_HALTED = 3
 
 
@@ -322,6 +333,8 @@ def check_blank(tree, release_id):
     """A downloaded disk: nobody's key, no host identity, no user state."""
     if tree.get(SELECTED_PATH, b"").strip() != release_id.encode():
         raise Refused("disk_not_blank", f"{SELECTED_PATH} does not name {release_id}")
+    if "/ssh/local-login" in tree:
+        raise Refused("disk_not_blank", "/ssh/local-login present (a downloaded disk never carries a local-console credential)")
     if SEED_PATH in tree:
         raise Refused("disk_not_blank", f"{SEED_PATH} present (a downloaded disk never carries a host key)")
     if KEYS_PATH not in tree or tree[KEYS_PATH].strip():
@@ -370,7 +383,7 @@ def host_has(flag):
 def accel_args(choice, doc):
     """`-accel`/`-cpu` for the request. sshd refuses to start without RDRAND
     ("SSH ENTROPY"), so KVM needs a host CPU that has it."""
-    tcg_cpu = doc.get("qemu", {}).get("cpu_tcg", "max,vendor=GenuineIntel,+rdrand")
+    tcg_cpu = doc.get("qemu", {}).get("cpu_tcg", CPU_TCG)
     if choice == "auto":
         choice = "kvm" if os.access("/dev/kvm", os.R_OK | os.W_OK) and host_has("rdrand") else "tcg"
     if choice == "kvm":
@@ -510,12 +523,92 @@ def run_enroll(machine, doc, key_bytes, accel):
         return decode_console(log_path.read_bytes())
 
 
+RESUME_PATH = "/var/recovery.resume"
+RESUME_NONE = b"absd-resume v1 none\n".ljust(512, b"\0")
+# QEMU file-posix: RAW_LOCK_PERM_BASE 100, RAW_LOCK_SHARED_BASE 200.
+OFD_START, OFD_LENGTH = 100, 200
+ARCHIVE_KINDS = ("consumed", "revoked", "stale", "superseded")
+
+
+def pending_authorization(machine):
+    """The id of an unsuperseded published authorization under
+    machine/recovery/ (the same rule as storage_fence_resume's current
+    transaction: active.toml names one unless an archive of its own id,
+    consumed/revoked/stale/superseded, supersedes it), or None. A record
+    file that does not parse counts as pending: the shared tool's
+    corrupt-receipt row refuses a writer too."""
+    directory = machine / "recovery"
+    path = directory / "active.toml"
+    if not path.is_file():
+        return None
+    try:
+        fields = tomllib.loads(path.read_text(encoding="utf-8")).get("active")
+        ident = fields["id"] if isinstance(fields, dict) else None
+        if not isinstance(ident, str) or not re.fullmatch(r"[0-9a-f]{32}", ident):
+            raise ValueError("active.toml without an id")
+    except (OSError, ValueError, UnicodeDecodeError, KeyError) as error:
+        raise Refused("corrupt_receipt", f"{path} does not parse ({error}); release.py recover --revoke") from None
+    for kind in ARCHIVE_KINDS:
+        if (directory / f"{kind}-{ident}.toml").is_file():
+            return None
+    return ident
+
+
+@contextlib.contextmanager
+def recovery_boundary(machine):
+    """Enrollment is a writer of the disk: it enters the same hand-off
+    boundary as every release.py mutator (scripts/storage_fence_resume.py,
+    docs/WRITABLE-ENTRY.md "Operator-authorized resume"), self-contained
+    here because this helper travels with the preview: the recovery lock
+    under the machine directory for the duration (`tool_busy`), QEMU's
+    OFD range lock taken and released once (`image_locked`: a QEMU holds
+    the disk, possibly one whose launcher died), and no pending resume
+    authorization at the slot (`recovery_pending`; a corrupt slot refuses
+    `resume_slot_corrupt`: only release.py recover --revoke rewrites it)."""
+    directory = machine / "recovery"
+    directory.mkdir(parents=True, exist_ok=True)
+    lock = os.open(directory / "lock", os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+                raise Refused("tool_busy", f"{directory / 'lock'} is held by another tool") from None
+            raise
+        fd = os.open(machine / DISK, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            want = struct.pack("hhqqi", fcntl.F_WRLCK, os.SEEK_SET, OFD_START, OFD_LENGTH, 0)
+            try:
+                fcntl.fcntl(fd, fcntl.F_OFD_SETLK, want)
+            except OSError as error:
+                if error.errno in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
+                    raise Refused("image_locked", f"a QEMU holds {machine / DISK}; find and stop it") from None
+                raise
+            fcntl.fcntl(fd, fcntl.F_OFD_SETLK, struct.pack("hhqqi", fcntl.F_UNLCK, os.SEEK_SET, OFD_START, OFD_LENGTH, 0))
+        finally:
+            os.close(fd)
+        pending = pending_authorization(machine)
+        if pending is not None:
+            raise Refused("recovery_pending", f"authorization {pending} is published for this disk; boot it or run "
+                          "release.py recover --revoke")
+        slot = read_tree(machine / DISK).get(RESUME_PATH)
+        if slot is not None and slot != RESUME_NONE:
+            if slot.startswith(b"absd-resume v1 id="):
+                ident = slot[18:50].decode(errors="replace")
+                raise Refused("recovery_pending", f"authorization {ident} is on the disk; boot it or run "
+                              "release.py recover --revoke")
+            raise Refused("resume_slot_corrupt", "the resume slot is corrupt; release.py recover --revoke, then decide")
+        yield
+    finally:
+        os.close(lock)
+
+
 def enroll(machine, key_path, accel="auto"):
     machine = pathlib.Path(machine)
     doc = load_manifest(machine / MANIFEST)
     key_bytes = pathlib.Path(key_path).read_bytes()
     count = len(key_lines(key_bytes))
-    with machine_lock(machine):
+    with machine_lock(machine), recovery_boundary(machine):
         before = read_state(machine / DISK)
         streams = run_enroll(machine, doc, key_bytes, accel)
         found = ENROLL_OK.search(streams[-1] if streams else "")
@@ -597,7 +690,7 @@ def free_port(port):
 
 
 def stop(qemu):
-    """No QEMU outlives the helper's supervision."""
+    """Stop and reap only where the caller explicitly authorizes a hard stop."""
     if qemu.poll() is None:
         qemu.kill()
     qemu.wait()
@@ -615,7 +708,64 @@ def known_key(path):
     return " ".join(words[1:3]) if len(words) >= 3 else None
 
 
-def boot(machine, port=2222, accel="auto", poll=0.2):
+def shutdown_command(machine, port, login_key):
+    # -o uses SSH configuration syntax even though argv bypasses the shell.
+    known = str(machine / KNOWN_HOSTS).replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"')
+    command = ["ssh", "-F", "/dev/null", "-p", str(port), "-o", "BatchMode=yes",
+               "-o", "StrictHostKeyChecking=yes", "-o", f'UserKnownHostsFile="{known}"',
+               "-o", "GlobalKnownHostsFile=/dev/null", "-o", "ConnectTimeout=30"]
+    if login_key is not None:
+        command += ["-i", str(login_key), "-o", "IdentitiesOnly=yes"]
+    return command + ["operator@127.0.0.1", "shutdown"]
+
+
+def interrupt_shutdown(qemu, machine, port, login_key, ready):
+    """Request the same authenticated shutdown as an operator SSH session.
+
+    No timeout or failed request authorizes killing QEMU. Only another
+    KeyboardInterrupt while handling this request is an explicit force.
+    """
+    command = shutdown_command(machine, port, login_key)
+    deadline = time.monotonic() + SHUTDOWN_TIMEOUT
+    log = machine / "shutdown.log"
+    try:
+        say("Shutdown requested. Waiting for the machine to halt. "
+            "Press Ctrl-C again only to force a stop; the next boot may need recovery.")
+        if qemu.poll() == QEMU_HALTED:
+            return QEMU_HALTED
+        if not ready:
+            raise Refused("shutdown_not_ready", "SSH is not ready; no shutdown request was sent")
+        with open(log, "wb") as output:
+            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
+                                    stderr=subprocess.STDOUT, start_new_session=True,
+                                    timeout=max(0.001, deadline - time.monotonic()))
+        if result.returncode and qemu.poll() != QEMU_HALTED:
+            raise Refused("shutdown_failed", f"SSH exited {result.returncode}; see {log}")
+        status = qemu.wait(timeout=max(0.001, deadline - time.monotonic()))
+        if status != QEMU_HALTED:
+            raise Refused("shutdown_failed", f"QEMU exited {status}, without a confirmed clean halt")
+        return status
+    except KeyboardInterrupt:
+        say("Forced stop explicitly requested. Warning: the next boot may need recovery. "
+            f"Keep {machine}; do not replace it if it contains files you need.")
+        stop(qemu)
+        raise Refused("shutdown_forced", "QEMU stopped; the machine directory is preserved") from None
+    except (Refused, OSError, subprocess.TimeoutExpired) as error:
+        if qemu.poll() == QEMU_HALTED:
+            return QEMU_HALTED
+        detail = ("Shutdown timed out" if isinstance(error, subprocess.TimeoutExpired) else str(error))
+        state = f"QEMU is still running (PID {qemu.pid})" if qemu.poll() is None else f"QEMU exited {qemu.returncode}"
+        say(f"{detail}. {state}; your machine is preserved at {machine}.")
+        say("To request a clean shutdown, run: " + shlex.join(command))
+        say("If SSH needs your private key, add -i /path/to/your/private-key. "
+            "Keep this directory and wait for shutdown before starting or replacing the machine.")
+        if not ready:
+            say(f"Check {machine / CONSOLE} for startup progress. If {machine / KNOWN_HOSTS} "
+                "has not been recorded, keep the machine running and seek help; do not disable host-key checking.")
+        raise Refused("shutdown_incomplete", "clean shutdown was not confirmed; no forced stop was attempted") from None
+
+
+def boot(machine, port=2222, accel="auto", poll=0.2, login_key=None):
     machine = pathlib.Path(machine)
     doc = load_manifest(machine / MANIFEST)
     with machine_lock(machine):
@@ -635,10 +785,26 @@ def boot(machine, port=2222, accel="auto", poll=0.2):
                 "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]
         known = machine / KNOWN_HOSTS
         say(f"BOOTING accel={chosen} console={console}")
-        with open(machine / "qemu.log", "wb") as errors:
-            qemu = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=errors)
         keyed, listening = set(), set()  # boot streams already handled
+        qemu, interrupted = None, False
+        def defer_interrupt(signum, frame):
+            nonlocal interrupted
+            interrupted = True
+        # Acquire the child before a SIGINT can unwind its constructor. A
+        # Python handler is reset on exec; QEMU does not inherit a blocked signal.
+        previous_handler = signal.signal(signal.SIGINT, defer_interrupt)
         try:
+            try:
+                if interrupted:
+                    raise KeyboardInterrupt
+                with open(machine / "qemu.log", "wb") as errors:
+                    # Terminal SIGINT belongs to this supervisor, never directly to QEMU.
+                    qemu = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                            stderr=errors, start_new_session=True)
+            finally:
+                signal.signal(signal.SIGINT, previous_handler)
+            if interrupted:
+                raise KeyboardInterrupt
             while True:
                 status = qemu.poll()
                 streams = decode_console(console.read_bytes())
@@ -662,10 +828,12 @@ def boot(machine, port=2222, accel="auto", poll=0.2):
                     break
                 time.sleep(poll)
         except KeyboardInterrupt:
-            stop(qemu)
-            raise Refused("interrupted", "QEMU was stopped hard; run `shutdown` in a session next time") from None
+            if qemu is None:
+                raise Refused("interrupted", f"no virtual machine was started; {machine} is preserved") from None
+            status = interrupt_shutdown(qemu, machine, port, login_key, bool(listening))
         except BaseException:
-            stop(qemu)
+            if qemu is not None:
+                stop(qemu)
             raise
     if status == QEMU_HALTED:
         say("HALTED cleanly")
@@ -693,6 +861,7 @@ def main(argv=None):
     b = sub.add_parser("boot")
     b.add_argument("machine")
     b.add_argument("--port", type=int, default=2222)
+    b.add_argument("--login-key", help="your SSH private key for Ctrl-C shutdown (otherwise use SSH defaults/agent; never copied)")
     b.add_argument("--accel", choices=("auto", "kvm", "tcg"), default="auto")
     args = ap.parse_args(argv)
     try:
@@ -704,7 +873,7 @@ def main(argv=None):
         elif args.command == "enroll":
             enroll(args.machine, args.key, args.accel)
         else:
-            return boot(args.machine, args.port, args.accel)
+            return boot(args.machine, args.port, args.accel, login_key=args.login_key)
         return 0
     except Refused as error:
         say(f"REFUSED {error}")

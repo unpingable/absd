@@ -108,6 +108,18 @@ pub enum Refusal {
     Corrupt,
     /// A ledger without the initialization marker beside it.
     UninitializedLedger,
+    /// No writable-entry guard: old images and unknown initialization refuse.
+    GuardMissing,
+    /// Malformed guard or an invalid same-boot finalization transition.
+    GuardCorrupt,
+    /// The durable marker and history do not establish writable entry.
+    Unfenced(Previous),
+    /// The operator-authorized resume slot (`crate::resume`) holds bytes
+    /// that are neither `none` nor a checking record.
+    ResumeCorrupt,
+    /// The slot holds a record whose five state fields are not this
+    /// disk's committed state (or the guard is not exactly dirty).
+    ResumeMismatch,
     /// The filesystem refused a read, write, or commit.
     Storage(Error),
 }
@@ -118,6 +130,11 @@ impl Refusal {
             Self::Lost => "lost",
             Self::Corrupt => "corrupt",
             Self::UninitializedLedger => "uninitialized_ledger",
+            Self::GuardMissing => "guard_missing",
+            Self::GuardCorrupt => "guard_corrupt",
+            Self::Unfenced(_) => "storage_fence",
+            Self::ResumeCorrupt => "resume_corrupt",
+            Self::ResumeMismatch => "resume_mismatch",
             Self::Storage(_) => "storage",
         }
     }
@@ -385,14 +402,12 @@ fn first_creation<D: Device>(fs: &mut Fs<D>, boot: &Boot) -> Result<Ledger, Erro
     Ok(ledger)
 }
 
-/// Charges the ledger for the generation `boot`: reads the previous line
-/// and the facts, overwrites the line, clears the facts, and commits, all
-/// before the caller serves anything. The returned ledger is this
-/// generation's; `Previous` says how the last one ended.
-pub fn charge<D: Device>(fs: &mut Fs<D>, boot: &Boot) -> Result<(Ledger, Previous), Refusal> {
+/// The previous ledger line and how its generation ended, read without a
+/// write: `Ok(None)` before the first creation. Both [`assess`] and
+/// [`charge`] read through this, so they cannot disagree.
+fn read_previous<D: Device>(fs: &mut Fs<D>) -> Result<Option<(Ledger, u64, Previous)>, Refusal> {
     if !exists(fs, DIR).map_err(Refusal::Storage)? {
-        let ledger = first_creation(fs, boot).map_err(Refusal::Storage)?;
-        return Ok((ledger, Previous::None));
+        return Ok(None);
     }
     let initialized = exists(fs, INIT).map_err(Refusal::Storage)?;
     let previous = match (small_file(fs, LEDGER, LEDGER_BYTES), initialized) {
@@ -406,10 +421,72 @@ pub fn charge<D: Device>(fs: &mut Fs<D>, boot: &Boot) -> Result<(Ledger, Previou
     // completed by init: each alone is insufficient (an unexpected exit 0,
     // a crash after the request, an end that escalated after the server
     // stopped).
-    let ended = fact_matches(fs, SERVED_END, &previous.boot)
-        && fact_matches(fs, SERVED_STOPPED, &previous.boot)
-        && fact_matches(fs, SERVED_COMPLETED, &previous.boot);
+    let stopped = fact_matches(fs, SERVED_STOPPED, &previous.boot);
+    let bounded_end = matches!(small_file(fs, SERVED_COMPLETED, FACT_BYTES),
+        Ok(Some(bytes)) if bytes == format_fact(&previous.boot, Some("bounded")));
+    let ended = stopped && (bounded_end || (fact_matches(fs, SERVED_END, &previous.boot)
+        && fact_matches(fs, SERVED_COMPLETED, &previous.boot)));
     let (streak, how) = evaluate(Some(&previous), ready, ended);
+    Ok(Some((previous, streak, how)))
+}
+
+/// How the previous generation ended, from a read-only mount: what the file
+/// server uses with [`crate::write_guard::assess`] before writable entry.
+/// This history read alone grants nothing. The refusals are [`charge`]'s.
+pub fn assess<D: Device>(fs: &mut Fs<D>) -> Result<Previous, Refusal> {
+    Ok(history(fs)?.previous)
+}
+
+/// The canonical ledger line on the disk (`None` before the first
+/// creation) and how its generation ended: the same read as [`assess`],
+/// with the line an operator's resume authorization is checked against
+/// (`crate::resume`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct History {
+    pub ledger: Option<Ledger>,
+    pub previous: Previous,
+}
+
+pub fn history<D: Device>(fs: &mut Fs<D>) -> Result<History, Refusal> {
+    Ok(match read_previous(fs)? {
+        None => History { ledger: None, previous: Previous::None },
+        Some((ledger, _, previous)) => History { ledger: Some(ledger), previous },
+    })
+}
+
+/// The storage fence the kernel established for this boot, as init names it
+/// to a served boot's file server (`--storage-fence=`; kernel
+/// `docs/STORAGE-STALE-WRITE-FENCE.md`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Fence {
+    /// None established, or none named: the argument is missing (a kernel
+    /// that predates the rule) or a word this server does not know.
+    None,
+}
+
+impl Fence {
+    /// Neither an older kernel's declaration nor any caller-supplied word
+    /// proves retirement of the backing service's outstanding commands.
+    pub fn from_args<'a>(_args: impl Iterator<Item = &'a str>) -> Self {
+        Self::None
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+        }
+    }
+}
+
+/// Charges the ledger for the generation `boot`: reads the previous line
+/// and the facts, overwrites the line, clears the facts, and commits, all
+/// before the caller serves anything. The returned ledger is this
+/// generation's; `Previous` says how the last one ended.
+pub fn charge<D: Device>(fs: &mut Fs<D>, boot: &Boot) -> Result<(Ledger, Previous), Refusal> {
+    let Some((previous, streak, how)) = read_previous(fs)? else {
+        let ledger = first_creation(fs, boot).map_err(Refusal::Storage)?;
+        return Ok((ledger, Previous::None));
+    };
     let ledger = Ledger { seq: previous.seq.saturating_add(1), boot: *boot, streak };
     overwrite(fs, LEDGER, &padded(format_ledger(&ledger), LEDGER_BYTES)).map_err(Refusal::Storage)?;
     for fact in FACT_FILES {
@@ -479,6 +556,25 @@ pub fn stopped<D: Device>(fs: &mut Fs<D>, boot: &Boot) -> Result<(), Error> {
 /// orderly end of `boot` completed. Committed by the caller's sync.
 pub fn completed<D: Device>(fs: &mut Fs<D>, boot: &Boot) -> Result<(), Error> {
     overwrite(fs, SERVED_COMPLETED, &format_fact(boot, None))
+}
+
+/// Init finalizes a bounded (non-served) boot only after its worker exited
+/// successfully, the file server stopped successfully and no descendant
+/// remains. It makes no SSH readiness or operator shutdown-request claim.
+pub fn completed_as<D: Device>(fs: &mut Fs<D>, boot: &Boot, bounded: bool) -> Result<(), Error> {
+    overwrite(fs, SERVED_COMPLETED,
+        &format_fact(boot, if bounded { Some("bounded") } else { None }))
+}
+
+/// The finalizer may continue only this same boot's recorded work.
+pub fn finalization_matches<D: Device>(
+    fs: &mut Fs<D>, boot: &Boot, bounded: bool,
+) -> Result<bool, Refusal> {
+    let Some((ledger, _, _)) = read_previous(fs)? else { return Ok(false); };
+    Ok(ledger.boot == *boot
+        && fact_matches(fs, SERVED_STOPPED, boot)
+        && !fact_matches(fs, SERVED_COMPLETED, boot)
+        && (bounded || (fact_matches(fs, SERVED_READY, boot) && fact_matches(fs, SERVED_END, boot))))
 }
 
 #[cfg(test)]
@@ -556,6 +652,25 @@ mod tests {
         assert_eq!(parse_ledger(&trailing), None, "padding must be zero");
         assert_eq!(parse_ledger(b"absd-recovery v1 seq=1 boot=x streak=0 fnv=0000000000000000\n"), None);
         assert_eq!(parse_ledger(&[0u8; LEDGER_BYTES]), None);
+    }
+
+    #[test]
+    fn legacy_upgrade_matches_shared_recovery_vectors() {
+        let boot = *b"0123456789abcdef0123456789abcdef";
+        let ledger = Ledger { seq: 7, boot, streak: 2 };
+        let golden = include_bytes!("../../fixtures/storage-fence/recovery-v1-ledger.bin");
+        assert_eq!(padded(format_ledger(&ledger), LEDGER_BYTES), golden);
+        assert_eq!(parse_ledger(golden), Some(ledger));
+        for golden in [
+            include_bytes!("../../fixtures/storage-fence/recovery-v1-ready.bin"),
+            include_bytes!("../../fixtures/storage-fence/recovery-v1-stopped.bin"),
+            include_bytes!("../../fixtures/storage-fence/recovery-v1-completed.bin"),
+        ] {
+            assert_eq!(format_fact(&boot, None), golden);
+            assert_eq!(fact_boot(golden), Some(boot));
+        }
+        assert_eq!(format_fact(&boot, Some("halt")),
+                   include_bytes!("../../fixtures/storage-fence/recovery-v1-end.bin"));
     }
 
     #[test]
@@ -849,6 +964,64 @@ mod tests {
         let mut fs = mount(&disk);
         let (ledger, how) = charge(&mut fs, &boot(7)).unwrap();
         assert_eq!((ledger.seq, ledger.streak, how), (7, 0, Previous::Ended));
+    }
+
+    /// A read-only mount's assessment, and proof it wrote nothing.
+    fn assess_read_only(disk: &Disk) -> Result<Previous, Refusal> {
+        let before = disk.0.borrow().clone();
+        let mut fs = Fs::mount(disk.clone(), false).unwrap();
+        let how = assess(&mut fs);
+        drop(fs);
+        assert!(*disk.0.borrow() == before, "assess wrote to the disk");
+        how
+    }
+
+    #[test]
+    fn assess_reads_what_charge_will_find_without_writing() {
+        let disk = image();
+        assert_eq!(assess_read_only(&disk), Ok(Previous::None));
+        let mut fs = mount(&disk);
+        charge(&mut fs, &boot(1)).unwrap();
+        drop(fs);
+        // Charged and nothing else: not ready.
+        assert_eq!(assess_read_only(&disk), Ok(Previous::NotReady));
+        let mut fs = mount(&disk);
+        assert_eq!(charge(&mut fs, &boot(2)).unwrap().1, Previous::NotReady);
+        fact(&mut fs, SERVED_READY, &boot(2), None);
+        drop(fs);
+        // Ready and then gone: failed.
+        assert_eq!(assess_read_only(&disk), Ok(Previous::Failed));
+        let mut fs = mount(&disk);
+        assert_eq!(charge(&mut fs, &boot(3)).unwrap().1, Previous::Failed);
+        fact(&mut fs, SERVED_READY, &boot(3), None);
+        fact(&mut fs, SERVED_END, &boot(3), Some("halt"));
+        stopped(&mut fs, &boot(3)).unwrap();
+        completed(&mut fs, &boot(3)).unwrap();
+        fs.sync().unwrap();
+        drop(fs);
+        // The orderly end: ended.
+        assert_eq!(assess_read_only(&disk), Ok(Previous::Ended));
+        let mut fs = mount(&disk);
+        assert_eq!(charge(&mut fs, &boot(4)).unwrap().1, Previous::Ended);
+        // Lost state is refused by assess as by charge.
+        fs.unlink(LEDGER).unwrap();
+        fs.sync().unwrap();
+        drop(fs);
+        assert_eq!(assess_read_only(&disk), Err(Refusal::Lost));
+    }
+
+    #[test]
+    fn the_fence_argument_is_exact_and_missing_means_none() {
+        let parse = |args: &[&str]| Fence::from_args(args.iter().copied());
+        assert_eq!(parse(&[]), Fence::None);
+        assert_eq!(parse(&["fsd", "--qualification-exit-on-notice"]), Fence::None);
+        assert_eq!(parse(&["fsd", "--storage-fence=controller"]), Fence::None);
+        assert_eq!(parse(&["fsd", "--storage-fence=external"]), Fence::None);
+        assert_eq!(parse(&["fsd", "--storage-fence=none"]), Fence::None);
+        assert_eq!(parse(&["fsd", "--storage-fence=Controller"]), Fence::None);
+        assert_eq!(parse(&["fsd", "--storage-fence="]), Fence::None);
+        // The last one wins, and an unknown last word fails closed.
+        assert_eq!(parse(&["--storage-fence=external", "--storage-fence=bogus"]), Fence::None);
     }
 
     #[test]

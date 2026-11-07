@@ -7,6 +7,43 @@
 # host REFERENCE build (gcc, glibc) produces them. These are the
 # guest's expected outputs for T5 except where userland/divergences.tsv
 # names the case. Option parsing: every utility has a usage-error case.
+tee-stdout	tee	words.txt	--
+tee-file	tee	words.txt	captured.txt
+tee-multiple	tee	words.txt	captured.txt second.txt
+tee-truncate	tee	lines.txt	words.txt
+tee-append	tee	words-short.txt	-a words.txt
+tee-binary	tee	bin.dat	captured.bin
+tee-partial-open-error	tee	words.txt	missing/out captured.txt
+tee-directory-error	tee	words.txt	dir
+tee-ignore-signal	tee	words.txt	-i captured.txt
+tee-empty-input	tee	-	captured.txt
+tee-bad-option	tee	-	-Z
+sleep-zero	sleep	-	0
+sleep-one	sleep	-	1
+sleep-usage	sleep	-	--
+sleep-extra	sleep	-	0 0
+sleep-negative	sleep	-	-- -1
+sleep-fraction	sleep	-	0.1
+sleep-invalid	sleep	-	abc
+sleep-overflow	sleep	-	4294967296
+tr-translate	tr	words.txt	a-z A-Z
+tr-delete	tr	nums.txt	-d 0-9
+tr-squeeze	tr	toolbox.txt	-s ' '
+tr-complement	tr	words.txt	-cd a
+tr-unicode	tr	toolbox.txt	é E
+tr-class	tr	toolbox.txt	'[:lower:]' '[:upper:]'
+tr-empty-input	tr	-	a-z A-Z
+tr-empty-set	tr	words.txt	a ''
+tr-usage	tr	-	--
+tr-bad-option	tr	-	-Z
+dirname-absolute	dirname	-	/home/operator/notes.txt
+dirname-relative	dirname	-	notes.txt
+dirname-root	dirname	-	/
+dirname-trailing	dirname	-	/home/operator///
+dirname-spaces	dirname	-	'/home/operator/two words/notes.txt'
+dirname-empty	dirname	-	''
+dirname-usage	dirname	-	--
+dirname-extra	dirname	-	a b
 printf-basic	printf	-	'%s-%d\n' a 5
 printf-formats	printf	-	'%5.2f|%x|%o|%c|%%\n' 3.14159 255 8 xyz
 printf-escapes	printf	-	'\101\t\x42\n'
@@ -47,6 +84,9 @@ sort-r	sort	-	-r words.txt
 sort-u	sort	-	-u words.txt
 sort-n	sort	-	-n nums.txt
 sort-key	sort	-	-t : -k 3,3n passwd.txt
+sort-n-before-key	sort	-	-n -t , -k 2,2 sort-stock.csv
+sort-n-after-key-upstream	sort	-	-t , -k 2,2 -n sort-stock.csv
+sort-n-in-key	sort	-	-t , -k 2,2n sort-stock.csv
 sort-stdin	sort	nums.txt	-rn
 sort-check	sort	-	-c nums.txt
 sort-missing	sort	-	missing.txt
@@ -132,3 +172,21 @@ tar-create	tar	-	-cf made.ustar words-short.txt tree
 tar-select-missing	tar	-	-tf basic.ustar absent
 tar-invalid	tar	-	-tf bad.ustar
 tar-unsupported	tar	-	-zf basic.ustar
+rmdir-empty	rmdir	-	dir
+rmdir-parents	rmdir	-	-p empty-tree/child
+rmdir-nonempty	rmdir	-	tree
+rmdir-not-directory	rmdir	-	words.txt
+rmdir-missing	rmdir	-	missing
+rmdir-mixed	rmdir	-	missing dir
+rmdir-no-args	rmdir	-	--
+rmdir-bad-option	rmdir	-	-Z
+paste-columns	paste	-	words.txt words-short.txt
+paste-delimiters	paste	-	-d ',:' words.txt words-short.txt words2.txt
+paste-serial	paste	-	-s -d , words.txt words-short.txt
+paste-stdin	paste	words.txt	- words-short.txt
+paste-empty	paste	-	empty.txt words-short.txt
+paste-missing	paste	-	missing
+paste-bad-option	paste	-	-Z
+rmdir-nested	rmdir	-	empty-tree/child
+paste-nul-parallel	paste	-	-d '\0' words.txt words-short.txt
+paste-nul-serial	paste	-	-s -d '\0' words-short.txt

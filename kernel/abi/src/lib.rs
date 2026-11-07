@@ -25,4 +25,6 @@ pub mod syscall;
 /// without carrier) does not increment it: `ERROR_IO` keeps its meaning,
 /// and a program built against the previous definitions already treats the
 /// call as fallible.
+/// `wait_readable` (0x7fa8) is additive: old binaries retain their existing
+/// calls, and an old ABI 1 kernel reports -38 for the new call.
 pub const KERNEL_ABI: u64 = 1;

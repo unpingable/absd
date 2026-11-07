@@ -7,8 +7,8 @@
 # ABSD_CONTAIN_ACCEL does for the contain matrix; the default is TCG. The
 # baseline (perf/baseline.json) and its --min-factor gate were recorded
 # under TCG, so a KVM run compares against TCG figures: use it with
-# ABSD_PERF_RECORD to measure, not as the gate. The baseline is TCG-only.
-#
+# ABSD_PERF_RECORD to measure, not as the gate (docs/hardware/
+# EXECUTION_HOST-KVM-ORACLE.md in the kernel repository has the procedure).
 # The selection (scripts/perf-accel.sh, self-test scripts/test-perf-accel.sh)
 # refuses before any work: an unknown value, an accelerator named in
 # ABSD_QEMU, or kvm without a KVM that answers KVM_GET_API_VERSION.

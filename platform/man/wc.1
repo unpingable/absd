@@ -1,0 +1,51 @@
+.Dd November 3, 2026
+.Dt WC 1
+.Os ABSD
+.Sh NAME
+.Nm wc
+.Nd count newlines, words and bytes
+.Sh SYNOPSIS
+.Nm
+.Op Fl l
+.Op Fl w
+.Op Fl c
+.Op Ar file ...
+.Sh DESCRIPTION
+Read each file, or standard input when there are no operands.
+Print newline, word and byte counts in that order.
+Words are runs of bytes other than ASCII whitespace; this is not a Unicode
+word or character count.
+An unterminated final line does not add a newline count.
+.Pp
+.Fl l ,
+.Fl w
+and
+.Fl c
+select only the requested counts and may be combined, as
+.Fl lwc .
+Leading dash words are options; there is no
+.Ql --
+terminator.
+Use
+.Ql ./-name
+for a dash-leading path.
+An explicit
+.Ql -
+is a path, not standard input.
+.Pp
+Output columns align to the widest count and named-file rows include the
+path.
+Multiple file operands add a total row for successfully read files.
+A failed read is diagnosed on standard error and later files are attempted.
+Files are only read through the process's filesystem view.
+.Sh EXIT STATUS
+0 when all inputs were read; 1 for a read/open failure;
+2 for an unknown option letter.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+wc -l /var/log/sshd
+cat /etc/network.conf | wc -c
+.Ed
+.Sh SEE ALSO
+.Xr cat 1 ,
+.Xr filesystem 7

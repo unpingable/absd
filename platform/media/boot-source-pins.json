@@ -1,0 +1,23 @@
+{
+  "font_sha256": "662eb86fc1ea89635e4bba8413590b79eb714ade5a2b5a5aa3dc5cf5f53a4463",
+  "grub_version": "2.12-1ubuntu7.3",
+  "iso_inventory_sha256": "ed8259d54877784ba6a4697eb3fa30f4679ddbddcc3d5483350d0176d7531632",
+  "module_inventory_sha256": "e8f1f18e2be157d5df0dca1d774f57ec65e1a0aff20e94d5d722723b01c8e6f5",
+  "schema_version": 1,
+  "sources": {
+    "GPL-3": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "VERIFICATION-RC1.md": "4728dd98f5ef4c223b1fd4be0432899434175e78a3b1e7b932555c5641251d1f",
+    "grub-common.copyright": "bd3b5f8b4b6f3592bb1b597c6fb4557516db1a3a51a8c0ade5eb1e0dd09a7e1e",
+    "grub2-unsigned_2.12-1ubuntu7.3.debian.tar.xz": "2bda61cdce55013e0b3c952aeff7a272fc341ed021acee052e3f00895f5c6e13",
+    "grub2-unsigned_2.12-1ubuntu7.3.dsc": "65b93a28a0337b7907dfc2b0789e28d5240a1e4f97e88da352ae783474bc8010",
+    "grub2-unsigned_2.12.orig.tar.xz": "f3c97391f7c4eaa677a78e090c7e97e6dc47b16f655f04683ebd37bef7fe0faa",
+    "grub2_2.12-1ubuntu7.3.debian.tar.xz": "1e78cbb97d86461e8cb4789658cdeffeef32a784a006253dcc3b1b97d7056338",
+    "grub2_2.12-1ubuntu7.3.dsc": "e23bd4184ea731a890c338fbc8b73e18d53cf4c47b0e8dffd6a55b0d13798ffa",
+    "grub2_2.12.orig.tar.xz": "f3c97391f7c4eaa677a78e090c7e97e6dc47b16f655f04683ebd37bef7fe0faa",
+    "unifont/unifont_15.1.01-1build1.debian.tar.xz": "6339df0dce8e8a426a60b82ec689b1ac37758842c046a2d9868e8df5bad1ae44",
+    "unifont/unifont_15.1.01-1build1.dsc": "4826c311811406f5b3384275eb5e081f1296e81206f7e9e644332275c79bd6e9",
+    "unifont/unifont_15.1.01.orig.tar.gz": "e15f4209a2f7937951681f4522b21a4deb9fb36220c82f8b8cb66e2b1466cdb7",
+    "unifont/unifont_15.1.01.orig.tar.gz.asc": "45b977c43feb4ac251eafff40d518e6bbf5a854d12f16485d74223333dfec7c1"
+  },
+  "unifont_version": "1:15.1.01-1build1"
+}

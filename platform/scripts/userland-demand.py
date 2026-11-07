@@ -69,10 +69,13 @@ ADAPT = [f"-I{ROOT / 'userland' / 'include'}"]
 # Lane plan (scout-userland.md 7) and the image's inventory (scripts/operator_image.py).
 T2 = ["printf", "test", "grep", "sort", "sed", "od", "cmp"]
 T3 = ["ed", "find"]
-T6 = ["tar"]
-NATIVE = ["echo", "pwd", "ls", "cat", "printenv", "uname", "mkdir", "rm", "mv", "cp", "head", "tail",
-          "wc", "sha256sum", "date", "sync"]
-UUTILS = ["basename", "seq", "cut", "fold", "nl", "uniq"]
+T6 = ["tar", "tr", "dirname", "tee", "sleep", "rmdir", "paste"]
+# The installed command categories come from the operator image. Preserve the
+# historical uutils-present result label for the Rust-port category.
+sys.path.insert(0, str(ROOT / "scripts"))
+import operator_image as oi
+NATIVE = oi.NATIVE
+UUTILS = oi.RUST_PORTS
 # Deliberately absent from /bin (scripts/cmds-matrix.py ABSENT): never ported.
 DO_NOT_PORT = ["kill", "chmod", "chown", "touch", "ln"]
 # docs/C-INTERFACE.md section 10: not provided by the kit or the adapter.

@@ -404,7 +404,7 @@ fn state_handles(console: Console) -> i32 {
         1,
         u64::MAX,
         reissued.raw() ^ (1 << 8),
-        absd_user::MAX_SPAWN_HANDLES as u64,
+        absd_abi::syscall::MAX_PROCESS_HANDLES as u64,
     ] {
         if close(value) != Err(Error::BadHandle) {
             return 36;
@@ -523,10 +523,10 @@ fn state_handles(console: Console) -> i32 {
         _ => return 47,
     }
 
-    // The handle table is bounded: 64 entries, one console and one pipe
-    // held, so exactly 62 duplicates fit; the next is refused, and even an
+    // Console and one pipe consume two process-handle slots; the exact
+    // remaining occupancy fits before refusal, and even an
     // otherwise valid spawn fails up front while the table is full.
-    let mut issued = [0u64; 64];
+    let mut issued = [0u64; absd_abi::syscall::MAX_PROCESS_HANDLES];
     let mut count = 0usize;
     loop {
         match duplicate(reissued.raw(), absd_user::RIGHT_READ) {
@@ -537,11 +537,11 @@ fn state_handles(console: Console) -> i32 {
             Err(Error::TooManyHandles) => break,
             Err(_) => return 48,
         }
-        if count == 64 {
+        if count == issued.len() {
             return 48;
         }
     }
-    if count != 62 {
+    if count != absd_abi::syscall::MAX_PROCESS_HANDLES - 2 {
         return 49;
     }
     if unsafe { syscall3(SYS_SPAWN, program::EXIT7, 0, 0) } != ERROR_TOO_MANY_HANDLES {
@@ -581,7 +581,7 @@ fn state_handles(console: Console) -> i32 {
 /// then killed and reaped, leaving the table exactly as it was.
 fn fork_bomb(console: Console) -> i32 {
     let _ = console.write_str("hostile: case fork-bomb\n");
-    let mut children = [0u64; 16];
+    let mut children = [0u64; absd_abi::syscall::MAX_PROCESS_SLOTS];
     let mut spawned = 0usize;
     loop {
         match spawn_with(program::SLEEPER, 0, u64::MAX) {
@@ -592,13 +592,13 @@ fn fork_bomb(console: Console) -> i32 {
             Err(Error::Again) => break,
             Err(_) => return 51,
         }
-        if spawned == 16 {
+        if spawned == children.len() {
             return 51;
         }
     }
-    // Three of the sixteen slots are taken: init, this probe, and the
+    // Three process slots are taken: init, this probe, and the
     // first witness, which has exited but not been reaped yet.
-    if spawned != 13 {
+    if spawned != absd_abi::syscall::MAX_PROCESS_SLOTS - 3 {
         return 52;
     }
     for &raw in &children[..spawned] {
@@ -820,9 +820,9 @@ fn kill_mapped(console: Console) -> i32 {
     }
 }
 
-/// Cases 19 and 20: fill one kernel object table through legitimate calls,
-/// prove the next create fails closed, and exit still holding everything,
-/// so process termination drains every reference at once.
+/// Cases 19 and 20: reach an object or per-process handle admission bound,
+/// prove live objects still work, and exit holding every issued reference.
+/// Init verifies termination drains them and fresh objects can be created.
 fn objects_exhausted(console: Console, cells: bool) -> i32 {
     if cells {
         let _ = console.write_str("hostile: case cells-exhaust\n");
@@ -853,24 +853,32 @@ fn objects_exhausted(console: Console, cells: bool) -> i32 {
         return 0;
     }
     let _ = console.write_str("hostile: case pipes-exhaust\n");
-    let mut kept = [0u64; 48];
+    let mut kept = [0u64; absd_abi::syscall::MAX_PROCESS_HANDLES];
     let mut count = 0usize;
-    loop {
+    let exhausted = loop {
         match Pipe::create() {
             Ok(pipe) => {
+                if count == kept.len() {
+                    return 73;
+                }
                 kept[count] = pipe.raw();
                 count += 1;
             }
-            Err(Error::NoMemory) => break,
+            Err(error @ (Error::NoMemory | Error::TooManyHandles)) => break error,
             Err(_) => return 73,
         }
-        if count > 48 {
-            return 73;
-        }
-    }
-    if count != 48 {
+    };
+    if count == 0
+        || (exhausted == Error::TooManyHandles
+            && count != absd_abi::syscall::MAX_PROCESS_HANDLES - 1)
+    {
         return 73;
     }
+    let limit = if exhausted == Error::TooManyHandles {
+        "handles"
+    } else {
+        "objects"
+    };
     let pipe = Pipe::from_raw(kept[0]);
     if pipe.write_once(&[0x5a; 8]) != Ok(8) {
         return 73;
@@ -879,7 +887,9 @@ fn objects_exhausted(console: Console, cells: bool) -> i32 {
     if pipe.read_once(&mut back) != Ok(8) || back != [0x5a; 8] {
         return 73;
     }
-    let _ = console.line(format_args!("hostile: pipes filled={count}\n"));
+    let _ = console.line(format_args!(
+        "hostile: pipes filled={count} limit={limit}\n"
+    ));
     0
 }
 

@@ -1,0 +1,37 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd November 5, 2026
+.Dt TERMINAL-SIZE 1
+.Os ABSD
+.Sh NAME
+.Nm terminal-size
+.Nd observe the current session terminal dimensions
+.Sh SYNOPSIS
+.Nm
+.Op Fl Fl watch
+.Sh DESCRIPTION
+.Nm
+prints the observed rows and columns, in that order, separated by one space.
+.Fl Fl watch
+prints the initial size and every subsequent observed change, polling every
+100 kernel ticks. Use Ctrl-C in the managed shell to stop it.
+.Pp
+SSH dimensions come from the client's PTY request and window-change messages.
+They describe what that client reported, rather than a hardware measurement.
+Without observed session dimensions the result is unknown.
+There is no guessed 80 by 24 fallback.
+.Pp
+The query uses the session's read-only metadata Cell. It neither changes
+terminal modes nor reads the shell's control channel.
+A program can observe updates with the private native runtime terminal query;
+C programs can use the private __absd_terminal_size helper.
+These helpers do not implement ioctl, termios or Unix signals.
+.Pp
+TERM identifies the sanitized SSH client terminal type, when provided.
+COLUMNS and LINES are snapshots refreshed at shell prompts and native
+command startup; an already running command must query for live changes.
+.Sh EXIT STATUS
+.Ex -std
+Unknown dimensions produce a diagnostic and status 1, including at startup
+in watch mode. Invalid arguments produce usage and status 2.
+.Sh SEE ALSO
+.Xr absd-sh 1

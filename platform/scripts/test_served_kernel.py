@@ -24,6 +24,7 @@ BUILDERS = {
     'operator_image.py': 1, 'pipeline-matrix.py': 1, 'pulse-matrix.py': 2,
     'enroll-matrix.py': 1, 'served-matrix.py': 1, 'ssh_absd.py': 1,
     'reconstruct-release.sh': 1, 'run-broker.sh': 1,
+    'fixture-import-matrix.py': 1,
 }
 
 
@@ -40,6 +41,13 @@ EXTERNAL_BUILD_REFERENCES = {
     'native-ipv6-echo-matrix-test.py': 'Local build-receipt substitution fixture.',
     'native-ipv6-echo-responder-test.py': 'Local build-receipt substitution fixture.',
     'native-ipv6-route-matrix-test.py': 'Local build-receipt substitution fixture.',
+    'native-ipv6-echo-boundary.py': 'Validate the producer command in a build receipt.',
+    'native-ipv6-echo-boundary-test.py': 'Local build-receipt substitution fixture.',
+    'native-ipv6-tcp-server-matrix.py': 'Validate the producer command in a build receipt.',
+    'native-ipv6-tcp-server-matrix-test.py': 'Local build-receipt substitution fixture.',
+    'native-tcp-server-matrix.py': 'Validate the producer command in a build receipt.',
+    'native-tcp-server-matrix-test.py': 'Local build-receipt substitution fixture.',
+    'native-tcp-last-refusal-test.py': 'Local build-receipt substitution fixture.',
     'native-dhcp-refusal-tests.py': 'Local build-receipt substitution fixture.',
     'native-tls-ipv6-matrix.py': 'Validate the producer command in a build receipt.',
 }
@@ -166,7 +174,7 @@ class ServedKernelTests(unittest.TestCase):
             if name.endswith('.py'):
                 with self.subTest(builder=name):
                     result = subprocess.run(
-                        [sys.executable, '-I', '-c',
+                        [sys.executable, '-I', '-B', '-X', f"pycache_prefix={sys.pycache_prefix or ''}", '-c',
                          'import runpy, sys; runpy.run_path(sys.argv[1])', str(ROOT / name)],
                         capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)

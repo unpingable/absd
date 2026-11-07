@@ -25,7 +25,7 @@
    to behave as if no library function calls strerror.
    A weak reference never pulls an archive member, so crt0.c holds a strong
    reference to this definition: every program linked with the kit's crt0
-   (absd-cc, tcc's crt1.o) gets it from libabs.a, and --gc-sections drops it
+   (absd-cc) gets it from libabs.a, and --gc-sections drops it
    from a program that never calls strerror. */
 #include <errno.h>
 #include <stddef.h>

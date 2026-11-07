@@ -1,5 +1,5 @@
 #!/bin/sh
-# Representative guest file-server interruption/recovery cases. This is a
+# Representative guest file-server interruption/cold-refusal cases. This is a
 # core verdict; run-fs-matrix.sh remains the extended AG SQLite verdict.
 set -eu
 
@@ -13,6 +13,7 @@ qemu=${ABSD_QEMU:-qemu-system-x86_64 -cpu max,vendor=GenuineIntel,+rdrand}
 ABSD_PROFILE=core
 export ABSD_PROFILE
 . "$root/scripts/inputs.sh"
+absd_work_dir "$work" "$root/.core-fsd-recovery-work"
 absd_not_kernel_source "$kernel"
 test -f "$kernel/Makefile"
 if [ "${ABSD_SKIP_BUILD:-0}" != 1 ]; then
@@ -22,5 +23,12 @@ for file in sshd.elf absd-fsd.elf fsd-probe.elf sshtest.elf fixture-import.elf \
     commands/absd-sh; do
     test -f "$root/$file"
 done
+python3 -B "$root/scripts/test_core_fsd_recovery.py"
+python3 -B "$root/scripts/test_storage_fence_guest.py"
+# The recovery script keeps one owner-only work root and adds a run under it.
+if [ ! -e "$work" ]; then
+    mkdir -p -m 700 "$work"
+fi
+absd_mark_work "$work"
 python3 "$root/scripts/core-fsd-recovery.py" --work "$work" --kernel "$kernel" \
     --platform "$root" --shell "$root/commands/absd-sh" --qemu "$qemu"

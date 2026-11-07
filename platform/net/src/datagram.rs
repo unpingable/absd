@@ -95,6 +95,8 @@ struct Entry {
     socket: Option<SocketHandle>,
     grant: Grant,
     epoch: u64,
+    // One diagnostic for this retired generation, never socket authority.
+    terminal: Option<Error>,
 }
 
 pub(super) struct Endpoints {
@@ -128,6 +130,31 @@ impl Endpoints {
             .get(endpoint.slot)
             .filter(|e| e.epoch == endpoint.epoch && e.socket.is_some())
             .ok_or(Error::Stale)
+    }
+
+    fn take_terminal(&mut self, endpoint: Endpoint) -> Option<Error> {
+        if endpoint.instance != self.instance {
+            return None;
+        }
+        self.entries
+            .get_mut(endpoint.slot)
+            .filter(|e| e.epoch == endpoint.epoch && e.socket.is_none())
+            .and_then(|e| e.terminal.take())
+    }
+
+    fn clear_terminal(&mut self, endpoint: Endpoint) {
+        let _ = self.take_terminal(endpoint);
+    }
+}
+
+/// A single observed reading; disabled-device status takes precedence over
+/// carrier loss. This helper neither polls nor grants any endpoint.
+pub(super) fn link_error(reading: Option<crate::LinkReading>) -> Option<Error> {
+    match reading {
+        None => Some(Error::LinkUnknown),
+        Some(r) if r.disabled => Some(Error::DeviceFailed),
+        Some(r) if !r.link_up => Some(Error::LinkDown),
+        Some(_) => None,
     }
 }
 
@@ -182,6 +209,7 @@ impl<L: Link> Stack<L> {
             socket: Some(self.sockets.add(socket)),
             grant,
             epoch,
+            terminal: None,
         };
         let slot = if let Some(slot) = vacant {
             self.datagrams.entries[slot] = entry;
@@ -205,15 +233,10 @@ impl<L: Link> Stack<L> {
         })
     }
 
-    fn datagram_live(&mut self) -> Result<(), Error> {
-        let result = match self.read_link() {
-            None => Err(Error::LinkUnknown),
-            Some(r) if r.disabled => Err(Error::DeviceFailed),
-            Some(r) if !r.link_up => Err(Error::LinkDown),
-            Some(_) => Ok(()),
-        };
-        if result.is_err() {
-            self.datagram_fence();
+    pub(super) fn datagram_live(&mut self) -> Result<(), Error> {
+        let result = link_error(self.read_link()).map_or(Ok(()), Err);
+        if let Err(error) = result {
+            self.datagram_link_fence(error);
             self.stream_fence();
             self.ipv6_fence();
         }
@@ -229,6 +252,9 @@ impl<L: Link> Stack<L> {
         peer: Address,
         bytes: &[u8],
     ) -> Result<(), Error> {
+        if let Some(error) = self.datagrams.take_terminal(endpoint) {
+            return Err(error);
+        }
         let entry = self.datagrams.entry(endpoint)?;
         if peer != entry.grant.peer {
             return Err(Error::Denied);
@@ -237,7 +263,12 @@ impl<L: Link> Stack<L> {
             return Err(Error::Oversize);
         }
         let handle = entry.socket.unwrap();
-        self.datagram_live()?;
+        if let Err(error) = self.datagram_live() {
+            // This request already receives the reason. It must not receive
+            // it again from the retired-generation diagnostic on a later call.
+            self.datagrams.clear_terminal(endpoint);
+            return Err(error);
+        }
         let now = self.port.link.now_ms();
         let maximum = self
             .port
@@ -265,10 +296,16 @@ impl<L: Link> Stack<L> {
         endpoint: Endpoint,
         bytes: &mut [u8],
     ) -> Result<(usize, Address), Error> {
+        if let Some(error) = self.datagrams.take_terminal(endpoint) {
+            return Err(error);
+        }
         let entry = self.datagrams.entry(endpoint)?;
         let handle = entry.socket.unwrap();
         let peer = entry.grant.peer;
-        self.datagram_live()?;
+        if let Err(error) = self.datagram_live() {
+            self.datagrams.clear_terminal(endpoint);
+            return Err(error);
+        }
         if let Some(error) =
             self.port
                 .feedback
@@ -279,8 +316,12 @@ impl<L: Link> Stack<L> {
         let socket = self.sockets.get_mut::<udp::Socket>(handle);
         for _ in 0..QUEUE_PACKETS {
             let (packet, meta) = socket.peek().map_err(|_| Error::Again)?;
-            if meta.endpoint != peer.wire() || packet.len() > MAX_DATAGRAM {
-                let _ = socket.recv();
+            let wrong_peer = meta.endpoint != peer.wire();
+            if wrong_peer || packet.len() > MAX_DATAGRAM {
+                if socket.recv().is_ok() && wrong_peer {
+                    self.port.stats.udp_grant_dropped =
+                        self.port.stats.udp_grant_dropped.saturating_add(1);
+                }
                 continue;
             }
             if bytes.len() < packet.len() {
@@ -297,6 +338,9 @@ impl<L: Link> Stack<L> {
     /// Immediate local discard, including queued TX/RX; packets already
     /// emitted cannot be recalled. Vacated references never revive.
     pub fn datagram_close(&mut self, endpoint: Endpoint) -> Result<(), Error> {
+        // Explicit revocation invalidates even an unread diagnostic. Instance
+        // and epoch matching prevent an old reference clearing a successor's.
+        self.datagrams.clear_terminal(endpoint);
         let handle = self.datagrams.entry(endpoint)?.socket.unwrap();
         self.sockets.remove(handle);
         self.datagrams.entries[endpoint.slot].socket = None;
@@ -307,10 +351,23 @@ impl<L: Link> Stack<L> {
     /// Fence every endpoint after carrier/configuration/device failure or
     /// service shutdown. Reopening requires fresh owner-issued grants.
     pub fn datagram_fence(&mut self) {
+        self.datagram_fence_reason(None);
+    }
+
+    /// Preserve the first observed link outcome once for each just-retired
+    /// generation. Repeated observations cannot overwrite a pending reason.
+    pub(super) fn datagram_link_fence(&mut self, error: Error) {
+        self.datagram_fence_reason(Some(error));
+    }
+
+    fn datagram_fence_reason(&mut self, reason: Option<Error>) {
         self.port.feedback.fence();
         for entry in &mut self.datagrams.entries {
             if let Some(handle) = entry.socket.take() {
                 self.sockets.remove(handle);
+                entry.terminal = reason;
+            } else if reason.is_none() {
+                entry.terminal = None;
             }
         }
     }

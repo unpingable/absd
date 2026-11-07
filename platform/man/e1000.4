@@ -71,10 +71,14 @@ no usable controller; nothing is given out and a
 boot fails.
 .It Ql NIC DISABLED reason= Ns Ar reason
 the driver stopped the controller (fail closed).
-In a served boot sshd then ends with
+In a headless served boot sshd then ends with
 .Ql SERVED SERVICE FAULT component=sshd reason=nic_disabled
 and the machine is reset under the recovery budget; the next boot's probe
 re-admits the controller or refuses it before readiness.
+An image with managed local consoles keeps local operation available while
+refusing new network connections. The operator can inspect diagnostics and
+request a reboot from an authenticated local session. Reconnection does not
+clear driver quarantine.
 .It Ql NIC TX HOLD FIXTURE ARMED mode=release|stuck kind=tctl
 qualification boots only: the kernel holds a transmit descriptor posted
 without carrier, standing in for a device that does; refused in the

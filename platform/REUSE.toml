@@ -45,6 +45,17 @@ path = "provenance/upstream-notices/*.NOTICE"
 SPDX-FileCopyrightText = "2026 James Beck"
 SPDX-License-Identifier = "Apache-2.0"
 
+[[annotations]]
+path = "provenance/boot-font/unifont-15.1.01.NOTICE"
+SPDX-FileCopyrightText = "1998-2023 Roman Czyborra, Paul Hardy, Qianqian Fang, Andrew Miller, Johnnie Weaver, David Corbett, Nils Moskopp, Rebecca Bettencourt, Minseo Lee, Ho-Seok Ee, et al."
+SPDX-License-Identifier = "OFL-1.1"
+
+# Intel's notice from the kernel's src/i219.rs header, carried verbatim.
+[[annotations]]
+path = "provenance/kernel-notices/i219-intel-BSD-3-Clause.NOTICE"
+SPDX-FileCopyrightText = "2001-2020 Intel Corporation"
+SPDX-License-Identifier = "BSD-3-Clause"
+
 # sbase's LICENSE, carried verbatim beside userland/PIN.
 [[annotations]]
 path = "userland/sbase.LICENSE"
@@ -77,6 +88,56 @@ path = ["userland/hexdump/LICENSE", "LICENSES/0BSD.txt"]
 SPDX-FileCopyrightText = "2006, 2019 Rob Landley"
 SPDX-License-Identifier = "0BSD"
 [[annotations]]
+path = "userland/patches/*.patch"
+SPDX-FileCopyrightText = "sbase contributors named in userland/sbase.LICENSE"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "userland/patches/tar-absd.patch"
 SPDX-FileCopyrightText = "sbase contributors named in userland/sbase.LICENSE"
 SPDX-License-Identifier = "MIT"
+
+# Carried patches and adaptations, under their upstreams' terms (provenance.toml;
+# ABSD's own lines are each rule's first-party-portion).
+[[annotations]]
+path = "patches/rust-1.95.0-absd-std.patch"
+SPDX-FileCopyrightText = "The Rust Project Developers"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+[[annotations]]
+path = ["patches/sunset-server-channel.patch", "patches/sunset-terminal-metadata.patch"]
+SPDX-FileCopyrightText = "2022-2024 Matt Johnston and contributors"
+SPDX-License-Identifier = "0BSD"
+
+[[annotations]]
+path = ["patches/ring-absd.patch", "patches/ring-absd-tls-fixture-rng.patch"]
+SPDX-FileCopyrightText = "2015-2016 Brian Smith (ring build.rs and src/rand.rs headers)"
+SPDX-License-Identifier = "ISC"
+
+[[annotations]]
+path = ["userland/diff/diff.c", "userland/diff/diff.patch"]
+SPDX-FileCopyrightText = "2014 Sandeep Sharma and Ashwini Kumar"
+SPDX-License-Identifier = "0BSD"
+
+[[annotations]]
+path = "man/toybox.7"
+SPDX-FileCopyrightText = "2006, 2019 Rob Landley"
+SPDX-License-Identifier = "0BSD"
+
+
+[[annotations]]
+path = "vendor/conch-parser/**"
+SPDX-FileCopyrightText = "2015 Ivan Petkov"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+[[annotations]]
+path = "vendor/shell-glob/**"
+SPDX-FileCopyrightText = "2014 The Rust Project Developers"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# SQLite upstream context keeps the pinned amalgamation's public-domain terms.
+# Its dedication states that the author disclaims copyright; no copyright
+# holder is invented for this patch. ABSD additions are recorded separately.
+[[annotations]]
+path = "patches/sqlite-3.54.0-clock.patch"
+SPDX-License-Identifier = "blessing"

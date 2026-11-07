@@ -33,6 +33,7 @@ use absd_kernel::e1000_ring::{
 use absd_kernel::nic::{NIC_FLAG_DISABLED, NIC_FLAG_LINK_UP, NicInfo};
 
 use crate::{mmio, pci, serial};
+use absd_kernel::dma_policy;
 
 const VENDOR_INTEL: u16 = 0x8086;
 const DEVICE_82540EM: u16 = 0x100e;
@@ -97,6 +98,8 @@ pub enum NicError {
     Timeout(&'static str),
     /// Receive address 0 is not marked valid: no MAC address to use.
     NoMacAddress,
+    /// The DMA seam refused bus mastering.
+    Dma(crate::dma::Refused),
 }
 
 /// Why a probed NIC was turned off.
@@ -232,7 +235,7 @@ pub fn probe() -> Result<Identity, NicError> {
     let bar = pci::memory_bar(function, 0).map_err(NicError::Bar)?;
     let registers = mmio::map(bar, REGISTER_BYTES, mmio::Cache::Uncached)
         .map_err(|error| NicError::Map { error, bar })?;
-    pci::enable_polled_dma(function);
+    crate::dma::arm(function, &dma_policy::E1000).map_err(NicError::Dma)?;
 
     // Reset: firmware (or an earlier boot stage) may have left rings of its
     // own. Everything below is rebuilt from scratch.

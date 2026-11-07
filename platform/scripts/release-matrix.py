@@ -16,8 +16,9 @@ Cases (the numbers are the gate's):
      its build is refused by stage (manifest_mismatch, nothing written); then B's
      record altered on the disk, then selected
   5  failure before the selection switch: a partial stage, then select
-  6  failure after selection before readiness: B selected, A's image booted
-  7  failed served boot, manual rollback: B refused, rollback to A
+  6  failure after selection before readiness: B selected, A's image booted;
+     B's cold successor is fenced without writes or image changes
+  7  B served but not accepted, clean halt, manual rollback to accepted A
   8  the previous release selected again: A boots and is accepted
   9  restore from a known-good backup: boot, readiness, content
   10 restore from corrupt backups: truncated, wrong format, corrupted superblock,
@@ -48,6 +49,7 @@ import argparse
 import importlib.util
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -97,7 +99,7 @@ def run_tool(func, **kw):
         return False, str(error)
 
 
-def boot_expect(target, iso, name, port, release_id=None, want_refusal=None, timeout=240):
+def boot_expect(target, iso, name, port, release_id=None, want_refusal=None, timeout=240, whole_line=False):
     """Boots `iso` against the target; returns (ended_status, serial). With
     `want_refusal`, the boot must end pre-ready with QEMU status 7 and the
     refusal line, and must not reset."""
@@ -109,10 +111,15 @@ def boot_expect(target, iso, name, port, release_id=None, want_refusal=None, tim
                 time.sleep(0.5)
             status = boot.proc.poll()
             serial = boot.serial()
-            ok = (status == 7 and want_refusal in serial and "MACHINE RECOVER RESET" not in serial
+            named = serial.split("\n").count(want_refusal) == 1 if whole_line else want_refusal in serial
+            ok = (status == 7 and named and "MACHINE RECOVER RESET" not in serial
                   and serial.count("ABSD KERNEL BOOT") == 1 and "SSH LISTENING" not in boot.worker())
             return ok, status, serial
-        ready = boot.wait_ready(release_id)
+        try:
+            ready = boot.wait_ready(release_id)
+        except BaseException:
+            boot.stop()
+            raise
         return True, ready, boot
     finally:
         if want_refusal:
@@ -184,6 +191,72 @@ def corrupt_tree_stage_case(target, release, kernel, work):
         return checked, f"named_refusal={not ok and reason in text} receipt_and_target={checked} {text[-180:]}"
 
 
+def switch_history_cases(wanted, from_base, A, B, kernel_a, kernel, key, port):
+    def selected_b(name):
+        target = from_base(name)
+        staged, _ = run_tool(rel.cmd_stage, release=str(B.path), kernel=str(kernel), target=str(target.out))
+        selected, _ = run_tool(rel.cmd_select, release=str(B.path), kernel=str(kernel), target=str(target.out))
+        return target, staged and selected
+
+    if 6 in wanted:
+        t, prepared = selected_b("case6")
+        mismatch, status, _ = boot_expect(t, t.release_iso(A.id), "case6", port,
+                                          want_refusal="RELEASE REFUSED reason=release_mismatch", whole_line=True)
+        before = rel.sha256_file(t.image)
+        fenced, successor_status, serial = boot_expect(
+            t, t.release_iso(B.id), "case6-successor", port,
+            want_refusal="RECOVERY WRITABLE REFUSED reason=storage_fence previous=not_ready fence=none", whole_line=True)
+        accounting = re.findall(r"(?m)^DURABLE status=.* block_writes=(\d+) block_flushes=(\d+) "
+                                r"block_errors=(\d+) ", serial)
+        no_writes = accounting == [("0", "0", "0")]
+        unchanged = rel.sha256_file(t.image) == before
+        record(6, "failure-after-switch", prepared and mismatch and fenced and no_writes and unchanged,
+               f"status={status} successor_status={successor_status} fenced={fenced} "
+               f"zero_io={no_writes} unchanged={unchanged}")
+
+    if not ({7, 8} & wanted):
+        return
+
+    # This is an independent alternate history, never a reset of case6's
+    # dirty guard. Failed-boot writable recovery remains unsupported.
+    t, prepared = selected_b("case7")
+    okb, ready, boot = boot_expect(t, t.release_iso(B.id), "case7", port, release_id=B.id)
+    try:
+        rc, out, err = boot.ssh(key, "/bin/release")
+        b_ready = okb and rc == 0 and f"release={B.id}" in out.decode(errors="replace")
+        rc_halt, out_halt, err = boot.ssh(key, "shutdown")
+        halted = (boot.wait_end() == 3 and rc_halt == 0 and b"going down for halt" in out_halt
+                  and "SERVED SHUTDOWN ESCALATED" not in boot.serial()
+                  and "SERVED RECOVERY" not in boot.serial())
+    finally:
+        boot.stop()
+    # Acceptance is deliberately withheld, not simulated by a failed boot.
+    unaccepted = not any(line.split()[1:3] == ["accepted", B.id] for line in t.ledger_lines())
+    okr, textr = (run_tool(rel.cmd_rollback, release=str(A.path), kernel=str(kernel_a), target=str(t.out))
+                  if prepared and b_ready and halted and unaccepted else (False, "clean served history required"))
+    if 7 in wanted:
+        record(7, "served-then-rollback", prepared and b_ready and halted and unaccepted and okr,
+               f"B_ready={b_ready} clean_halt={halted} B_unaccepted={unaccepted} rollback={okr} {textr[:80]}")
+    if 8 in wanted:
+        # --only 8 still constructs and rolls back the clean B history.
+        if not okr:
+            record(8, "previous-selected-again", False, "prerequisite clean rollback failed")
+            return
+        okb, ready, boot = boot_expect(t, t.iso, "case8", port, release_id=A.id)
+        try:
+            rc, out, err = boot.ssh(key, "/bin/release")
+            a_ready = okb and rc == 0 and f"release={A.id}" in out.decode(errors="replace")
+            rc_halt, out_halt, err = boot.ssh(key, "shutdown")
+            halted = (boot.wait_end() == 3 and rc_halt == 0 and b"going down for halt" in out_halt
+                      and "SERVED SHUTDOWN ESCALATED" not in boot.serial()
+                      and "SERVED RECOVERY" not in boot.serial())
+        finally:
+            boot.stop()
+        oka, texta = accept(t, key, port) if a_ready and halted else (False, "clean A halt required")
+        record(8, "previous-selected-again", a_ready and halted and oka,
+               f"A_boots={a_ready} clean_halt={halted} accepted={oka}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--release-a", required=True)
@@ -246,7 +319,7 @@ def main():
         if args.format1_image:
             shutil.copyfile(args.format1_image, t.image)
             okb, status, serial = boot_expect(t, t.release_iso(A.id), "case2", port,
-                                              want_refusal="FSD FAILED mount")
+                                              want_refusal="FSD FAILED read-only mount: UnsupportedFormat", whole_line=True)
             unsupported = "UnsupportedFormat" in serial or "unsupported" in serial.lower()
             record(2, "unsupported-fs-format", okb and unsupported, f"status={status} named={unsupported}")
         else:
@@ -307,33 +380,7 @@ def main():
         record(5, "failure-before-switch", not ok2 and "no_release_tree" in text2 and okb,
                f"select_refused={not ok2} ({text2[:60]}) A_boots={okb}")
 
-    if want(6) or want(7) or want(8):
-        t = from_base("case6")
-        ok, text = run_tool(rel.cmd_stage, release=str(B.path), kernel=str(kernel), target=str(t.out))
-        ok2, text2 = run_tool(rel.cmd_select, release=str(B.path), kernel=str(kernel), target=str(t.out))
-        if want(6):
-            # B selected but A's image booted: refused pre-ready, no reset.
-            okb, status, serial = boot_expect(t, t.release_iso(A.id), "case6", port,
-                                              want_refusal="RELEASE REFUSED reason=release_mismatch")
-            record(6, "failure-after-switch", ok and ok2 and okb, f"status={status}")
-        if want(7):
-            # B's own image reaches readiness but fails acceptance (the
-            # acceptance check is the gate): simulate with a B whose
-            # acceptance is refused because the ledger never accepted it,
-            # then roll back by hand to A.
-            okb, ready, boot = boot_expect(t, t.release_iso(B.id), "case7", port, release_id=B.id)
-            rc, out, err = boot.ssh(key, "/bin/release")
-            boot.ssh(key, "shutdown"); boot.wait_end(); boot.stop()
-            b_ready = okb and f"release={B.id}" in out.decode(errors="replace")
-            okr, textr = run_tool(rel.cmd_rollback, release=str(A.path), kernel=str(kernel_a), target=str(t.out))
-            record(7, "served-then-rollback", b_ready and okr, f"B_ready={b_ready} rollback={okr} {textr[:80]}")
-        if want(8):
-            okb, ready, boot = boot_expect(t, t.iso, "case8", port, release_id=A.id)
-            rc, out, err = boot.ssh(key, "/bin/release")
-            boot.ssh(key, "shutdown"); boot.wait_end(); boot.stop()
-            oka, texta = accept(t, key, port)
-            record(8, "previous-selected-again", okb and f"release={A.id}" in out.decode(errors="replace") and oka,
-                   f"A_boots={okb} accepted={oka}")
+    switch_history_cases(wanted, from_base, A, B, kernel_a, kernel, key, port)
 
     if want(9) or want(10):
         t = from_base("case9")
@@ -341,15 +388,19 @@ def main():
         shutil.rmtree(backup, ignore_errors=True)
         okb, textb = run_tool(rel.cmd_backup, target=str(t.out), backup=str(backup))
         if want(9):
-            # Destroy the disk, restore, boot, read the acceptance marker.
+            # A damaged image remains evidence, never a replacement target.
+            destroyed = t.image.with_name(t.image.name + ".destroyed")
             t.image.write_bytes(b"\0" * 4096)
+            destroyed_hash = rel.sha256_file(t.image)
+            t.image.rename(destroyed)
             okr, textr = run_tool(rel.cmd_restore, target=str(t.out), backup=str(backup), replace=True,
                                   clone=False, release=None, kernel=None, key=None, port=port, target_identity=None)
             okboot, ready, boot = boot_expect(t, t.iso, "case9", port, release_id=A.id)
             rc, out, err = boot.ssh(key, "/bin/cat /home/operator/.accept")
             boot.ssh(key, "shutdown"); boot.wait_end(); boot.stop()
-            record(9, "restore-known-good", okb and okr and okboot and rc == 0 and b"accept " in out,
-                   f"backup={okb} restore={okr} boot={okboot} marker={out[:40]!r}")
+            retained = destroyed.is_file() and rel.sha256_file(destroyed) == destroyed_hash
+            record(9, "restore-known-good", okb and okr and okboot and rc == 0 and b"accept " in out and retained,
+                   f"backup={okb} restore={okr} boot={okboot} marker={out[:40]!r} retained={retained}")
         if want(10):
             results = []
             good_image = (backup / rel.IMAGE).read_bytes()
@@ -451,17 +502,22 @@ def main():
         backup = work / "backup-case13"
         shutil.rmtree(backup, ignore_errors=True)
         okk, textk = run_tool(rel.cmd_backup, target=str(t.out), backup=str(backup))
+        # Preserve the damaged image; legacy restore must not overwrite it.
+        destroyed = t.image.with_name(t.image.name + ".destroyed")
         t.image.write_bytes(b"\0" * 4096)
+        destroyed_hash = rel.sha256_file(t.image)
+        t.image.rename(destroyed)
         okre, textre = run_tool(rel.cmd_restore, target=str(t.out), backup=str(backup), replace=True, clone=False,
                                 release=None, kernel=None, key=None, port=port, target_identity=None)
         okboot, ready, boot = boot_expect(t, t.iso, "case13-restored", port, release_id=A.id)
         rcm, marker, _ = boot.ssh(key, "/bin/cat /home/operator/.accept")
         boot.ssh(key, "shutdown"); boot.wait_end(); boot.stop()
         oka2, texta2 = accept(t, key, port)
+        retained = destroyed.is_file() and rel.sha256_file(destroyed) == destroyed_hash
         record(13, "rollback-from-cache", ok and ok2 and b_ready and okr and source == "cache" and oka and okk
-               and okre and okboot and rcm == 0 and f"accept {A.id} ".encode() in marker and oka2,
+               and okre and okboot and rcm == 0 and f"accept {A.id} ".encode() in marker and oka2 and retained,
                f"B_ready={b_ready} rollback={okr} source={source} accepted={oka} backup={okk} restore={okre} "
-               f"boot={okboot} marker={marker[:40]!r} reaccepted={oka2} {textr[-80:] if not okr else ''}")
+               f"boot={okboot} marker={marker[:40]!r} reaccepted={oka2} retained={retained} {textr[-80:] if not okr else ''}")
 
     if want(14) and not args.release_c:
         record(14, "stage-third-after-remove", False, "skipped: no --release-c")

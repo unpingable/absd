@@ -1,0 +1,47 @@
+KLOG early retention active (Rust console start; boot scoped)
+DMA INHERITED total=0
+ABSD KERNEL BOOT
+boot protocol: multiboot2
+multiboot info: 0x00000000003813d0
+multiboot bytes: 0x0000000000000a48
+FRAMEBUFFER PROBE !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+FRAMEBUFFER CONSOLE OK width=1024 height=768 pitch=4096 bpp=32 rgb=16:8,8:8,0:8 columns=128 rows=59 scale=1 probe_row=4 cells=112 address=0x00000000fd000000
+IDT BREAKPOINT OK
+FRAMES TRACKED usable=130943 limit=536739840 clipped=0 bound=68719476736 table=boot direct_map_pages=0
+usable memory regions: 0x0000000000000002
+free frames: 129273
+allocated frame 0: 0x00000000006e7000
+allocated frame 1: 0x00000000006e8000
+FRAME OWNER CHECK OK
+paging probe pml4 index: 0x0000000000000100
+paging entry frame: 0x00000000006e7000
+PAGE MAP OK
+TIMER OK ticks=5
+TIMER CALIBRATION tsc_per_tick=2999519 min=2999277 max=2999917 samples=5 ticks=100 tsc_hz=2999975758 virtualized=yes cpuid15=zero cpuid16=zero invariant=no
+HEAP OK
+block: no device
+SPAWN OK pid=1 parent=0 program=init
+SPAWN EXHAUSTION frames_per_process=65
+SPAWN EXHAUSTION OK
+SPAWN OK pid=1 parent=0 program=init
+PROCESS MODEL OK
+KLOG userspace handoff retained early message
+USER INIT STARTED
+SPAWN OK pid=2 parent=1 program=external-workload
+USER PREEMPT pid=1 -> pid=2
+USER PREEMPT pid=2 -> pid=1
+USER PREEMPT pid=1 -> pid=2
+USER PREEMPT pid=2 -> pid=1
+USER PREEMPT pid=1 -> pid=2
+USER PREEMPT pid=2 -> pid=1
+USER PREEMPT pid=1 -> pid=2
+USER PREEMPT pid=2 -> pid=1
+USER EXIT pid=2 status=3
+EXTERNAL OUTPUT BEGIN encoding=hex
+EXTERNAL OUTPUT CHUNK offset=0000000000000000 data=465344204641494c4544206b65726e656c206c61636b7320776169745f7265616461626c650a
+EXTERNAL WORKLOAD OUTCOME pid=2 status=3
+init: FAILED at external workload outcome
+USER EXIT pid=1 status=99
+SERVED FRAME ACCOUNTING records=0 total=0 used=0 idle=0 status=ok
+EXTERNAL status=99 frames=0 processes=0 cells=0 pipes=0
+EXTERNAL WORKLOAD FAILED

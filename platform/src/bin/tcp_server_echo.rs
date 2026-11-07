@@ -4,6 +4,65 @@ use absd_net::{
     datagram::{self as d, channel::KernelPipe},
     stream::{self as s, server as v},
 };
+
+fn negative(pipe: &mut KernelPipe, peer: d::Address, until: u64) -> Result<(), String> {
+    let mut listen = [3, v::LISTEN, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0];
+    listen[4..8].copy_from_slice(&peer.ip);
+    listen[8..10].copy_from_slice(&peer.port.to_be_bytes());
+    let mut requests = [listen; 7];
+    requests[0][0] = 1;
+    requests[1][3] = 6;
+    requests[2][2] = 1;
+    requests[3][11] = 1;
+    requests[4][1] = s::CONNECT;
+    requests[5][1] = s::WRITE;
+    requests[5][10..12].copy_from_slice(&1025u16.to_be_bytes()); // Declared length, no body.
+    requests[6][8..10].copy_from_slice(&peer.port.wrapping_add(1).to_be_bytes());
+    let mut reply = [0; d::MAX_MESSAGE];
+    for (index, request) in requests.iter().enumerate() {
+        let left = until
+            .checked_sub(absd_runtime::boot_millis())
+            .filter(|n| *n > 0)
+            .ok_or("negative deadline")?;
+        let n = v::transact(pipe, request, &mut reply, left.min(1000))
+            .map_err(|e| format!("negative transact {e}"))?;
+        let mut expected = listen;
+        expected[1] = request[1];
+        expected[2] = if index == 6 {
+            s::Error::Denied.code()
+        } else {
+            s::Error::Invalid.code()
+        };
+        if n != 12 || reply[..n] != expected {
+            return Err(format!("negative reply {index}"));
+        }
+    }
+    let left = until
+        .checked_sub(absd_runtime::boot_millis())
+        .filter(|n| *n > 0)
+        .ok_or("negative listen deadline")?;
+    let n = v::transact(pipe, &listen, &mut reply, left.min(1000))
+        .map_err(|e| format!("negative listen {e}"))?;
+    let mut expected = [0; 13];
+    expected[..12].copy_from_slice(&listen);
+    expected[11] = 1;
+    if n != 13 || reply[..n] != expected {
+        return Err("negative LISTEN reply".into());
+    }
+    eprintln!("TCP SERVER NEG CHILD v=1 cases=7 listen=1 nic=0");
+    let left = until
+        .checked_sub(absd_runtime::boot_millis())
+        .filter(|n| *n > 0)
+        .ok_or("negative partial deadline")?;
+    absd_runtime::write_within(pipe.reply_writer, &[0], left.min(50))
+        .map_err(|e| format!("negative prefix {e}"))?;
+    // The owner must observe the actual byte before interrupting this child.
+    while absd_runtime::boot_millis() < until {
+        absd_runtime::sleep_ticks(1);
+    }
+    Err("negative child was not interrupted".into())
+}
+
 fn run() -> Result<(), String> {
     absd_runtime::link_anchor();
     let until = absd_runtime::boot_millis()
@@ -38,6 +97,9 @@ fn run() -> Result<(), String> {
         request_reader: input,
         reply_writer: output,
     };
+    if std::env::args().nth(1).as_deref() == Some("--boundary-negative") {
+        return negative(&mut pipe, peer, until);
+    }
     let mut wrong = [0; 12];
     wrong[0] = v::VERSION;
     wrong[1] = v::LISTEN;

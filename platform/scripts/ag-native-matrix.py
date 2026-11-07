@@ -67,12 +67,15 @@ spec = importlib.util.spec_from_file_location("nightshift_matrix", here / "night
 nm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(nm)
 
-# The resolver image (about 5.4 MB, symbols stripped) is carried inside the
-# filesystem, which gets the second half of the device. Formatting reads
-# every data sector of that half and each imported sector costs several
-# timer ticks on the debug kernel's ATA path, while init gives a worker
-# 120,000 ticks: the device stays at the default 16 MiB.
-nm.IMAGE_BYTES = 16 * 1024 * 1024
+# The filesystem occupies the second half of this fixture device. Atomic
+# append keeps the old resolver prefix live while constructing the complete
+# replacement: its final third therefore needs old-prefix + full-image data
+# blocks, in addition to the common files and filesystem metadata. The
+# observed 5.46 MB resolver needs 889 + 1333 blocks at that transition;
+# the former 8 MiB filesystem correctly refused it with 1037 blocks free.
+# A 16 MiB filesystem admits that overlap; import/worker time limits and all
+# exact-byte, profile and native/Linux comparison assertions stay unchanged.
+nm.IMAGE_BYTES = 32 * 1024 * 1024
 nm.DEVICE_SECTORS = nm.IMAGE_BYTES // 512
 
 # Where the reference run was produced (scripts/reference_fixture.py): its

@@ -13,6 +13,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from kernel_capacities import MAX_PROCESS_SLOTS
 
 
 def need(ok, message):
@@ -236,7 +237,7 @@ def check_lines(lines, cpus, site):
         need(1 <= cpu < cpus and cpu not in trap_cpus and pid in actor_by_pid,
              'first user trap has missing/duplicate CPU or unknown actor')
         role, actor_cpu, _, actor_i = actor_by_pid[pid]
-        need(actor_cpu == cpu and seq > 0 and epoch > 0 and slot < 16
+        need(actor_cpu == cpu and seq > 0 and epoch > 0 and 0 <= slot < MAX_PROCESS_SLOTS
              and actors_by_role[role]['restricted_i'] < actor_i < i,
              'first user trap does not bind published AP actor')
         trap_cpus.add(cpu)

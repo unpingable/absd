@@ -139,11 +139,12 @@ note = "grub-mkrescue --fonts= --locales= --install-modules= reduces what is car
 
 [[obligation]]
 id = "UNIFONT"
-title = "The ISO carries GNU Unifont (unicode.pf2) with no licence text collected"
+title = "Carry the exact boot font's copyright and elected licence texts"
 kind = "mechanical"
 applies_to = ["binary"]
 origin = "audit-20261010"
-status = "open"
+status = "resolved"
+resolved = "2026-10-19, owner election on P15 6b65a700: OFL-1.1 after checking Unifont 15.1.01's supplied source COPYING and compiled-font copyright. Reconstructing its precompiled PCF with grub-mkfont matches both published RC1 ISO fonts: 2411806 bytes, SHA256 662eb86fc1ea89635e4bba8413590b79eb714ade5a2b5a5aa3dc5cf5f53a4463. Future notice generation carries the versioned copyright and original OFL text; changed font bytes require a new eligibility check. Historical RC1 assets and the audit baseline remain unchanged."
 
 [[obligation]]
 id = "REPRODUCIBLE-ISO"
@@ -283,3 +284,28 @@ kind = "note"
 applies_to = ["site"]
 origin = "audit-20261010"
 status = "open"
+
+# The Picolibc code the userland ports link (c/picolibc/PROVENANCE.tsv):
+# identifying its licences does not carry their notices. Per text, from the
+# pinned COPYING.picolibc (reviewer assessment 2026-10-29; owner acceptance
+# of the LicenseRef texts and SunPro pending, [[licence_policy.pending]]).
+[[obligation]]
+id = "LIC-PICOLIBC-NOTICES"
+title = "Carry the notices and acknowledgements of the Picolibc code linked into the userland ports, per licence text"
+kind = "mechanical"
+applies_to = ["binary"]
+origin = "licence-gate-20261029"
+status = "open"
+note = """Owner decision 2026-10-29 (PICOLIBC-LICENCE-TEXTS.md): Other-1, Other-4, Other-5, Other-15, Other-16, UCB-1 and UCB-2 accepted for Picolibc 1.8.12 at the pinned tarball (sha256 64e8c412...7fa) on conditions: the exact licence and copyright texts in the distribution notices; the Cygnus Support and University of California, Berkeley acknowledgements in the release documentation (UCB-2's exact sentence "This product includes software developed by the University of California, Berkeley and its contributors"); both verified mechanically against the linked-member inventory; nothing implying endorsement.
+Mechanism: scripts/picolibc-provenance.py writes c/picolibc/NOTICES.txt (each label's text as COPYING.picolibc writes it, each consumed input's own header verbatim, the acknowledgements); the licence gate fails when a consumed input ships without its entry, a label's text differs from the reviewed text, or a required acknowledgement is absent; `provenance.py notices operator-image` bundles the notice and lists the acknowledgements in NOTICES.md. Release documentation beyond the notice bundle must carry the acknowledgements too: that step is not yet done and is this obligation's open part.
+Per text: Other-1, Other-4, Other-5, Other-15: preserve the copyright, permission and required disclaimer or notice text in the forms each specifies. Other-16 (Cygnus): notice duplicated; distribution materials acknowledge Cygnus Support; no endorsement. UCB-1 (Berkeley): notice duplicated; distribution materials acknowledge UC Berkeley; no endorsement. UCB-2 (Berkeley): source distributions retain the notice; distributions including binaries display the acknowledgement above; no endorsement. BSD-2-Clause, BSD-3-Clause: source retains, and binary distribution reproduces, the notice, conditions and disclaimer. SunPro (accepted 2026-10-29, second decision): preserve the SunPro notice.
+FreeBSD-1 (libc/include/fenv.h, Copyright (c) 2017 SiFive Inc., sha256 876d003f...24c7, consumed by 6 linked members): accepted 2026-10-29 (second decision) as an owner interpretation of "the FreeBSD License" as BSD-2-Clause, scoped to that file in Picolibc 1.8.12. Not a certified SPDX match: the reviewer notes the text does not distinguish BSD-2-Clause from BSD-2-Clause-Views (same obligations). Obligation: the SiFive copyright notice, the header's grant text and the BSD-2-Clause terms in the distribution notices (c/picolibc/NOTICES.txt carries all three; the gate checks them). Review again if the Picolibc version or the header bytes change, or a linked member begins to incorporate code from it (today: only unreferenced declarations; slice-licgate lane r3/freebsd-1)."""
+
+[[obligation]]
+id = "LIC-PUBLIC-EXPORT-EXAMINATION"
+title = "Examine the licensing of the final public source export identity before publication: every file, link and archive accounted for, every finding dispositioned"
+kind = "mechanical"
+applies_to = ["source"]
+origin = "rc2-notices-20261101"
+status = "open"
+note = """Owner condition 5 (2026-11-01 scanner exception): the public source export is checked separately; absence from a binary member table does not establish absence from distributed source. The repository gate judges tracked files only. The rc2-notices lane scanned scratch assemblies of this branch (rc2-notices/export-r2): a bounded result for that tree only, with source edits dropped, so not the publishable identity. Before publication, bind an examination to the final assembled tree (its tree id and SOURCE-MANIFEST.toml sha256): every regular file, every symlink with its target, every archive opened or recorded as a failure; exact and near copies of pinned upstream files (Picolibc 1.8.12 at least); copyleft family terms (GPL, LGPL, AGPL, MPL, EPL, CDDL, EUPL, OSL, CC-BY-SA, SSPL); each finding dispositioned against provenance and the reviewed source edits."""

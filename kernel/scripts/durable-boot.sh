@@ -7,7 +7,9 @@
 #
 # ABSD_BLOCK_ATTACH selects how the image is attached: `ata` (default, the
 # primary IDE master), `nvme` (one QEMU NVMe namespace whose controller
-# serial is `absd`, the serial durable ISOs select as writable), or
+# serial is `absd`, the serial durable ISOs select as writable), `ahci` (one
+# SATA disk with serial `absd` on QEMU's ich9-ahci, for ISOs built with
+# BLOCK_DEVICE=ahci, which select it with `ahci-write=absd`), or
 # `laptop`: the same namespace on scripts/laptop-boot.py's `thinkpad`
 # machine (q35, OVMF, USB boot, no serial port), where SERIAL_LOG receives
 # the console transcript read back from the screen and the status is the
@@ -44,7 +46,8 @@ fi
 case "${ABSD_BLOCK_ATTACH:-ata}" in
 ata) set -- "$@" -drive file="$image",format=raw,if=ide,index=0 ;;
 nvme) set -- "$@" -drive if=none,id=nvm,file="$image",format=raw -device nvme,serial=absd,drive=nvm ;;
-*) echo "durable-boot.sh: ABSD_BLOCK_ATTACH must be ata or nvme" >&2; exit 2 ;;
+ahci) set -- "$@" -device ich9-ahci,id=ahci -drive if=none,id=sata,file="$image",format=raw -device ide-hd,drive=sata,bus=ahci.0,serial=absd ;;
+*) echo "durable-boot.sh: ABSD_BLOCK_ATTACH must be ata, nvme or ahci" >&2; exit 2 ;;
 esac
 case "${ABSD_QEMU_REBOOT:-}" in
 allow) reboot= ;;

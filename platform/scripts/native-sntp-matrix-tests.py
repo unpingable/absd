@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deterministic artifact predicates, not Linux interoperability or native tests.
 
-Execute on a dedicated VM; source-only tests do not establish guest behavior.
+Execute later on the resource owner's VM; source-only authoring on build_host.
 """
 import importlib.util
 from pathlib import Path

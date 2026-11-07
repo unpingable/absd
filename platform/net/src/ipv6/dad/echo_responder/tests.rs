@@ -606,3 +606,150 @@ fn outbound_other_protocol_and_uncorrelated_reply_are_refused() {
     );
     assert!(!owner.admission.borrow().attempted);
 }
+
+#[path = "../../../../../src/ipv6_echo_boundary.rs"]
+mod native_boundary;
+struct RecordingMock {
+    inner: Mock,
+    trace: Rc<RefCell<native_boundary::Trace>>,
+}
+impl Link for RecordingMock {
+    fn mac(&self) -> [u8; 6] {
+        self.inner.mac()
+    }
+    fn now_ms(&self) -> u64 {
+        self.inner.now_ms()
+    }
+    fn read(&self) -> Option<LinkReading> {
+        self.inner.read()
+    }
+    fn pause(&self, ms: u64) {
+        self.inner.pause(ms)
+    }
+    fn receive(&mut self, bytes: &mut [u8; FRAME_MAX], timeout: u64) -> Result<Option<usize>, i64> {
+        let result = self.inner.receive(bytes, timeout);
+        if let Ok(Some(n)) = result {
+            self.trace.borrow_mut().receive(&bytes[..n]);
+        }
+        result
+    }
+    fn send(&mut self, bytes: &[u8]) -> Result<(), i64> {
+        let result = self.inner.send(bytes);
+        if result.is_ok() {
+            self.trace.borrow_mut().send(bytes);
+        }
+        result
+    }
+}
+#[test]
+fn native_boundary_actual_owner_refuses_consumed_inputs_then_serves_same_activation() {
+    let s = state();
+    let trace = Rc::new(RefCell::new(native_boundary::Trace::default()));
+    let mut owner = Owner::acquire(
+        RecordingMock {
+            inner: Mock(s.clone()),
+            trace: trace.clone(),
+        },
+        100,
+        |b| {
+            b.fill(0);
+            Ok::<_, ()>(())
+        },
+    )
+    .unwrap();
+    let endpoint = owner.activate(fixture_peer()).unwrap();
+    // Both exact engine neighbor entries exist before any refusal check.
+    inject(&s, solicitation());
+    owner.poll(endpoint).unwrap();
+    inject(&s, native_boundary::literal("warm-ns"));
+    owner.poll(endpoint).unwrap();
+    assert!(trace.borrow().warm_na.is_some());
+    let before = s.borrow().sent.len();
+    for name in native_boundary::NAMES {
+        let input = native_boundary::literal(name);
+        inject(&s, input.clone());
+        owner.poll(endpoint).unwrap();
+        assert_eq!(trace.borrow().negative.last().unwrap().frame, input);
+        assert_eq!(owner.observe(endpoint), Err(Error::Again));
+        assert_eq!(owner.possible_reply_effects(), 0);
+        assert!(owner.admission.borrow().request.is_none());
+        assert!(
+            !s.borrow().sent[before..]
+                .iter()
+                .any(|f| reply(f) || peer_ns(f))
+        );
+    }
+    assert!(trace.borrow().complete());
+    let valid = request(&[0x5a; 56], 0x1234, 1);
+    inject(&s, valid.clone());
+    owner.poll(endpoint).unwrap();
+    let result = owner.observe(endpoint).unwrap();
+    assert_eq!(
+        (result.identifier, result.sequence, result.icmp_bytes),
+        (0x1234, 1, 64)
+    );
+    let sent = s.borrow();
+    let replies: Vec<_> = sent.sent.iter().filter(|f| reply(f)).collect();
+    assert_eq!(replies.len(), 1);
+    assert_eq!(&replies[0][58..], &valid[58..]);
+    drop(sent);
+    assert_eq!(owner.observe(endpoint), Err(Error::Spent));
+    assert_eq!(owner.activate(fixture_peer()), Err(Error::Exhausted));
+    owner.retire();
+    assert_eq!(owner.observe(endpoint), Err(Error::Stale));
+    assert_eq!(owner.socket_count(), 0);
+}
+#[test]
+fn native_boundary_trace_cannot_claim_missing_priming_duplicate_or_reordered_input() {
+    let ns = native_boundary::literal("warm-ns");
+    let na = native_boundary::literal("warm-na");
+    // The pinned engine emits SOLICITED only. A checksum-valid OVERRIDE
+    // substitution is not the exact recorded warm response.
+    assert_eq!(&na[58..62], &[0x40, 0, 0, 0]);
+    let mut different_na = na.clone();
+    different_na[58] = 0x60;
+    checksum(&mut different_na);
+    let mut different_trace = native_boundary::Trace::default();
+    different_trace.receive(&ns);
+    different_trace.send(&different_na);
+    assert!(different_trace.warm_na.is_none());
+    assert!(!different_trace.complete());
+    let inputs: Vec<_> = native_boundary::NAMES
+        .iter()
+        .map(|n| native_boundary::literal(n))
+        .collect();
+    let mut trace = native_boundary::Trace::default();
+    trace.receive(&ns);
+    trace.send(&na);
+    for input in &inputs {
+        trace.receive(input);
+    }
+    assert!(trace.complete());
+    for kind in 0..4 {
+        let mut t = native_boundary::Trace::default();
+        if kind != 0 {
+            t.receive(&ns);
+        }
+        if kind != 1 {
+            t.send(&na);
+        }
+        let mut rows = inputs.clone();
+        if kind == 2 {
+            rows.swap(0, 1);
+        }
+        if kind == 3 {
+            rows.push(inputs[3].clone());
+        }
+        for frame in rows {
+            t.receive(&frame);
+        }
+        assert!(!t.complete());
+    }
+    let mut altered = inputs[0].clone();
+    altered[56] ^= 1;
+    let mut t = native_boundary::Trace::default();
+    t.receive(&ns);
+    t.send(&na);
+    t.receive(&altered);
+    assert!(t.negative.is_empty());
+}

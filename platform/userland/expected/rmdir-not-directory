@@ -1,0 +1,10 @@
+status 1
+--- stdout
+--- stderr
+/bin/rmdir: rmdir words.txt: Not a directory
+--- directories
+dir
+empty-tree
+empty-tree/child
+tree
+tree/sub

@@ -39,6 +39,7 @@ pub struct Client<P: Pipe> {
     connected: bool,
     last_ms: Option<u64>,
     inbound: bool,
+    mtu_refusal: bool,
 }
 impl<P: Pipe> Client<P> {
     pub fn new(pipe: P, peer: Address, pause: fn(u64)) -> Self {
@@ -50,7 +51,14 @@ impl<P: Pipe> Client<P> {
             connected: false,
             last_ms: None,
             inbound: false,
+            mtu_refusal: false,
         }
+    }
+    /// Consume only an explicitly granted experimental v4 channel.
+    pub fn new_mtu_refusal(pipe: P, peer: Address, pause: fn(u64)) -> Self {
+        let mut client = Self::new(pipe, peer, pause);
+        client.mtu_refusal = true;
+        client
     }
     pub(super) fn server(pipe: P, peer: Address, pause: fn(u64)) -> Self {
         let mut client = Self::new(pipe, peer, pause);
@@ -98,6 +106,8 @@ impl<P: Pipe> Client<P> {
         let mut request = [0; MAX_MESSAGE];
         let version = if self.inbound {
             server::VERSION
+        } else if self.mtu_refusal {
+            mtu::VERSION
         } else {
             VERSION
         };
@@ -153,6 +163,13 @@ impl<P: Pipe> Client<P> {
         }
         let length = u16::from_be_bytes([reply[10], reply[11]]) as usize;
         if reply[2] != 0 {
+            if self.mtu_refusal && reply[2] == mtu::STATUS {
+                if n != 12 || !(usize::from(mtu::MIN_MTU)..1500).contains(&length) {
+                    return Err(self.malformed());
+                }
+                self.live = false;
+                return Err(Error::FragmentationNeeded { mtu: length as u16 });
+            }
             if n != 12 || length != 0 {
                 return Err(self.malformed());
             }

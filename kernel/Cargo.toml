@@ -12,16 +12,37 @@ absd-abi = { path = "abi" }
 absd-fbcon = { path = "fbcon" }
 
 [features]
+# Bounded QEMU Q35 FADT reset; also requires the exact boot option.
+acpi-reset-qemu = []
+# Private MWM display-owner experiment; no supported ABI promotion.
+mwm-experiment = []
+# Private PCM driver experiment; no supported ABI promotion.
+native-pcm-experiment = []
+# Explicit compatibility for the verified QEMU 8.2 PCM_INFO used-length defect.
+native-pcm-qemu82 = ["native-pcm-experiment"]
 # Isolated frame-admission experiment. No supported ABI is added.
 frame-reservation-experiment = ["frame-admission-core"]
 # Shared accounting without private dispatch.
 frame-admission-core = []
+# Host fixture only: counts page-table entry reads in src/vm.rs.
+vm-read-count = []
+# Q10 test ISOs only: the emulated AHCI form in device scope and the weaker
+# fault attribution. Never in a physical build.
+contain-qemu-fixture = []
 frame-admission-v0 = ["frame-admission-core"]
 # Private negative controls for construction/publication, never a supported ABI.
 frame-admission-qualification = ["frame-reservation-experiment"]
 arm64 = []
 # Explicit local-VM follow-on gate; also requires matching FDT boot request.
 arm64-smp-qualification = ["arm64"]
+# Diagnostic image for a board's first light: after the device tree, MMU and
+# exception check it prints the boot facts (EL, PSCI version, memory banks,
+# device tree, GIC identity, timer frequency) and stops; no interrupts, no
+# secondary CPUs, no user space (docs/arm64-first-light/README.md).
+arm64-first-light = ["arm64"]
+# The early console (used before the device tree is read) is the RK3568's
+# UART2, a DesignWare APB 16550 at 0xfe660000, instead of QEMU virt's PL011.
+arm64-console-dwapb-rk3568 = ["arm64"]
 # The physical-boot profile: no block write or flush can be issued by this
 # kernel, whatever the boot command line says (docs/PHYSICAL-BOOT.md).
 block-read-only = []
@@ -31,11 +52,25 @@ ap-startup = []
 ap-userspace = []
 # Isolated local-VM prototype; also requires exact `smp-user-test` boot mode.
 smp-user-test = []
+# Explicit ordinary two-CPU virtual operator profile; runtime opt-in required.
+smp-operator = []
+# Dedicated diagnostic image; never enabled by the ordinary platform profile.
+smp-operator-controls = ["smp-operator"]
 # Isolated scheduler tranche, requiring the explicit preemptive test boot.
 smp-scheduler-test = ["smp-user-test"]
 # Local VM qualification only: syscall 31's reserved word bounds allocations
 # made during that one spawn_image call. Ordinary builds retain reserved=0.
 spawn-image-rollback-test = []
+# Explicit #115 self-host builder resource profile (see abi/src/layout.rs).
+# Without it every resource default is the accepted one.
+builder-profile = ["absd-abi/builder-profile"]
+# Isolated #115 builder experiment (see abi/src/layout.rs); x86_64 only.
+builder-large-envelope = ["builder-profile", "absd-abi/builder-large-envelope"]
+# #115 builder class heap: the processes the durable self-host worker spawns,
+# and their descendants, get a 512 MiB heap window and are admitted through
+# frame admission with per-role budgets; every other process keeps the
+# profile's 384 MiB (see abi/src/layout.rs, src/builder_class.rs).
+builder-class-heap = ["builder-profile", "frame-admission-core", "absd-abi/builder-class-heap"]
 
 # The kernel is built optimized but keeps the dev profile's checks: debug
 # assertions (interrupts disabled at entry, among others), overflow
@@ -67,4 +102,8 @@ required-features = ["arm64"]
 
 [[example]]
 name = "frame_vm_qualification"
+required-features = ["frame-admission-core"]
+
+[[example]]
+name = "large_envelope_admission"
 required-features = ["frame-admission-core"]

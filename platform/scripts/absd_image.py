@@ -60,7 +60,13 @@ class Region:
 
 
 def parse_layout(image, device_sectors):
-    sector = read_sector(image, 0)
+    return parse_layout_sector(read_sector(image, 0), device_sectors)
+
+
+def parse_layout_sector(sector, device_sectors):
+    """The same layout checks on an already captured descriptor sector."""
+    if len(sector) != SECTOR:
+        raise ValueError("layout descriptor size")
     if sector == bytes(SECTOR):
         return None
     if sector[:8] != LAYOUT_MAGIC:

@@ -1,5 +1,5 @@
 .\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
-.Dd October 12, 2026
+.Dd November 5, 2026
 .Dt SORT 1
 .Os ABSD
 .Sh NAME
@@ -31,6 +31,21 @@ to
 and
 .Fl C
 check that the input is already sorted.
+.Pp
+In this pinned sbase version, each
+.Fl k
+key inherits only the ordering flags that precede it.
+Put global flags such as
+.Fl n
+before every key they should affect, or put the flag in the key definition.
+For example,
+.Ql sort -n -t , -k 2,2 FILE
+and
+.Ql sort -t , -k 2,2n FILE
+both sort the second comma-separated field numerically.
+.Ql sort -t , -k 2,2 -n FILE
+instead compares that key lexically and can still return status 0.
+This option-order behavior comes from unmodified sbase 0.1.
 .Sh UNSUPPORTED ON ABSD
 .Bl -tag -width Ds
 .It input size
@@ -55,6 +70,7 @@ or
 .Sh EXAMPLES
 .Bd -literal -offset indent
 absd$ sort -n -k 2 /home/operator/sizes.txt
+absd$ sort -t , -k 2,2n /home/operator/stock.csv
 absd$ cat /etc/words.txt | sort | uniq -c
 .Ed
 .Sh SEE ALSO

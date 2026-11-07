@@ -1,0 +1,24 @@
+status 0
+--- stdout
+b
+a
+a
+c
+c
+c
+--- stderr
+--- files
+file captured.txt 12
+b
+a
+a
+c
+c
+c
+file second.txt 12
+b
+a
+a
+c
+c
+c

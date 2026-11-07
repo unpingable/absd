@@ -1,7 +1,9 @@
 component	version	origin	use	license	elected	texts	units	source
 ABSD kernel and init	kernel repository, pinned commit	first-party	included			MISSING	image	see the kernel repository's provenance/inventory/kernel-image.tsv for its third-party content (Rust core/alloc, console font)
-GNU Unifont	as shipped in host package grub-common (unicode.pf2)	host-package	included	not recorded by the host package (upstream: GPL-2.0-or-later with a font embedding exception; verify for the shipped version)	not recorded by the host package (upstream: GPL-2.0-or-later with a font embedding exception; verify for the shipped version)	MISSING	image	/usr/share/grub/unicode.pf2 copied by grub-mkrescue
+GNU Unifont	15.1.01	host-package	included	OFL-1.1	OFL-1.1	unifont-15.1.01.NOTICE,OFL-1.1.txt	image	Unifont 15.1.01 font/precompiled/unifont-15.1.01.pcf.gz, converted by grub-mkfont 2.12-1ubuntu7.3; unicode.pf2 2411806 bytes, SHA256 662eb86fc1ea89635e4bba8413590b79eb714ade5a2b5a5aa3dc5cf5f53a4463
 GRUB	host package grub-common	host-package	included	GPL-3.0-or-later	GPL-3.0-or-later	copyright,GPL-3	image	boot images, modules and locale catalogues copied by grub-mkrescue
+Intel e1000 shared code (kernel I219 driver)	FreeBSD 833d39bd2e38421a14ea489a956261a0fa993fbc	kernel-adapted	included	BSD-3-Clause	BSD-3-Clause	i219-intel-BSD-3-Clause.NOTICE	image	absd-kernel 101c61d82534b8c25b7295eb5a2fcd0e72cc5b3a src/i219.rs, adapted from e1000_ich8lan.c, e1000_phy.c and if_em.c; header lines 1-33 copied verbatim
+LLVM compiler-rt builtins	clang 18 (host package libclang-rt-18-dev)	host-package	compiler-input	Apache-2.0 WITH LLVM-exception	Apache-2.0 WITH LLVM-exception	llvm-project.LICENSE	image	libclang_rt.builtins-x86_64.a from clang -print-resource-dir, last on the c/bin/absd-cc link line; the retained RC2-source link maps select no member of it in any of the 12 ports
 absd-broker	0.1.0	first-party	linked		n/a		commands,ports,sshd	broker
 absd-fs	0.1.0	first-party	linked		n/a		commands,ports,sshd	fs
 absd-fsd	0.1.0	first-party	linked		n/a		commands,ports,sshd	fsd
@@ -64,7 +66,8 @@ codspeed-divan-compat-macros	5.0.1	registry	not-built		n/a			2fd05482a95823ffe42
 codspeed-divan-compat-walltime	5.0.1	registry	not-built		n/a			d2f8eae75b8fa85357020a404899c4280d590c9fd1c47640b3ce53106c62d2ee
 colorchoice	1.0.5	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570
 colored	3.1.1	registry	not-built		n/a			faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34
-compiler_builtins	0.1.160	toolchain	linked	MIT AND Apache-2.0 WITH LLVM-exception AND (MIT OR Apache-2.0)	Apache-2.0 WITH LLVM-exception AND MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
+compiler_builtins	0.1.160	toolchain	linked	MIT AND Apache-2.0 WITH LLVM-exception AND (MIT OR Apache-2.0)	Apache-2.0 WITH LLVM-exception AND MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch; toolchain library/compiler-builtins/libm (manifest version 0.2.16; not a content-equivalence claim with the registry crate)
+conch-parser	0.1.1	vendored	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands	vendor/conch-parser
 condtype	1.3.0	registry	not-built		n/a			baf0a07a401f374238ab8e2f11a104d2851bf9ce711ec69804834de8af45c7af
 const-oid	0.10.2	registry	linked	Apache-2.0 OR MIT	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c
 core	0.0.0	toolchain	linked	MIT OR Apache-2.0	MIT	(toolchain notice set)	std	rust-src 1.95.0 with patches/rust-1.95.0-absd-std.patch
@@ -119,6 +122,7 @@ getrandom	0.2.17	registry	not-built		n/a			ff2abc00be7fca6ebc474524697ae276ad847
 getrandom	0.4.3	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	sshd	300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099
 ghash	0.6.0	registry	not-built		n/a			2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5
 gimli	0.32.3	registry	not-built		n/a			e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7
+glob	0.3.3	vendored	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	commands	vendor/shell-glob
 glob	0.3.4	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b
 globset	0.4.19	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	e47d37d2ae4464254884b60ab7071be2b876a9c35b696bd018ddcc76847309cd
 grep	0.4.1	registry	linked	Unlicense OR MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	309217bc53e2c691c314389c7fa91f9cd1a998cda19e25544ea47d94103880c3
@@ -189,6 +193,7 @@ panic_unwind	0.0.0	toolchain	not-built		n/a			rust-src 1.95.0 with patches/rust-
 pcre2	0.2.11	registry	not-built		n/a			9e970b0fcce0c7ee6ef662744ff711f21ccd6f11b7cf03cd187a80e89797fc67
 pcre2-sys	0.2.10	registry	not-built		n/a			18b9073c1a2549bd409bf4a32c94d903bb1a09bf845bc306ae148897fa0760a4
 pem-rfc7468	1.0.0	registry	not-built		n/a			a6305423e0e7738146434843d1694d621cce767262b2a86910beab705e4493d9
+picolibc	1.8.12	upstream-tarball	linked	(Apache-2.0 OR BSL-1.0) AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND LicenseRef-picolibc-FreeBSD-1 AND LicenseRef-picolibc-Other-1 AND LicenseRef-picolibc-Other-15 AND LicenseRef-picolibc-Other-16 AND LicenseRef-picolibc-Other-4 AND LicenseRef-picolibc-Other-5 AND LicenseRef-picolibc-UCB-1 AND LicenseRef-picolibc-UCB-2 AND SunPro	(Apache-2.0 OR BSL-1.0) AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND LicenseRef-picolibc-FreeBSD-1 AND LicenseRef-picolibc-Other-1 AND LicenseRef-picolibc-Other-15 AND LicenseRef-picolibc-Other-16 AND LicenseRef-picolibc-Other-4 AND LicenseRef-picolibc-Other-5 AND LicenseRef-picolibc-UCB-1 AND LicenseRef-picolibc-UCB-2 AND SunPro	COPYING.picolibc	image	c/picolibc/PIN picolibc-1.8.12.tar.xz sha256:64e8c412e1c40fa6eb1a72d2b5cdbcbfe6ceca4cbea454edbad54557ffc747fa (libc.a sha256:7924073af8c975a4d623917070cbe098276632f0e332accfd82e11cdb7975f20); libc.a members linked into all 12 userland/PORTS.tsv ports by c/bin/absd-cc
 pin-project-lite	0.2.17	registry	not-built		n/a			a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd
 pkg-config	0.3.33	registry	not-built		n/a			19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e
 pkg-config	0.3.34	registry	not-built		n/a			f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548
@@ -224,16 +229,22 @@ rustix	1.1.4	registry	not-built		n/a			b6fe4565b9518b83ef4f91bb47ce29620ca828bd3
 rustversion	1.0.23	registry	not-built		n/a			cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f
 ryu-js	0.2.2	registry	not-built		n/a			6518fc26bced4d53678a22d6e423e9d8716377def84545fe328236e3af070e7f
 same-file	1.0.6	registry	linked	Unlicense/MIT	MIT	COPYING,LICENSE-MIT,UNLICENSE	ports	93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502
-sbase-cmp	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 cmp.c
-sbase-ed	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 ed.c
-sbase-find	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 find.c
-sbase-grep	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 grep.c
-sbase-od	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 od.c
-sbase-printf	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 printf.c
-sbase-sed	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 sed.c
-sbase-sort	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 sort.c
-sbase-tar	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 tar.c
-sbase-test	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 test.c
+sbase-cmp	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 cmp.c
+sbase-dirname	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 dirname.c
+sbase-ed	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 ed.c
+sbase-find	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 find.c
+sbase-grep	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 grep.c
+sbase-od	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 od.c
+sbase-paste	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 paste.c
+sbase-printf	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 printf.c
+sbase-rmdir	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 rmdir.c
+sbase-sed	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 sed.c
+sbase-sleep	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 sleep.c
+sbase-sort	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 sort.c
+sbase-tar	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 tar.c
+sbase-tee	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 tee.c
+sbase-test	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 test.c
+sbase-tr	0.1	upstream-tarball	linked	MIT	MIT	sbase.LICENSE	userland-ports	https://dl.suckless.org/sbase/sbase-0.1.tar.gz sha256:86f6bb67bcc7df3ba7a3f11da72eaeb2cf58c23e9a35a7dbcd316395d934c634 tr.c
 self_cell	1.3.0	registry	linked	Apache-2.0 OR GPL-2.0-only	Apache-2.0	LICENSE-APACHE,LICENSE-GPLv2	ports	2ab42ca02749e120097e328d91d415325bdf43b1c72c4c8badf37375fe40a813
 semver	1.0.28	registry	build-only		n/a		sshd	8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd
 serde	1.0.228	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e
@@ -287,8 +298,8 @@ tinystr	0.8.4	registry	linked	Unicode-3.0	Unicode-3.0	LICENSE	ports	b1e27c914592
 toml_datetime	1.1.1+spec-1.1.0	registry	not-built		n/a			3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7
 toml_edit	0.25.13+spec-1.1.0	registry	not-built		n/a			6975367e4d2ef766d86af01ffad14b622fecc8d4357a998fbc4deb6e9bacaf9b
 toml_parser	1.1.3+spec-1.1.0	registry	not-built		n/a			1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56
-toybox-diff	0.8.15	upstream-tarball	linked	0BSD	0BSD	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz sha256:44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e toys/pending/diff.c
-toybox-hexdump	0.8.15	upstream-tarball	linked	0BSD	0BSD	sbase.LICENSE,LICENSE,LICENSE	userland-ports	https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz sha256:44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e toys/pending/hexdump.c
+toybox-diff	0.8.15	upstream-tarball	linked	0BSD	0BSD	LICENSE	userland-ports	https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz sha256:44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e toys/pending/diff.c
+toybox-hexdump	0.8.15	upstream-tarball	linked	0BSD	0BSD	LICENSE	userland-ports	https://landley.net/toybox/downloads/toybox-0.8.15.tar.gz sha256:44e2bab43dfe2c171743297631ce558c6d9ed38b87a66fd751cef617574b375e toys/pending/hexdump.c
 type-map	0.5.1	registry	linked	MIT/Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	cb30dbbd9036155e74adad6812e9898d03ec374946234fbcebd5dfc7b9187b90
 typenum	1.20.1	registry	linked	MIT OR Apache-2.0	MIT	LICENSE,LICENSE-APACHE,LICENSE-MIT	commands,ports,sshd	b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20
 unic-langid	0.9.6	registry	linked	MIT OR Apache-2.0	MIT	LICENSE-APACHE,LICENSE-MIT	ports	a28ba52c9b05311f4f6e62d5d9d46f094bd6e84cb8df7b3ef952748d752a7d05

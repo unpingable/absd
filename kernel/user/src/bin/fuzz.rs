@@ -122,14 +122,15 @@ fn verify_spawn_handle_fuzz(console: absd_user::Console) -> Result<(), &'static 
         return Err("disappeared source accepted");
     }
 
-    // The default console occupies one destination slot. Sixty-four ordinary
-    // copies therefore fail only after a nearly complete batch insertion.
-    let exhaust = [SpawnHandleCopy::new(cell.raw(), RIGHT_READ); MAX_SPAWN_HANDLES];
-    if spawn_many_copy(program::MULTI_HANDLE, &exhaust) != Err(Error::TooManyHandles) {
-        return Err("destination capacity exhaustion accepted");
-    }
+    // A full legal vector fits the independent larger destination table.
+    // Invalid65-entry requests above still fail before child publication.
+    let maximum = [SpawnHandleCopy::new(cell.raw(), RIGHT_READ); MAX_SPAWN_HANDLES];
+    expect_exit(
+        spawn_many_copy(program::EXIT7, &maximum).map_err(|_| "maximum copy vector")?,
+        7,
+    )?;
     if cell.read() != Ok((1, 42)) {
-        return Err("failed spawn changed source state");
+        return Err("full transfer changed source state");
     }
 
     let second =
@@ -137,7 +138,7 @@ fn verify_spawn_handle_fuzz(console: absd_user::Console) -> Result<(), &'static 
     if info(Some(second))
         .map_err(|_| "second descriptor child info")?
         .pid
-        != first_pid + 1
+        != first_pid + 2
     {
         return Err("failed spawn consumed pid");
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """ABSD releases on the host: build, install, stage, select, accept,
-rollback, migrate, backup, restore (docs/RELEASE.md).
+rollback, migrate, backup, restore, remove, reconfigure (docs/RELEASE.md).
 
 A release directory (`release.py build`) holds one release: its boot image
 (absd-operator.iso), its tree (tree/bin, tree/share), its release record
@@ -15,13 +15,16 @@ the image that selects it (select.iso, durable-boot.sh, select.toml: the
 selection cache), TARGET (the target's identity), RELEASES (the
 append-only ledger), receipts/.
 
-Every write to the disk is an importer boot of the release's own importer
+Ordinary filesystem writes are importer boots of the release's own importer
 under the release's kernel (`--kernel`, a checkout at the manifest's
 commit), each file one commit; every read is the host's independent reader
-(scripts/absd_fs.py). Nothing here writes a filesystem by hand.
+(scripts/absd_fs.py). The shared offline guard transaction writes only its
+reserved fixed sector before/after these boots; it never edits filesystem
+metadata or ordinary file content.
 """
 
 import argparse
+import contextlib
 import datetime
 import hashlib
 import importlib.util
@@ -42,8 +45,13 @@ here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
 import absd_fs  # noqa: E402
 import absd_inputs  # noqa: E402
+import operator_geometry as geometry  # noqa: E402
 import release_record as rr  # noqa: E402
+import recovery_point
 import ssh_absd  # noqa: E402
+import storage_fence_host
+import storage_fence_resume
+import storage_fence_state
 from served_ram import served_qemu
 from e1000_rx import wait_rx_setup, RxSetupFailed
 
@@ -71,7 +79,8 @@ TARGET = "TARGET"
 RELEASE_DIRS = ("bin", "share")
 SITE_ROOTS = ("/etc", "/ssh", "/home", "/var")
 SLOTS = 2
-QEMU = oi.QEMU
+# Explicit release-tool selection; operator_image has its own --qemu option.
+QEMU = os.environ.get("ABSD_RELEASE_QEMU", oi.QEMU)
 
 
 class Failed(Exception):
@@ -84,6 +93,25 @@ class StageFailed(Failed):
     def __init__(self, message, state):
         super().__init__(message)
         self.state = state
+
+
+class ReconfigureFailed(StageFailed):
+    """A caught reconfiguration failure, with its outcome state
+    (RECONFIGURE_STATES)."""
+
+
+class ImportFailed(Failed):
+    def __init__(self, message, context):
+        super().__init__(message)
+        self.import_context = context
+
+
+def disk_sectors(image):
+    """storage_fence_resume.image_sectors as this tool's refusal."""
+    try:
+        return storage_fence_resume.image_sectors(image)
+    except storage_fence_resume.Refused as error:
+        raise Failed(str(error)) from None
 
 
 def now():
@@ -195,7 +223,7 @@ class Release:
         digests = self.artifact_digests()
         problems, seen = [], set()
         for path, data in files:
-            name = ("site-defaults/authorized_keys" if path == "/ssh/authorized_keys"
+            name = ("site-defaults/" + path[len('/ssh/'):] if path.startswith("/ssh/")
                     else f"site-defaults/etc/{path[len('/etc/'):]}")
             seen.add(name)
             want = digests.get(name)
@@ -253,6 +281,9 @@ class Release:
         keys = base / "authorized_keys"
         if keys.is_file():
             files.append(("/ssh/authorized_keys", keys.read_bytes()))
+        local = base / "local-login"
+        if local.is_file():
+            files += oi.local_login_files(self.path, verifier=local)
         return files
 
     def _manifest_doc(self):
@@ -306,8 +337,20 @@ def check_kernel(kernel, release):
         raise Failed("the canonical kernel checkout is never a build target")
     if not (kernel / "Makefile").is_file():
         raise Failed(f"{kernel}: not a kernel checkout")
-    head = oi.identity(kernel)
     want = release.kernel_commit()
+    expected_snapshot = release._manifest_doc().get("source", {}).get("kernel_snapshot")
+    try:
+        actual_snapshot = oi.public_source_identity(kernel)
+    except oi.Failed as error:
+        raise Failed(f"kernel public source mapping refused: {error}") from None
+    if expected_snapshot is not None:
+        if (not isinstance(expected_snapshot, dict) or actual_snapshot != expected_snapshot
+                or actual_snapshot.get("upstream_commit") != want):
+            raise Failed("kernel public source snapshot differs from release mapping")
+        return kernel
+    if actual_snapshot is not None:
+        raise Failed("kernel public source snapshot lacks corresponding release mapping")
+    head = oi.identity(kernel)
     if head != want:
         raise Failed(f"kernel checkout is at {head[:12]}, release {release.id} was built from {want[:12]}")
     return kernel
@@ -330,7 +373,8 @@ class Target:
     def region(self):
         if not self.image.is_file():
             raise Failed(f"{self.image}: no disk image")
-        return absd_fs.fs_region(self.image, oi.DEVICE_SECTORS)
+        # The disk's own geometry (coordination record #28), never the creation size.
+        return absd_fs.fs_region(self.image, disk_sectors(self.image))
 
     def fs_format(self):
         """The format word of the disk's filesystem, from its superblock
@@ -401,6 +445,23 @@ class Target:
     def release_iso(self, release_id):
         return self.out / "releases" / release_id / ISO
 
+    @contextlib.contextmanager
+    def mutation(self, *, replacing=False):
+        """The hand-off boundary with operator-authorized recovery
+        (docs/WRITABLE-ENTRY.md "Operator-authorized resume"): every command
+        that writes the image or replaces its pathname takes the recovery
+        lock for its duration (`tool_busy`), takes and releases QEMU's OFD
+        range lock once before any boot of its own (`image_locked`), and
+        refuses `recovery_pending` while a record is on the disk or an
+        unsuperseded active authorization exists. A replacing command
+        (install --replace, restore --replace, migrate) tolerates an image
+        the host reader cannot read."""
+        try:
+            with storage_fence_resume.mutation(self.out, self.image, replacing=replacing):
+                yield
+        except storage_fence_resume.Refused as error:
+            raise Failed(str(error)) from None
+
 
 # -- writing the disk: importer boots -----------------------------------------
 
@@ -412,24 +473,85 @@ def run_boot(script, iso, image, serial):
                           capture_output=True, text=True).stdout.strip()
 
 
-def importer_boot(script, iso, image, work, index, count, step, entries, log):
+def importer_failure_context(index, count, step, entries, text, plan_record=None):
+    context = {"boot": index, "boot_count": count, "step": step,
+               "planned_entries": len(entries), "entry_identified": False}
+    if plan_record is not None:
+        context["plan_json"] = json.dumps(plan_record, sort_keys=True)
+    matches = re.findall(r"^FIXTURE ENTRY index=(\d+) path_hex=([0-9a-f]+) step=(\d+)$", text, re.M)
+    path = None
+    if matches:
+        entry, encoded, observed_step = matches[-1]
+        entry = int(entry)
+        try:
+            path = bytes.fromhex(encoded).decode("utf-8")
+        except (ValueError, UnicodeError):
+            path = None
+        if int(observed_step) == step and 1 <= entry <= len(entries) and path == entries[entry - 1][0]:
+            context.update(entry_identified=True, entry=entry, entry_path=path)
+            if plan_record is not None:
+                detail = plan_record["files"][entry - 1]
+                for name in ("prefix_bytes", "prefix_sha256", "chunk_bytes", "chunk_sha256",
+                             "result_bytes", "result_sha256", "temporary_blocks"):
+                    context[name] = detail[name]
+    temps = []
+    for encoded, final_hex, fsid, serial, kind in re.findall(
+            r"^FIXTURE TEMP path_hex=([0-9a-f]+) final_hex=([0-9a-f]+) fs_id=(\d+) serial=(\d+) kind=(Dir|File)$",
+            text, re.M):
+        try:
+            temp_path = bytes.fromhex(encoded).decode("utf-8")
+            final = bytes.fromhex(final_hex).decode("utf-8")
+        except (ValueError, UnicodeError):
+            continue
+        if path is not None and final == path:
+            temps.append({"path": temp_path, "fs_id": int(fsid), "serial": int(serial), "kind": kind})
+    context["temporary_paths"] = [record["path"] for record in temps]
+    context["temporary_records_json"] = json.dumps(temps, sort_keys=True)
+    return context
+
+
+def importer_boot(script, iso, image, work, index, count, step, entries, log, plan_record=None, *, fresh=False):
+    try:
+        with storage_fence_host.mutation(image, fresh=fresh):
+            return _importer_boot(script, iso, image, work, index, count, step, entries, log, plan_record)
+    except (ValueError, absd_fs.Refused) as error:
+        raise Failed(str(error)) from error
+
+
+def _importer_boot(script, iso, image, work, index, count, step, entries, log, plan_record):
     serial = pathlib.Path(work) / f"import-{index:03d}.serial.log"
+    def captured_context():
+        text = ssh_absd.captured(serial.read_bytes()) if serial.is_file() else ""
+        return text, importer_failure_context(index, count, step, entries, text, plan_record)
     try:
         status = run_boot(script, iso, image, serial)
-    except subprocess.CalledProcessError as error:
-        raise Failed(f"importer boot {index} (step {step}): {script.name} exited {error.returncode}: "
-                     f"{(error.stderr or '').strip()[-600:]}") from None
-    text = ssh_absd.captured(serial.read_bytes())
+    except (Exception, KeyboardInterrupt) as error:
+        text, context = captured_context()
+        if isinstance(error, KeyboardInterrupt):
+            error.import_context = context
+            raise
+        if isinstance(error, subprocess.CalledProcessError):
+            message = (f"importer boot {index} (step {step}): {script.name} exited {error.returncode}: "
+                       f"{(error.stderr or '').strip()[-600:]}")
+        else:
+            message = f"importer boot {index} (step {step}): {error}"
+        raise ImportFailed(message, context) from error
+    text, context = captured_context()
     if status != "3" or f"FIXTURE IMPORT OK files={len(entries)}" not in text:
-        raise Failed(f"importer boot {index} (step {step}): QEMU status {status}\n{text[-1500:]}")
+        raise ImportFailed(f"importer boot {index} (step {step}): QEMU status {status}\n{text[-1500:]}", context)
     log(f"release: importer boot {index}/{count} step {step}: {len(entries)} files")
 
 
-def import_files(kernel, release, image, files, log, step_override=None):
+def import_files(kernel, release, image, files, log, step_override=None, *, fresh=False):
     """Writes `files` with the release's importer, one boot per plan step."""
     plan = em.import_plan(files)
     if step_override is not None:
         plan = [(step_override, entries) for _, entries in plan]
+    records = [None] * len(plan)
+    if step_override != 5:
+        records, capacity = em.inspect_import_plan(image, plan)
+        log("RELEASE IMPORT CAPACITY " + json.dumps(capacity, sort_keys=True))
+        log("RELEASE IMPORT PLAN " + json.dumps(records, sort_keys=True))
     with tempfile.TemporaryDirectory(prefix="release-", dir=image.parent) as work:
         # The kernel build embeds a private copy checked against the manifest,
         # not the release directory's file, which could change after a check.
@@ -437,7 +559,7 @@ def import_files(kernel, release, image, files, log, step_override=None):
         for index, (step, entries) in enumerate(plan, 1):
             iso = oi.kernel_iso(kernel, step, importer, input_bytes=em.stream(entries), work=work)
             importer_boot(kernel / "scripts" / "durable-boot.sh", iso, image, work, index, len(plan), step, entries,
-                          log)
+                          log, plan_record=records[index - 1], fresh=fresh)
     return len(plan)
 
 
@@ -545,6 +667,10 @@ def verify_files(target, files):
     for path, data in files:
         if found.get(path) != data:
             raise Failed(f"the host reader sees different bytes at {path}")
+    try:
+        oi.verify_import_paths(target.image, files)
+    except oi.Failed as error:
+        raise Failed(str(error)) from None
     return found
 
 
@@ -639,9 +765,28 @@ class Boot:
 
 # -- commands -----------------------------------------------------------------
 
+TARGET_MARKERS = (IMAGE, LEDGER, TARGET, "receipts", "recovery")
+
+
+def refuse_target_directory(out):
+    """`build` never removes an operator directory: any of the layout's
+    own markers (the image, the ledger, TARGET, receipts/, recovery/) in
+    `out` refuses `target_directory`, with or without --replace, whatever
+    records exist. A release directory (release, tree/, the ISO) has none."""
+    out = pathlib.Path(out)
+    if not out.is_dir():
+        return
+    found = [name for name in TARGET_MARKERS if (out / name).exists()]
+    if found:
+        raise Failed(f"target_directory: {out} is an operator directory ({', '.join(found)}); build into a "
+                     f"release directory instead; nothing was removed")
+
+
 def cmd_build(args, log=print):
     """A release directory from the platform's built artifacts."""
     release_id = args.id
+    # Before anything else: an operator directory is never a build output.
+    refuse_target_directory(pathlib.Path(args.out).resolve())
     if not rr.valid_id(release_id):
         raise Failed(f"release id {release_id!r} is not [a-z0-9.-]{{1,64}}")
     root = pathlib.Path(args.platform or ROOT).resolve()
@@ -652,6 +797,7 @@ def cmd_build(args, log=print):
     out = pathlib.Path(args.out).resolve()
     if out.exists() and any(out.iterdir()) and not args.replace:
         raise Failed(f"{out} exists; --replace to rebuild it")
+    local = oi.local_login_files(out, getattr(args, "local_token_file", None), getattr(args, "local_login_verifier", None))
     shutil.rmtree(out, ignore_errors=True)
     (out / "tree").mkdir(parents=True)
     for path, data in oi.system_files(root):
@@ -662,14 +808,15 @@ def cmd_build(args, log=print):
     (out / "site-defaults" / "etc").mkdir(parents=True)
     for path, data in oi.etc_files(args.etc, root):
         (out / "site-defaults" / "etc" / path[len("/etc/"):]).write_bytes(data)
+    (out / "site-defaults" / "local-login").write_bytes(dict(local)["/ssh/local-login"])
     if args.authorized_keys:
         (out / "site-defaults" / "authorized_keys").write_bytes(oi.authorized(args.authorized_keys))
-    for name in ("fixture-import.elf", "absd-fsd.elf", "absd-fsd-regenerate.elf", "sshd.elf"):
+    for name in ("fixture-import.elf", "absd-fsd.elf", "absd-fsd-regenerate.elf", "sshd.elf", "absd-logd.elf"):
         shutil.copyfile(root / name, out / name)
     (out / "release").write_text(record_text(release_id))
     with tempfile.TemporaryDirectory(prefix="release-", dir=out) as work:
         iso = oi.kernel_iso(kernel, 0, root / "sshd.elf", options="net fsd served", server=root / "absd-fsd.elf",
-                            work=work)
+                            work=work, logger=out / "absd-logd.elf")
         shutil.copyfile(iso, out / ISO)
     manifest_tool = here / "release_manifest.py"
     if manifest_tool.is_file():
@@ -680,7 +827,19 @@ def cmd_build(args, log=print):
     log(f"RELEASE BUILT id={release_id} dir={out} iso={sha256_file(out / ISO)[:16]}")
 
 
+def install_image_bytes(args):
+    profile = getattr(args, "disk_profile", None)
+    if profile is None:
+        # Preserve the existing Python API default, including small host fixtures.
+        return oi.IMAGE_BYTES
+    try:
+        return geometry.image_bytes(profile)
+    except ValueError as error:
+        raise Failed(str(error)) from None
+
+
 def cmd_install(args, log=print):
+    install_image_bytes(args)  # Refuse invalid profiles before destination effects.
     release = Release(args.release)
     kernel = check_kernel(args.kernel, release)
     target = Target(args.target)
@@ -689,7 +848,16 @@ def cmd_install(args, log=print):
     if target.identity() not in (None, args.target_identity):
         raise Failed(f"target identity is {target.identity()!r}, not {args.target_identity!r}")
     target.out.mkdir(parents=True, exist_ok=True)
-    files = release.verified_tree_files() + release.verified_site_defaults() + [(rr.SELECTED, rr.selected_bytes(release.id))]
+    # Replacing an existing disk is a mutation of the operator directory:
+    # it waits for the recovery lock and refuses a pending authorization.
+    with (target.mutation(replacing=True) if target.image.exists() else contextlib.nullcontext()):
+        install(args, release, kernel, target, log)
+
+
+def install(args, release, kernel, target, log):
+    image_bytes = install_image_bytes(args)
+    files = (release.verified_tree_files() + release.verified_site_defaults()
+             + [(rr.SELECTED, rr.selected_bytes(release.id))] + storage_fence_state.fresh_files())
     release.verify_artifact("fixture-import.elf")
     release.verify_artifact(ISO)
     if not any(path == "/ssh/authorized_keys" for path, _ in files):
@@ -698,20 +866,30 @@ def cmd_install(args, log=print):
         # Built before the disk is touched: a kernel that cannot build it
         # refuses here, not after the install.
         built = build_select_cache(kernel, release, work)
-        with open(target.image, "wb") as handle:
-            handle.truncate(0)
-            handle.truncate(oi.IMAGE_BYTES)
-        target.image.chmod(0o600)
-        boots = import_files(kernel, release, target.image, files, log)
-        verify_files(target, files)
-        fmt = target.fs_format()
+        new_image = pathlib.Path(work) / "install.img"
+        with open(new_image, "xb") as handle:
+            handle.truncate(image_bytes)
+        new_image.chmod(0o600)
+        scratch = Target(target.out)
+        scratch.image = new_image
+        boots = import_files(kernel, release, new_image, files, log, fresh=True)
+        verify_files(scratch, files)
+        fmt = scratch.fs_format()
         if fmt != release.fields["fs_format"]:
             raise Failed(f"the installed disk reads as format {fmt}, the release expects {release.fields['fs_format']}")
+        # The installed disk must stage a successor of this release's size
+        # (coordination record #28) before it replaces anything.
+        try:
+            oi.check_successor_headroom(new_image, release._tree_bytes()[0], release.id)
+        except oi.Failed as error:
+            raise Failed(str(error)) from None
+        new_image.replace(target.image)
         target.release_iso(release.id).parent.mkdir(parents=True, exist_ok=True)
         release.verified_copy(ISO, target.release_iso(release.id))
         cache = install_select_cache(target, built)
     release.verified_copy(ISO, target.iso)
     (target.out / TARGET).write_text(args.target_identity + "\n")
+    storage_fence_resume.ensure_lock(target.out)
     receipt = target.receipt(f"install-{release.id}", {
         "install": {"release": release.id, "target": args.target_identity, "image": str(target.image),
                     "time_host": now(), "importer_boots": boots, "fs_format": fmt,
@@ -731,65 +909,66 @@ def cmd_install(args, log=print):
     log(f"RELEASE INSTALLED id={release.id} target={args.target_identity} files={len(files)} receipt={receipt.name}")
 
 
+def refuse_other_geometry(target, release):
+    """Stage writes only to exact supported disk sizes. Other geometries
+    (including the historical 64 MiB image) are refused before writes,
+    reporting capacity read-only from the disk's own geometry."""
+    if not target.image.is_file():
+        return
+    size = target.image.stat().st_size
+    if geometry.is_writable_size(size):
+        return
+    files = release.verified_tree_files()
+    if storage_fence_state.RESUME_PATH not in target.tree():
+        files = files + [(storage_fence_state.RESUME_PATH, storage_fence_state.RESUME_NONE)]
+    try:
+        capacity = em.check_import_capacity(target.image, em.import_plan(files))
+        detail = (f"staging {release.id} would need {capacity['peak_extra_blocks']} blocks with "
+                  f"{capacity['free_blocks']} free")
+    except ValueError as error:
+        found = re.search(r"peak_extra_blocks=(\d+) free_blocks=(\d+)", str(error))
+        detail = (f"it cannot stage {release.id}: needs {found[1]} blocks, has {found[2]} free" if found
+                  else f"it cannot stage {release.id}: {error}")
+    raise Failed(f"image_size: {target.image} is a {size} byte ({size / (1 << 20):g} MiB) disk; stage writes only to "
+                 f"the supported {geometry.DEFAULT_IMAGE_BYTES} byte (128 MiB) or "
+                 f"{geometry.LARGE_IMAGE_BYTES} byte (2 GiB) operator image, and {detail}. "
+                 f"Nothing was written; the disk stays usable with the tools that made it")
+
+
 def cmd_stage(args, log=print):
     target = Target(args.target)
     attempt = uuid.uuid4().hex
     release = None
-    effects_possible = False
+    phases, phases_effects = ["prepare"], [False]
+
+    def set_phase(name, effects=False):
+        phases.append(name)
+        phases_effects[0] = phases_effects[0] or effects
     try:
-        phase = "prepare"
         release = Release(args.release)
         kernel = check_kernel(args.kernel, release)
         refuse_unreconciled(target)
-        fmt = target.fs_format()
-        if fmt != release.fields["fs_format"]:
-            raise Failed(f"the disk is format {fmt}; release {release.id} reads format {release.fields['fs_format']}: "
-                         f"migrate first (release.py migrate)")
-        tree = target.tree()
-        present = target.trees(tree)
-        selected = target.selected(tree)
-        if release.id in present:
-            raise Failed(f"release {release.id} is already on the disk; remove it first (release.py remove)")
-        if len(present) >= SLOTS:
-            raise Failed(f"the disk holds {len(present)} releases ({', '.join(present)}); at most {SLOTS}: "
-                         f"remove one that is neither selected ({selected}) nor the last accepted")
-        # STAGED promises every file of the tree matches the manifest: the
-        # bytes the importer writes are the bytes checked here, before any
-        # write, and the host reader compares the disk with them afterwards.
-        phase = "verify-inputs"
-        files = release.verified_tree_files()
-        release.verify_artifact("fixture-import.elf")
-        release.verify_artifact(ISO)
-        with tempfile.TemporaryDirectory(prefix="release-cache-", dir=target.out) as work:
-            phase = "build-selection-cache"
-            built = build_select_cache(kernel, release, work)
-            phase = "import"
-            # From this call onward a failed boot may have committed disk changes.
-            effects_possible = True
-            boots = import_files(kernel, release, target.image, files, log)
-            phase = "verify-target"
-            verify_files(target, files)
-            after = target.tree()
-            if target.selected(after) != selected:
-                raise Failed("staging changed the selection; this must not happen")
-            phase = "copy-boot-image"
-            target.release_iso(release.id).parent.mkdir(parents=True, exist_ok=True)
-            release.verified_copy(ISO, target.release_iso(release.id))
-            phase = "install-selection-cache"
-            cache = install_select_cache(target, built)
-        phase = "record-staged"
-        receipt = target.receipt(f"stage-{release.id}", {
-            "stage": {"release": release.id, "time_host": now(), "importer_boots": boots, "selected_before": selected,
-                      "selected_after": target.selected(after), "state": "STAGED",
-                      "manifest": sha256_file(release.manifest), "manifest_verified": "tree,record,fixture-import.elf(copy),iso(copy)"},
-            "identity": {k: release.fields[k] for k in IDENTITY},
-            "select_cache": cache,
-        })
-        target.ledger_append("staged", release.id, f"receipt={receipt.name}")
+        refuse_other_geometry(target, release)
+        # The recovery lock is held through the read-back, the boot image,
+        # the selection cache, the receipt and the ledger line.
+        with target.mutation():
+            boots, cache, selected, after, slot_added = stage(args, target, release, kernel, log, set_phase)
+            set_phase("record-staged")
+            receipt = target.receipt(f"stage-{release.id}", {
+                "stage": {"release": release.id, "time_host": now(), "importer_boots": boots, "selected_before": selected,
+                          "selected_after": target.selected(after), "state": "STAGED",
+                          "resume_slot": "added" if slot_added else "present",
+                          "manifest": sha256_file(release.manifest), "manifest_verified": "tree,record,fixture-import.elf(copy),iso(copy)"},
+                "identity": {k: release.fields[k] for k in IDENTITY},
+                "select_cache": cache,
+            })
+            target.ledger_append("staged", release.id, f"receipt={receipt.name}")
         log(f"RELEASE STAGED id={release.id} selected={selected} trees={','.join(target.trees(after))}")
     except (Exception, KeyboardInterrupt) as error:
         # This is an operation outcome, not a claim that the disk rolled back.
         # Do not probe a possibly half-written filesystem to guess success.
+        phase = phases[-1]
+        effects_possible = phases_effects[0]
         state = "INDETERMINATE" if effects_possible else "REFUSED"
         reason = str(error) or type(error).__name__
         data = {"stage": {
@@ -798,6 +977,8 @@ def cmd_stage(args, log=print):
             "release_source": str(args.release), "error": reason,
             "target_effects_possible": effects_possible,
         }}
+        if hasattr(error, "import_context"):
+            data["import_failure"] = error.import_context
         try:
             receipt = target.receipt(f"stage-failed-{attempt}", data)
             detail = f"receipt={receipt}"
@@ -810,6 +991,61 @@ def cmd_stage(args, log=print):
             log(message)
             raise
         raise StageFailed(message, state) from error
+
+
+def stage(args, target, release, kernel, log, set_phase):
+    """The staging work under the recovery lock: the disk read, inputs
+    verified, the importer boots, the read-back, the boot image and the
+    selection cache. A clean image without a resume slot gets one
+    (`/var/recovery.resume` = none) in the same importer entries and guard
+    transaction (DESIGN-v5 2.7)."""
+    def phase(name):
+        set_phase(name)
+    phase("prepare")
+    fmt = target.fs_format()
+    if fmt != release.fields["fs_format"]:
+        raise Failed(f"the disk is format {fmt}; release {release.id} reads format {release.fields['fs_format']}: "
+                     f"migrate first (release.py migrate)")
+    tree = target.tree()
+    present = target.trees(tree)
+    selected = target.selected(tree)
+    if release.id in present:
+        raise Failed(f"release {release.id} is already on the disk; remove it first (release.py remove)")
+    if len(present) >= SLOTS:
+        raise Failed(f"the disk holds {len(present)} releases ({', '.join(present)}); at most {SLOTS}: "
+                     f"remove one that is neither selected ({selected}) nor the last accepted")
+    # STAGED promises every file of the tree matches the manifest: the
+    # bytes the importer writes are the bytes checked here, before any
+    # write, and the host reader compares the disk with them afterwards.
+    phase("verify-inputs")
+    files = release.verified_tree_files()
+    slot_added = storage_fence_state.RESUME_PATH not in tree
+    if slot_added:
+        files = files + [(storage_fence_state.RESUME_PATH, storage_fence_state.RESUME_NONE)]
+    release.verify_artifact("fixture-import.elf")
+    release.verify_artifact(ISO)
+    oi.verify_import_paths(target.image, files)
+    em.check_import_capacity(target.image, em.import_plan(files))
+    with tempfile.TemporaryDirectory(prefix="release-cache-", dir=target.out) as work:
+        phase("build-selection-cache")
+        built = build_select_cache(kernel, release, work)
+        phase("import")
+        # From this call onward a failed boot may have committed disk changes.
+        set_phase("import", effects=True)
+        boots = import_files(kernel, release, target.image, files, log)
+        phase("verify-target")
+        verify_files(target, files)
+        after = target.tree()
+        if target.selected(after) != selected:
+            raise Failed("staging changed the selection; this must not happen")
+        if slot_added and after.get(storage_fence_state.RESUME_PATH) != storage_fence_state.RESUME_NONE:
+            raise Failed("the resume slot was not added as none; this must not happen")
+        phase("copy-boot-image")
+        target.release_iso(release.id).parent.mkdir(parents=True, exist_ok=True)
+        release.verified_copy(ISO, target.release_iso(release.id))
+        phase("install-selection-cache")
+        cache = install_select_cache(target, built)
+    return boots, cache, selected, after, slot_added
 
 
 def select_release(target, kernel, release, log, action):
@@ -840,12 +1076,228 @@ def write_selection(target, release_id, write, boot_image, log, action, detail):
     log(f"RELEASE {action.upper()} id={release_id} from={before}: boot {target.iso}")
 
 
+# What a failed `reconfigure` leaves, by the phase it failed in
+# (docs/RELEASE.md section 5, Reconfigure).
+RECONFIGURE_STATES = {
+    "prepare": "REFUSED", "verify-inputs": "REFUSED",
+    "import": "INDETERMINATE", "verify-target": "INDETERMINATE", "revalidate": "INDETERMINATE",
+    # The receipt is not under its final name: none was published.
+    "record-receipt": "RECONFIGURED_UNRECORDED",
+    # The receipt is under its final name; its directory entry is not
+    # known to be durable. The ledger was not written.
+    "sync-receipt": "RECONFIGURED_RECEIPT_UNSYNCED",
+    # The ledger append raised: RELEASES may hold no, part of, or the whole line.
+    "publish-ledger": "RECONFIGURED_PUBLICATION_UNCERTAIN",
+}
+
+
+def installation_evidence(target, release):
+    """The newest install or stage receipt of `release` on this target,
+    and the manifest digest it recorded; (None, None) only when there is
+    none at all (a migrated or restored release records none). A newest
+    receipt that cannot be read, or lacks the release or the manifest,
+    refuses: damaged evidence is not absent evidence."""
+    pattern = re.compile(rf"(install|stage)-{re.escape(release.id)}-(\d{{4}}-\d\d-\d\dT\d{{6}}Z)\.toml")
+    found = sorted(((m.group(2), m.group(1), path) for path in target.receipts.iterdir()
+                    if (m := pattern.fullmatch(path.name))), reverse=True)
+    if not found:
+        return None, None
+    _, action, path = found[0]
+    try:
+        section = read_toml_flat(path).get(action)
+    except (OSError, ValueError, UnicodeError) as error:
+        raise Failed(f"installation_evidence_unreadable: {path}: {error}") from None
+    if (not isinstance(section, dict) or section.get("release") != release.id
+            or not isinstance(section.get("manifest"), str) or not re.fullmatch(r"[0-9a-f]{64}", section["manifest"])):
+        raise Failed(f"installation_evidence_malformed: {path} does not name release {release.id} and its manifest")
+    return path, section["manifest"]
+
+
+def fsync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def cmd_reconfigure(args, log=print):
+    """/etc files (and authorized_keys) replaced whole on a halted target,
+    one importer step 4 boot of the SELECTED release's verified importer
+    under a kernel at its manifest's commit, read back, then a receipt and
+    a `reconfigured` ledger line. Everything that can refuse without a boot
+    refuses first. A refusal never writes the image, the guard or the
+    ledger; it may leave two things: the failure receipt (best effort), and
+    OUT/recovery/lock, which Target.mutation creates on a target that
+    lacked it and which no tool ever removes (permitted refusal
+    bookkeeping, as for every mutator)."""
+    target = Target(args.target)
+    attempt = uuid.uuid4().hex
+    release = selected = None
+    phase, receipt, files, temp, line = "prepare", None, [], None, b""
+    # The recovery lock (Target.mutation), held from the prepare phase
+    # through the ledger and the failure receipt; its refusal is a prepare
+    # refusal like any other, with its failure receipt.
+    held = contextlib.ExitStack()
+    try:
+        # Where the result is recorded: a release.py operator directory.
+        for name in (TARGET, LEDGER):
+            if not (target.out / name).is_file() or (target.out / name).is_symlink():
+                raise Failed(f"{target.out / name}: not a regular file; reconfigure records into an operator "
+                             "directory of release.py install")
+        if os.path.lexists(target.receipts) and (target.receipts.is_symlink() or not target.receipts.is_dir()):
+            raise Failed(f"{target.receipts}: not a directory")
+        target.receipts.mkdir(exist_ok=True)
+        for path in (target.receipts, target.ledger):
+            if not os.access(path, os.W_OK):
+                raise Failed(f"{path}: not writable")
+        release = Release(args.release)
+        kernel = check_kernel(args.kernel, release)
+        refuse_unreconciled(target)
+        held.enter_context(target.mutation())
+        refuse_in_use(target.image, "a reconfiguration")
+        tree = target.tree()
+        selected = target.selected(tree)
+        if selected != release.id:
+            raise Failed(f"the disk selects {selected}; reconfigure writes with the selected release's importer: "
+                         f"give --release <the directory of {selected}> and --kernel at its commit")
+        record_path = f"{rr.tree_root(selected)}/release"
+        record = tree.get(record_path)
+        if record is None:
+            raise Failed("no_release_tree")
+        if parse_record(record)["release"] != selected:
+            raise Failed(f"release_mismatch: {record_path} names another release")
+        digests = release.artifact_digests()
+        if hashlib.sha256(record).hexdigest() != digests.get("release"):
+            raise Failed(f"manifest_mismatch: {record_path} on the disk is not the record of {release.path}")
+        evidence, evidence_manifest = installation_evidence(target, release)
+        if evidence is not None and evidence_manifest != sha256_file(release.manifest):
+            raise Failed(f"manifest_mismatch: {release.manifest} is not the manifest {evidence.name} recorded")
+        fmt = target.fs_format()
+        if fmt != release.fields["fs_format"]:
+            raise Failed(f"the disk is format {fmt}; release {release.id} reads format {release.fields['fs_format']}")
+        phase = "verify-inputs"
+        files = [(f"/etc/{p.name}", p.read_bytes()) for p in sorted(pathlib.Path(args.etc).iterdir()) if p.is_file()]
+        if args.authorized_keys is not None:
+            files.append(("/ssh/authorized_keys", oi.authorized(args.authorized_keys)))
+        if not files:
+            raise Failed(f"nothing to replace in {args.etc}")
+        if len(em.import_plan(files)) != 1:
+            raise Failed(f"the files exceed one importer boot ({em.IMPORT_BUDGET} bytes); reconfigure replaces "
+                         "them in one boot")
+        release.verify_artifact("fixture-import.elf")
+        oi.verify_import_paths(target.image, files)
+        em.check_import_capacity(target.image, [(4, files)])
+        # Everything but the replacements and the guard, by content and by
+        # name (directories included), to compare after the boot.
+        kept = set(dict(files)) | {storage_fence_state.PATH}
+        rest = {p: d for p, d in tree.items() if p not in kept}
+        names = set(oi.namespace(target.image)) - kept
+        phase = "import"
+        boots = import_files(kernel, release, target.image, files, log, step_override=4)
+        phase = "verify-target"
+        verify_files(target, files)
+        phase = "revalidate"
+        # Exclusive use is the operator's (docs/RELEASE.md section 5): a
+        # change by another operation is caught here, not prevented.
+        after = target.tree()
+        if {p: d for p, d in after.items() if p not in kept} != rest or set(oi.namespace(target.image)) - kept != names:
+            raise Failed("a file other than the replacements was added, removed or changed during the "
+                         "reconfiguration: another operation used this target")
+        phase = "record-receipt"
+        # Published by one link of a synced temporary file: a failure before
+        # it leaves no receipt under the final name (the temporary is
+        # removed, best effort).
+        final = target.receipts / f"reconfigure-{selected}-{now().replace(':', '')}.toml"
+        temp = target.receipts / f".{final.name}.{attempt}.tmp"
+        body = toml_dump({
+            "reconfigure": {"release": selected, "target": target.identity(), "image": str(target.image),
+                            "time_host": now(), "state": "RECONFIGURED", "importer_boots": boots,
+                            "files": [f"{hashlib.sha256(d).hexdigest()} {p}" for p, d in sorted(files)],
+                            "selected": selected, "manifest": sha256_file(release.manifest),
+                            "installation_evidence": evidence.name if evidence is not None else "none",
+                            "manifest_verified": "record(disk),fixture-import.elf(copy)",
+                            "verification": "every replaced file read back by scripts/absd_fs.py; every other "
+                                            "file and name on the disk unchanged"},
+            "identity": {k: release.fields[k] for k in IDENTITY},
+            "provenance": {"kernel_commit": release.kernel_commit(),
+                           "fixture_import": digests["fixture-import.elf"]},
+        }).encode()
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        try:
+            view = memoryview(body)
+            while view:
+                view = view[os.write(fd, view):]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.link(temp, final)
+        receipt = final
+        phase = "sync-receipt"
+        os.unlink(temp)
+        fsync_directory(target.receipts)
+        phase = "publish-ledger"
+        line = f"{now()} reconfigured {selected} receipt={receipt.name}\n".encode()
+        fd = os.open(target.ledger, os.O_WRONLY | os.O_APPEND)
+        try:
+            if os.write(fd, line) != len(line):
+                raise OSError(f"short write to {target.ledger}")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except (Exception, KeyboardInterrupt) as error:
+        state = RECONFIGURE_STATES[phase]
+        reason = str(error) or type(error).__name__
+        data = {"reconfigure": {
+            "attempt": attempt, "state": state, "time_host": now(), "phase": phase,
+            "release": selected or (release.id if release is not None else "unknown"),
+            "files": [p for p, _ in files], "error": reason,
+            "receipt": receipt.name if receipt is not None else "none",
+            "target_effects_possible": state != "REFUSED",
+        }}
+        if hasattr(error, "import_context"):
+            data["import_failure"] = error.import_context
+        try:
+            failed = target.receipt(f"reconfigure-failed-{attempt}", data)
+            detail = f"failure receipt={failed}"
+        except Exception as receipt_error:
+            detail = f"failure receipt unavailable: {receipt_error}"
+        if phase == "record-receipt":
+            try:
+                if os.path.lexists(temp):
+                    os.unlink(temp)
+                detail = "no receipt published; ledger not written; " + detail
+            except OSError as cleanup:
+                detail = f"no receipt published; temporary {temp} left ({cleanup}): remove it; ledger not written; " + detail
+        elif phase == "sync-receipt":
+            detail = (f"receipt={receipt} published, its directory not synced"
+                      + (f", temporary {temp} still present (remove it)" if os.path.lexists(temp) else "")
+                      + "; ledger not written; " + detail)
+        elif phase == "publish-ledger":
+            detail = (f"receipt={receipt} published; {target.ledger} may hold none, part or all of the line "
+                      f"{line.decode().strip()!r}: reconcile it (docs/OPERATOR-RUNBOOK.md section 13); " + detail)
+        message = f"{reason}\nreconfigure state={state} phase={phase} {detail}"
+        if isinstance(error, KeyboardInterrupt):
+            log(message)
+            raise
+        raise ReconfigureFailed(message, state) from error
+    finally:
+        held.close()
+    # Outside the failure boundary: a reporting fault cannot relabel a
+    # published reconfiguration; the receipt and the ledger line are its record.
+    try:
+        log(f"RELEASE RECONFIGURED id={selected} files={','.join(p for p, _ in files)} receipt={receipt.name}")
+    except Exception:
+        pass
+
+
 def cmd_select(args, log=print):
     release = Release(args.release)
     kernel = check_kernel(args.kernel, release)
     target = Target(args.target)
     refuse_unreconciled(target)
-    select_release(target, kernel, release, log, "selected")
+    with target.mutation():
+        select_release(target, kernel, release, log, "selected")
 
 
 def cmd_rollback(args, log=print):
@@ -854,6 +1306,11 @@ def cmd_rollback(args, log=print):
     with --kernel, by its importer built from that kernel."""
     target = Target(args.target)
     refuse_unreconciled(target)
+    with target.mutation():
+        rollback(args, target, log)
+
+
+def rollback(args, target, log):
     tree = target.tree()
     selected = target.selected(tree)
     accepted = [line.split()[2] for line in target.ledger_lines() if line.split()[1:2] == ["accepted"]]
@@ -898,6 +1355,13 @@ def cmd_accept(args, log=print):
     if not target.iso.is_file():
         raise Failed(f"{target.iso}: no boot image")
     key = pathlib.Path(args.key).resolve()
+    # The acceptance boot is a mutation of the disk: the recovery lock is
+    # held for the run and the OFD probe released before QEMU starts.
+    with target.mutation():
+        accept(args, target, release_id, record, key, log)
+
+
+def accept(args, target, release_id, record, key, log):
     boot = Boot(target, target.iso, f"accept-{release_id}", args.port)
     checks = {}
     try:
@@ -1005,18 +1469,44 @@ def cmd_backup(args, log=print):
     """A halted backup: the image copied and validated, with its identity."""
     target = Target(args.target)
     dest = pathlib.Path(args.backup).resolve()
+    point = bool(getattr(args, "recovery_point", False))
+    if point and (dest.exists() or pathlib.Path(args.backup).is_symlink()):
+        raise Failed("recovery_point_destination_exists: a recovery point needs a new backup directory")
     if dest.exists() and any(dest.iterdir()):
         raise Failed(f"{dest} is not empty")
     if not target.image.is_file():
         raise Failed(f"{target.image}: no disk image")
+    # Allowed while an authorization is pending (it reads the source and
+    # writes a separate copy), but never beside a running boot-operator.sh
+    # or another tool: the recovery lock serializes it (`tool_busy`).
+    try:
+        with storage_fence_resume.recovery_lock(target.out):
+            backup(args, target, dest, log)
+    except storage_fence_resume.Refused as error:
+        raise Failed(str(error)) from None
+
+
+def backup(args, target, dest, log):
+    point = bool(getattr(args, "recovery_point", False))
     refuse_in_use(target.image)
     tree = target.tree()
     fmt = target.fs_format()
     selected = target.selected(tree)
+    point_table = None
+    point_iso = None
+    if point:
+        try:
+            recovery_point.require_clean(tree)
+            recovery_point.source_identity(target.identity())
+            point_iso = recovery_point.capture_iso(target.out, selected, ISO)
+            point_table = recovery_point.table(tree, selected, point_iso)
+        except recovery_point.Refused as error:
+            raise Failed(str(error)) from None
     region = target.region()
     image = absd_fs.select(region)
+    pending = storage_fence_resume.pending_id(target.out, target.image)
     created = not dest.exists()
-    dest.mkdir(parents=True, exist_ok=True)
+    dest.mkdir(mode=0o700, parents=True, exist_ok=not point)
     copy = dest / IMAGE
     try:
         shutil.copyfile(target.image, copy)
@@ -1043,15 +1533,25 @@ def cmd_backup(args, log=print):
                  "commit_sequence": image["seq"], "files": len(tree), "files_digest": files_digest},
         "release": {"selected": selected or "none", "trees": target.trees(tree)},
         "identity": {"host_key_fingerprint": host_key_fingerprint(seed) if seed else "none (no host key yet)"},
+        # A copy taken after an act carries the record; the label is how
+        # the host tells it from the machine (DESIGN-v5 2.3, limit i).
+        "recovery": {"pending_id": pending},
     }
+    if point:
+        record["recovery"] = point_table
     (dest / "backup.toml").write_text(toml_dump(record))
     for rid in target.trees(tree):
         iso = target.release_iso(rid)
         if iso.is_file():
             (dest / "releases" / rid).mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(iso, dest / "releases" / rid / ISO)
+            if point and rid == selected:
+                (dest / "releases" / rid / ISO).write_bytes(point_iso)
+            else:
+                shutil.copyfile(iso, dest / "releases" / rid / ISO)
     target.ledger_append("backup", selected or "none", f"dir={dest}")
     log(f"BACKUP OK dir={dest} selected={selected} format={fmt} seq={image['seq']} files={len(tree)}")
+    if point:
+        log(f"RECOVERY POINT SHA256 {sha256_file(dest / 'backup.toml')} selected={selected}")
 
 
 def read_toml_flat(path):
@@ -1072,8 +1572,8 @@ def validate_backup(backup):
     copy = backup / IMAGE
     if not copy.is_file():
         raise Failed(f"{backup}: no image")
-    if copy.stat().st_size != oi.IMAGE_BYTES:
-        raise Failed(f"{copy}: {copy.stat().st_size} bytes, not an operator image ({oi.IMAGE_BYTES})")
+    # The backup keeps its disk's geometry; restore copies it as it is.
+    sectors = disk_sectors(copy)
     if sha256_file(copy) != meta["disk"]["image_sha256"]:
         raise Failed("the backup image's digest is not the one backup.toml records")
     scratch = Target(backup)
@@ -1086,7 +1586,7 @@ def validate_backup(backup):
         tree = oi.tree(copy)
     except absd_fs.Refused as error:
         raise Failed(f"the host reader refuses the backup image: {error}")
-    region = absd_fs.fs_region(copy, oi.DEVICE_SECTORS)
+    region = absd_fs.fs_region(copy, sectors)
     image = absd_fs.select(region)
     if image["fs_id"] != meta["disk"]["fs_id"] or image["seq"] != meta["disk"]["commit_sequence"]:
         raise Failed("the backup image's filesystem identity or sequence is not the one backup.toml records")
@@ -1097,12 +1597,99 @@ def validate_backup(backup):
     return meta, tree, selected
 
 
+def recovery_snapshot(args):
+    # Validated at the point's own geometry; recovery_point still requires
+    # exactly that size of the bytes it reads.
+    sectors = disk_sectors(pathlib.Path(args.backup) / IMAGE)
+    # Preserve the legacy read bound and separately admit the exact large
+    # profile. Do not expand this into an arbitrary <=2 GiB whole-image read.
+    if (sectors * absd_fs.SECTOR > oi.IMAGE_BYTES
+            and sectors * absd_fs.SECTOR != geometry.LARGE_IMAGE_BYTES):
+        raise Failed(f"recovery_point_member_size: the image is {sectors * absd_fs.SECTOR} bytes; "
+                     f"recovery reads at most {oi.IMAGE_BYTES} bytes or exactly {geometry.LARGE_IMAGE_BYTES} bytes")
+    try:
+        point = recovery_point.validate(args.backup, getattr(args, "recovery_point_sha256", None),
+                                        getattr(args, "expected_release", None), image_name=IMAGE,
+                                        image_bytes=sectors * absd_fs.SECTOR, iso_name=ISO,
+                                        device_sectors=sectors)
+    except recovery_point.Refused as error:
+        raise Failed(str(error)) from None
+    try:
+        refuse_in_use(pathlib.Path(args.backup) / IMAGE, before="a pinned recovery restore")
+    except OSError as error:
+        raise Failed(f"recovery_point_input_changed: {error.strerror}") from None
+    return point
+
+
+def write_recovery_file(path, data):
+    """Exclusive construction from verified bytes; never reopens the backup."""
+    with pathlib.Path(path).open("xb") as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    if sha256_file(path) != recovery_point.digest(data):
+        raise Failed("recovery_point_copy_mismatch: constructed bytes differ from the verified snapshot")
+
+
+def restore_recovery_point(args, log):
+    if args.clone or args.replace or args.release or args.kernel:
+        raise Failed("recovery_point_mode_conflict: strict recovery is fresh same-machine restore; "
+                     "no --replace, --clone, --release or --kernel")
+    point = recovery_snapshot(args)  # Complete admission before destination effects.
+    source_identity = point.metadata["backup"]["target"]
+    if args.target_identity is not None and args.target_identity != source_identity:
+        raise Failed("recovery_point_identity: replacement must keep this logical machine identity")
+    raw_target = pathlib.Path(args.target)
+    target = Target(args.target)
+    if raw_target.is_symlink() or target.out.exists():
+        raise Failed("recovery_point_target_exists: strict recovery requires a new operator directory")
+    try:
+        target.out.mkdir(mode=0o700, parents=True, exist_ok=False)
+    except FileExistsError:
+        raise Failed("recovery_point_target_exists: destination appeared during admission") from None
+    # An I/O failure from here is unfinished construction, not served recovery.
+    # No old image is replaced and the source point is never modified.
+    try:
+        write_recovery_file(target.image, point.image)
+        target.release_iso(point.selected).parent.mkdir(parents=True)
+        write_recovery_file(target.release_iso(point.selected), point.iso)
+        write_recovery_file(target.iso, point.iso)
+        write_recovery_file(target.out / TARGET, (source_identity + "\n").encode())
+        receipt = target.receipt(f"restore-{point.selected}", {
+            "restore": {"backup": str(pathlib.Path(args.backup).absolute()), "release": point.selected,
+                        "time_host": now(), "clone": False, "fresh_target": True,
+                        "recovery_point_schema": recovery_point.SCHEMA,
+                        "recovery_point_sha256": point.metadata_sha256,
+                        "image_sha256": point.metadata["disk"]["image_sha256"],
+                        "fs_format": point.metadata["disk"]["fs_format"],
+                        "guard": "copied unchanged from pinned clean point; never reset"}})
+        target.ledger_append("restored", point.selected, f"point={point.metadata_sha256} receipt={receipt.name}")
+    except (OSError, Failed) as error:
+        raise Failed(f"recovery_point_construction_incomplete: {target.out}: {error}; "
+                     "reconcile this destination before reuse; the source point is unchanged") from None
+    log(f"RESTORE COPIED release={point.selected} recovery_point={point.metadata_sha256} fresh_target=true")
+
+
 def cmd_restore(args, log=print):
-    import contextlib
+    if (getattr(args, "recovery_point_sha256", None) is not None
+            or getattr(args, "expected_release", None) is not None):
+        return restore_recovery_point(args, log)
     target = Target(args.target)
     if args.clone and not (args.release and args.kernel and args.key):
         raise Failed("--clone needs --release <directory of the selected release>, --kernel and --key")
     meta, tree, selected = validate_backup(args.backup)
+    # A clone boots the copied image writably (a new host key): a write, so
+    # only at an exact supported size. A plain restore copies any valid geometry
+    # unchanged (coordination record #28).
+    size = (pathlib.Path(args.backup) / IMAGE).stat().st_size
+    if args.clone and not geometry.is_writable_size(size):
+        raise Failed(f"image_size: the backup image is {size} bytes; --clone boots it writably and writes only to the "
+                     f"supported {geometry.DEFAULT_IMAGE_BYTES} byte (128 MiB) or {geometry.LARGE_IMAGE_BYTES} byte "
+                     f"(2 GiB) operator image. A plain restore keeps its geometry unchanged")
+    if "recovery" in meta and set(meta["recovery"]) != {"pending_id"}:
+        raise Failed("recovery_point_strict_required: use --recovery-point-sha256 and --expected-release "
+                     "with a new operator directory")
     clone = None
     if args.clone:
         # Before the image is replaced: a clone that cannot regenerate the
@@ -1131,36 +1718,62 @@ def cmd_restore(args, log=print):
     iso = backup / "releases" / selected / ISO
     if not iso.is_file() and not target.release_iso(selected).is_file():
         raise Failed(f"no boot image for the selected release {selected} in the backup or the target")
-    target.out.mkdir(parents=True, exist_ok=True)
     if target.image.exists() and not args.replace:
         raise Failed(f"{target.image} exists; --replace to restore over it")
-    cache_work = (tempfile.TemporaryDirectory(prefix="release-cache-", dir=target.out) if clone
-                  else contextlib.nullcontext())
-    with cache_work as work:
-        # A clone keeps its selected release's selection image, as install
-        # does; built before the disk is touched (a backup carries none).
-        built = build_select_cache(clone[1], clone[0], work) if clone else None
-        temp = target.image.with_suffix(".img.restoring")
-        shutil.copyfile(backup / IMAGE, temp)
-        temp.chmod(0o600)
-        if sha256_file(temp) != meta["disk"]["image_sha256"]:
-            temp.unlink()
-            raise Failed("the restored copy differs from the backup")
-        temp.replace(target.image)
-        if iso.is_file():
-            target.release_iso(selected).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(iso, target.release_iso(selected))
-        shutil.copyfile(target.release_iso(selected), target.iso)
-        if not (target.out / TARGET).is_file():
-            (target.out / TARGET).write_text((args.target_identity or meta["backup"]["target"]) + "\n")
-        receipt = target.receipt(f"restore-{selected}", {
-            "restore": {"backup": str(backup), "release": selected, "time_host": now(), "clone": bool(args.clone),
-                        "image_sha256": meta["disk"]["image_sha256"], "fs_format": meta["disk"]["fs_format"]}})
-        target.ledger_append("restored", selected, f"from={backup} receipt={receipt.name}")
-        log(f"RESTORE COPIED release={selected} format={meta['disk']['fs_format']} "
-            f"seq={meta['disk']['commit_sequence']}")
-        if clone:
-            clone_identity(target, selected, *clone, args, log, built, meta)
+    # Legacy targets without a recovery lock retain their read-only refusal
+    # preflight: acquiring mutation() would create recovery/lock. Installed
+    # targets already have the lock and must meet tool_busy first. Every
+    # admitted replacement still rechecks pending/history under mutation().
+    lock = target.out / storage_fence_resume.RECOVERY / storage_fence_resume.LOCK
+    if target.image.exists() and not lock.exists():
+        refuse_in_use(target.image, before="a legacy replacement restore")
+        try:
+            storage_fence_resume.refuse_pending(target.out, target.image, replacing=True)
+        except storage_fence_resume.Refused as error:
+            raise Failed(str(error)) from None
+        try:
+            recovery_point.require_clean_history(target.tree())
+        except (Failed, recovery_point.Refused, absd_fs.Refused, oi.Failed, ValueError) as error:
+            raise Failed(f"restore_target_not_clean: {error}; retain this image and use a fresh target") from None
+    target.out.mkdir(parents=True, exist_ok=True)
+    replacing = target.mutation(replacing=True) if target.image.exists() else contextlib.nullcontext()
+    with replacing:
+        # The launcher recovery lock is the first existing-target boundary.
+        # Keep open-image and clean-history refusals before any restore or
+        # clone-cache effects, while retaining the mutation lock throughout.
+        if target.image.exists():
+            refuse_in_use(target.image, before="a legacy replacement restore")
+            try:
+                recovery_point.require_clean_history(target.tree())
+            except (Failed, recovery_point.Refused, absd_fs.Refused, oi.Failed, ValueError) as error:
+                raise Failed(f"restore_target_not_clean: {error}; retain this image and use a fresh target") from None
+        cache_work = (tempfile.TemporaryDirectory(prefix="release-cache-", dir=target.out) if clone
+                      else contextlib.nullcontext())
+        with cache_work as work:
+            # A clone keeps its selected release's selection image, as install
+            # does; built before the disk is touched (a backup carries none).
+            built = build_select_cache(clone[1], clone[0], work) if clone else None
+            temp = target.image.with_suffix(".img.restoring")
+            shutil.copyfile(backup / IMAGE, temp)
+            temp.chmod(0o600)
+            if sha256_file(temp) != meta["disk"]["image_sha256"]:
+                temp.unlink()
+                raise Failed("the restored copy differs from the backup")
+            temp.replace(target.image)
+            if iso.is_file():
+                target.release_iso(selected).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(iso, target.release_iso(selected))
+            shutil.copyfile(target.release_iso(selected), target.iso)
+            if not (target.out / TARGET).is_file():
+                (target.out / TARGET).write_text((args.target_identity or meta["backup"]["target"]) + "\n")
+            receipt = target.receipt(f"restore-{selected}", {
+                "restore": {"backup": str(backup), "release": selected, "time_host": now(), "clone": bool(args.clone),
+                            "image_sha256": meta["disk"]["image_sha256"], "fs_format": meta["disk"]["fs_format"]}})
+            target.ledger_append("restored", selected, f"from={backup} receipt={receipt.name}")
+            log(f"RESTORE COPIED release={selected} format={meta['disk']['fs_format']} "
+                f"seq={meta['disk']['commit_sequence']}")
+            if clone:
+                clone_identity(target, selected, *clone, args, log, built, meta)
 
 
 def clone_identity(target, release_id, release, kernel, args, log, built, meta):
@@ -1173,8 +1786,15 @@ def clone_identity(target, release_id, release, kernel, args, log, built, meta):
     key = pathlib.Path(args.key).resolve()
     before = target.tree().get("/ssh/host_ed25519_seed")
     with tempfile.TemporaryDirectory(prefix="release-", dir=target.out) as work:
+        # Historical releases keep their own boot composition. A declared
+        # logger is copied and checked before this regenerate image consumes it.
+        logger = ""
+        if "absd-logd.elf" in release.artifact_digests():
+            logger = release.verified_copy("absd-logd.elf", pathlib.Path(work) / "absd-logd.elf")
+        elif release._manifest_doc().get("build", {}).get("kernel_image", {}).get("LOGD_ELF"):
+            raise Failed("manifest_mismatch unrecorded logger artifact")
         iso = oi.kernel_iso(kernel, 0, release.path / "sshd.elf", options="net fsd served",
-                            server=release.path / "absd-fsd-regenerate.elf", work=work)
+                            server=release.path / "absd-fsd-regenerate.elf", work=work, logger=logger)
         boot = Boot(target, iso, f"clone-{release_id}", args.port)
         try:
             ready = boot.wait_ready(release_id)
@@ -1222,25 +1842,40 @@ def cmd_migrate(args, log=print):
     kernel = check_kernel(args.kernel, release)
     target = Target(args.target)
     refuse_unreconciled(target)
+    with target.mutation(replacing=True):
+        migrate(args, release, kernel, target, log)
+
+
+def migrate(args, release, kernel, target, log):
     old_format = target.fs_format()
     if old_format == release.fields["fs_format"]:
         raise Failed(f"the disk is already format {old_format}; use stage/select")
     old_tree = target.tree()
+    # A new backing file excludes old device effects, but does not grant
+    # permission to discard logical recovery history or reset its budget.
+    # Legacy inputs with that state need an explicit conversion rule.
+    history = [path for path in old_tree if path in ("/var/state", "/var/state.new")
+               or path.startswith(("/var/state/", "/var/state.new/"))]
+    old_guard = old_tree.get(storage_fence_state.PATH)
+    if history or old_guard not in (None, storage_fence_state.FRESH):
+        raise Failed("migration_recovery_history: existing or unclean recovery state requires an explicit "
+                     "new-device conversion; migration never resets it")
     site = [(path, data) for path, data in sorted(old_tree.items())
-            if any(path == root or path.startswith(root + "/") for root in SITE_ROOTS)]
-    files = release.verified_tree_files() + site + [(rr.SELECTED, rr.selected_bytes(release.id))]
+            if any(path == root or path.startswith(root + "/") for root in SITE_ROOTS)
+            and path not in (storage_fence_state.PATH, storage_fence_state.RESUME_PATH)]
+    files = (release.verified_tree_files() + site + [(rr.SELECTED, rr.selected_bytes(release.id))]
+             + storage_fence_state.fresh_files())
     release.verify_artifact("fixture-import.elf")
     release.verify_artifact(ISO)
     new_image = target.image.with_suffix(".img.migrating")
     with tempfile.TemporaryDirectory(prefix="release-cache-", dir=target.out) as work:
         built = build_select_cache(kernel, release, work)
-        with open(new_image, "wb") as handle:
-            handle.truncate(0)
+        with open(new_image, "xb") as handle:
             handle.truncate(oi.IMAGE_BYTES)
         new_image.chmod(0o600)
         scratch = Target(target.out)
         scratch.image = new_image
-        boots = import_files(kernel, release, new_image, files, log)
+        boots = import_files(kernel, release, new_image, files, log, fresh=True)
         found = scratch.tree()
         for path, data in files:
             if found.get(path) != data:
@@ -1339,6 +1974,11 @@ def cmd_remove(args, log=print):
     if not target.image.is_file():
         raise Failed(f"{target.image}: no disk image")
     refuse_in_use(target.image, "a removal")
+    with target.mutation():
+        remove(args, release, kernel, target, rid, log)
+
+
+def remove(args, release, kernel, target, rid, log):
     pending = pending_removal(target)
     if pending is not None:
         finished = reconcile_removal(target, pending, release, log)
@@ -1367,7 +2007,12 @@ def cmd_remove(args, log=print):
         boots, importer_error = 1, str(error)
     after = target.tree()
     left = sorted(path for path in after if path.startswith(prefix))
-    changed = sorted(path for path, data in kept.items() if after.get(path) != data)
+    def expected_dirty(path, data):
+        return (importer_error is not None and path == storage_fence_state.PATH
+                and storage_fence_state.parse(data) in ("fresh", "clean")
+                and after.get(path) == storage_fence_state.encode("dirty"))
+    changed = sorted(path for path, data in kept.items()
+                     if after.get(path) != data and not expected_dirty(path, data))
     if changed or left:
         # The tree is still listed (whole or in part), or the disk needs a
         # restore: nothing in OUT to finish.
@@ -1389,6 +2034,97 @@ def cmd_remove(args, log=print):
     log(f"RELEASE REMOVED id={rid} files={len(held)} trees={','.join(target.trees(after))} receipt={receipt.name}")
 
 
+def import_temp_identity(target, directory):
+    paths = oi.namespace(target.image)
+    node = paths.get(directory)
+    if node is None or node["kind"] != 2:
+        raise Failed(f"REFUSED import_temp_layout {directory}: not an importer directory; inspect this exact path in the guest, remove it there if authorized, or restore a verified backup")
+    leaf = directory + "/file"
+    children = {path for path in paths if path.startswith(directory + "/")}
+    if children not in (set(), {leaf}) or (leaf in paths and paths[leaf]["kind"] != 1):
+        raise Failed(f"REFUSED import_temp_layout {directory}: contains unexpected objects; ownership unestablished; inspect this exact path in the guest, remove it there if authorized, or restore a verified backup")
+    data = target.tree()[leaf] if leaf in paths else b""
+    return {"directory": directory, "fs_id": node["fs_id"], "serial": node["serial"],
+            "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "has_file": leaf in paths}
+
+
+def cmd_discard_import_temp(args, log=print):
+    directory = args.directory
+    if (not directory or not directory.startswith("/") or directory != str(pathlib.PurePosixPath(directory))
+            or not re.fullmatch(r"\.absd-import-[0-9a-fA-F]{4}", pathlib.PurePosixPath(directory).name)
+            or em.reserved_import_path(str(pathlib.PurePosixPath(directory).parent))):
+        raise Failed("give an exact canonical importer temporary directory")
+    target = Target(args.target)
+    release = Release(args.release)
+    kernel = check_kernel(args.kernel, release)
+    refuse_unreconciled(target)
+    refuse_in_use(target.image, "temporary-object removal")
+    with target.mutation():
+        discard_import_temp(args, target, release, kernel, directory, log)
+
+
+def discard_import_temp(args, target, release, kernel, directory, log):
+    if target.fs_format() != release.fields["fs_format"]:
+        raise Failed("temporary-object removal requires an importer for the disk's filesystem format")
+    identity = import_temp_identity(target, directory)
+    for field, expected in (("fs_id", args.fs_id), ("serial", args.serial), ("bytes", args.bytes),
+                            ("sha256", args.sha256)):
+        if identity[field] != expected:
+            raise Failed(f"temporary identity mismatch {field}: inspect and supply the exact current identity")
+    before = {path: data for path, data in target.tree().items()
+              if path != directory and not path.startswith(directory + "/")}
+    refuse_in_use(target.image, "temporary-object removal")
+    attempt = uuid.uuid4().hex
+    try:
+        boots = import_files(kernel, release, target.image, [(directory + "/", b"")], log, step_override=5)
+        refuse_in_use(target.image, "temporary-object removal inspection")
+        if any(path == directory or path.startswith(directory + "/") for path in oi.namespace(target.image)):
+            raise Failed("temporary directory remains after removal")
+        if target.tree() != before:
+            raise Failed("temporary removal changed files outside its directory")
+    except (Exception, KeyboardInterrupt) as error:
+        detail = dict(identity, state="INDETERMINATE", error=str(error) or type(error).__name__, time_host=now())
+        try:
+            receipt = target.receipt(f"discard-import-temp-failed-{attempt}", {"discard_import_temp": detail})
+            log(f"IMPORT TEMP INDETERMINATE directory={directory} receipt={receipt}")
+        except Exception as receipt_error:
+            log(f"IMPORT TEMP INDETERMINATE directory={directory} receipt unavailable: {receipt_error}")
+        raise
+    receipt = target.receipt(f"discard-import-temp-{attempt}", {
+        "discard_import_temp": dict(identity, state="DISCARDED", importer_boots=boots, time_host=now())})
+    log(f"IMPORT TEMP DISCARDED directory={directory} receipt={receipt}")
+
+
+def cmd_recover(args, log=print):
+    """Bounded operator-attested writable recovery (docs/WRITABLE-ENTRY.md
+    "Operator-authorized resume", OPERATOR-RUNBOOK.md 9a): the act, or
+    --status, --revoke, --wait-ready. scripts/storage_fence_resume.py holds
+    the mechanism; this is its release-tool entry."""
+    target = Target(args.target)
+    modes = [name for name in ("status", "revoke", "wait_ready") if getattr(args, name)]
+    if len(modes) > 1:
+        raise Failed("give one of --status, --revoke, --wait-ready")
+    try:
+        if args.status:
+            storage_fence_resume.status(target.out, log=log)
+            return 0
+        if args.revoke:
+            storage_fence_resume.revoke(target.out, reason=args.reason, log=log)
+            return 0
+        if args.wait_ready:
+            if not args.id:
+                raise Failed("--wait-ready needs --id <the id from RECOVERY AUTHORIZED>")
+            return storage_fence_resume.wait_ready(target.out, ident=args.id, timeout=args.timeout, log=log)
+        storage_fence_resume.act(target.out, attest_sole_instance=args.attest_sole_instance,
+                                 accept_committed_state=args.accept_committed_state, reason=args.reason,
+                                 target_identity=target.identity(), log=log)
+        return 0
+    except storage_fence_resume.Refused as error:
+        raise Failed(str(error)) from None
+    except storage_fence_resume.Fault as error:
+        raise Failed(f"fault hook {error} fired; stopped as a crash would") from None
+
+
 def cmd_status(args, log=print):
     target = Target(args.target)
     tree = target.tree()
@@ -1396,11 +2132,45 @@ def cmd_status(args, log=print):
         f"trees={','.join(target.trees(tree))} last_accepted={target.last('accepted')} files={len(tree)}")
     for line in target.ledger_lines()[-10:]:
         log("  " + line)
+    for path, node in oi.namespace(target.image).items():
+        if re.fullmatch(r"\.absd-import-[0-9a-fA-F]{4}", pathlib.PurePosixPath(path).name):
+            try:
+                identity = import_temp_identity(target, path)
+            except Failed as error:
+                log(str(error))
+            else:
+                log("IMPORT CANDIDATE ownership=unestablished " + json.dumps(identity, sort_keys=True))
 
 
 def cmd_verify_backup(args, log=print):
+    if (getattr(args, "recovery_point_sha256", None) is not None
+            or getattr(args, "expected_release", None) is not None):
+        point = recovery_snapshot(args)
+        log(f"RECOVERY POINT VALID selected={point.selected} sha256={point.metadata_sha256} "
+            f"state_roots={','.join(recovery_point.STATE_ROOTS)} files={len(point.tree)}")
+        return
     meta, tree, selected = validate_backup(args.backup)
     log(f"BACKUP VALID selected={selected} format={meta['disk']['fs_format']} files={len(tree)}")
+
+
+def cmd_preview(args, log=print):
+    import media
+    import preview_bundle
+    try:
+        out = preview_bundle.compose(args)
+    except (OSError, ValueError, subprocess.SubprocessError, media.Refused,
+            preview_bundle.c_kit_source.Refused, preview_bundle.absd_try.Refused) as error:
+        raise Failed(str(error)) from error
+    log(f"PREVIEW BUILT assets={out} work={args.work}; not accepted or published")
+
+
+def cmd_preview_finalize(args, log=print):
+    import preview_bundle
+    try:
+        out = preview_bundle.finalize(args.out, args.quickstart)
+    except (OSError, ValueError, preview_bundle.absd_try.Refused) as error:
+        raise Failed(str(error)) from error
+    log(f"PREVIEW FINALIZED assets={out}; media unchanged, not accepted or published")
 
 
 def main():
@@ -1415,40 +2185,77 @@ def main():
         if target:
             p.add_argument("--target", required=True)
 
+    p = sub.add_parser("preview", help="build and seal developer-preview assets through the current media tools")
+    for name in ("platform", "kernel", "platform-commit", "kernel-commit", "id", "tag",
+                 "repository", "authorized-keys", "notices", "boot-sources", "work", "out"):
+        p.add_argument("--" + name, required=True)
+    p.add_argument("--profile", default="vm-operator")
+    p.add_argument("--limitation", action="append", default=[])
+    p.add_argument("--quickstart", help="include an already generated quickstart from the site's generator")
+    p = sub.add_parser("preview-finalize", help="attach the generated guide without rebuilding preview media")
+    p.add_argument("--out", required=True)
+    p.add_argument("--quickstart", required=True)
     p = sub.add_parser("build")
     p.add_argument("--kernel", required=True)
     p.add_argument("--platform")
     p.add_argument("--id", required=True)
     p.add_argument("--authorized-keys")
     p.add_argument("--etc")
+    enrollment = p.add_mutually_exclusive_group()
+    enrollment.add_argument("--local-token-file")
+    enrollment.add_argument("--local-login-verifier")
     p.add_argument("--replace", action="store_true")
     p.add_argument("out")
     p = sub.add_parser("install"); common(p); p.add_argument("--target-identity", required=True); p.add_argument("--replace", action="store_true")
+    p.add_argument("--disk-profile", choices=geometry.PROFILES, help="fresh disk geometry (default: 128m)")
     p = sub.add_parser("stage"); common(p)
     p = sub.add_parser("select"); common(p)
     p = sub.add_parser("rollback"); common(p)
     p = sub.add_parser("accept"); common(p, release=False, kernel=False); p.add_argument("--key", required=True); p.add_argument("--port", type=int, default=2222)
     p = sub.add_parser("backup"); common(p, release=False, kernel=False); p.add_argument("backup")
+    p.add_argument("--recovery-point", action="store_true")
     p = sub.add_parser("verify-backup"); p.add_argument("backup")
+    p.add_argument("--recovery-point-sha256"); p.add_argument("--expected-release")
     p = sub.add_parser("restore"); common(p); p.add_argument("backup"); p.add_argument("--replace", action="store_true"); p.add_argument("--clone", action="store_true"); p.add_argument("--key"); p.add_argument("--port", type=int, default=2222); p.add_argument("--target-identity")
+    p.add_argument("--recovery-point-sha256"); p.add_argument("--expected-release")
     p = sub.add_parser("migrate"); common(p)
+    p = sub.add_parser("reconfigure"); common(p); p.add_argument("--etc", required=True); p.add_argument("--authorized-keys")
     p = sub.add_parser("remove"); common(p); p.add_argument("--id", required=True)
+    p = sub.add_parser("discard-import-temp"); common(p)
+    p.add_argument("--directory", required=True)
+    p.add_argument("--fs-id", type=int, required=True)
+    p.add_argument("--serial", type=int, required=True)
+    p.add_argument("--bytes", type=int, required=True)
+    p.add_argument("--sha256", required=True)
     p = sub.add_parser("status"); common(p, release=False, kernel=False)
+    p = sub.add_parser("recover"); common(p, release=False, kernel=False)
+    p.add_argument("--attest-sole-instance", action="store_true")
+    p.add_argument("--accept-committed-state", action="store_true")
+    p.add_argument("--reason", default="")
+    p.add_argument("--status", action="store_true")
+    p.add_argument("--revoke", action="store_true")
+    p.add_argument("--wait-ready", action="store_true")
+    p.add_argument("--id")
+    p.add_argument("--timeout", type=float, default=storage_fence_resume.WAIT_TIMEOUT)
     args = ap.parse_args()
     for name, needs in (("install", ("release", "kernel")), ("stage", ("release", "kernel")), ("select", ("release", "kernel")),
-                        ("migrate", ("release", "kernel")), ("remove", ("release", "kernel"))):
+                        ("migrate", ("release", "kernel")), ("remove", ("release", "kernel")),
+                        ("reconfigure", ("release", "kernel")),
+                        ("discard-import-temp", ("release", "kernel"))):
         if args.command == name:
             for need in needs:
                 if getattr(args, need, None) is None:
                     ap.error(f"{name} needs --{need}")
     try:
-        globals()["cmd_" + args.command.replace("-", "_")](args)
+        code = globals()["cmd_" + args.command.replace("-", "_")](args)
     except StageFailed as error:
         print(f"release: {error.state.lower()}: {error}", file=sys.stderr)
         sys.exit(1)
-    except (Failed, absd_fs.Refused, oi.Failed) as error:
+    except (Failed, absd_fs.Refused, oi.Failed, storage_fence_resume.Refused) as error:
         print(f"release: refused: {error}", file=sys.stderr)
         sys.exit(1)
+    if code:
+        sys.exit(code)
 
 
 if __name__ == "__main__":

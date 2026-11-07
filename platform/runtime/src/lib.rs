@@ -10,7 +10,11 @@ pub mod fsd;
 pub mod layout;
 mod ledger;
 pub mod process;
+pub mod observation;
+#[cfg(feature = "native-pcm-delegate")]
+mod playback_grant;
 pub mod session;
+pub mod terminal;
 pub mod storage;
 mod wire_kind;
 
@@ -83,10 +87,21 @@ const MAX_TRANSFER: usize = 256;
 #[global_allocator]
 static ALLOCATOR: MapAllocator = MapAllocator::new();
 
+static LOCAL_TERMINAL: AtomicU64 = AtomicU64::new(0);
+
+/// Dedicated init-owned local terminal output pipe, absent in session children.
+pub fn local_terminal_handle() -> u64 { LOCAL_TERMINAL.load(Ordering::Relaxed) }
+
 static INPUT: AtomicU64 = AtomicU64::new(0);
 static OUTPUT: AtomicU64 = AtomicU64::new(0);
 /// Output explicitly named by a validated startup record, without console fallback.
 static STARTUP_OUTPUT: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "native-pcm-experiment")]
+static PLAYBACK: AtomicU64 = AtomicU64::new(0);
+
+/// Borrow the explicitly delegated experimental PCM handle, or zero if absent.
+#[cfg(feature = "native-pcm-experiment")]
+pub fn playback_handle() -> u64 { PLAYBACK.load(Ordering::Relaxed) }
 /// Standard error when the startup record names one; else the console.
 static ERROR: AtomicU64 = AtomicU64::new(0);
 /// The startup record's environment: `KEY=VALUE` entries as `[pointer,
@@ -109,6 +124,12 @@ static NIC: AtomicU64 = AtomicU64::new(0);
 /// The machine handle, when the startup record names one: init gives a
 /// qualification durable worker one with the stop right only.
 static MACHINE: AtomicU64 = AtomicU64::new(0);
+/// Explicitly delegated, read-only diagnostic grant (startup role20).
+static DIAGNOSTICS: AtomicU64 = AtomicU64::new(0);
+static CLOCK_OWNER:AtomicU64=AtomicU64::new(0);
+/// The explicitly delegated owner grant; never copied by std::process.
+pub fn clock_owner_handle()->u64 {CLOCK_OWNER.load(Ordering::Relaxed)}
+pub fn diagnostics_handle()->u64 {DIAGNOSTICS.load(Ordering::Relaxed)}
 /// The liveness cell, when the startup record names one: init gives a
 /// served service one with read and write rights. This process is the
 /// cell's only writer and is single-threaded, so it keeps the cell's
@@ -119,6 +140,9 @@ static LIVENESS_VERSION: AtomicU64 = AtomicU64::new(0);
 static LIVENESS_VALUE: AtomicU64 = AtomicU64::new(0);
 /// Currently owned anonymous heap pages, including retained pooled pages.
 static MAPPED_PAGES: AtomicU64 = AtomicU64::new(0);
+/// High-water mark of `MAPPED_PAGES` since start or the last
+/// `heap_peak_reset`: what the 32 MiB heap window actually had to hold.
+static MAPPED_PAGES_PEAK: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
 unsafe fn syscall3(number: u64, a0: u64, a1: u64, a2: u64) -> i64 {
@@ -215,12 +239,15 @@ pub fn boot_id() -> Result<[u8; 16], i64> {
     if result < 0 { Err(result) } else { Ok(id) }
 }
 
-/// Seconds since the Unix epoch from the kernel's CMOS RTC reading
-/// (`SYS_WALL_CLOCK`, kernel `src/rtc.rs`): whole seconds, the RTC declared
-/// to hold UTC, no correction of any kind. The kernel refuses (negative
-/// code) when the RTC gives no stable, valid calendar reading; a kernel
-/// without the call refuses it as unknown.
-pub fn wall_clock_seconds() -> Result<u64, i64> {
+/// Software civil seconds since the Unix epoch, corrected by the explicit
+/// clock owner. Source, age, staleness and last failure are in civil_clock::info.
+/// No UTC accuracy/trust is implied. Old kernels without that call fall back
+/// only on ENOSYS to the unverified RTC; malformed new frames never fall back.
+pub fn wall_clock_seconds() -> Result<u64,i64> {match civil_clock::info() {Ok(i)=>i.unix_ns.map(|n|n/1_000_000_000).ok_or(-5),Err(-38)=>hardware_rtc_seconds(),Err(e)=>Err(e)}}
+
+/// Raw RTC observation for consumers whose explicit policy names the RTC.
+/// Software civil corrections never rewrite this device or its trust meaning.
+pub fn hardware_rtc_seconds() -> Result<u64, i64> {
     let result = unsafe { syscall3(SYS_WALL_CLOCK, 0, 0, 0) };
     if result < 0 {
         Err(result)
@@ -229,8 +256,9 @@ pub fn wall_clock_seconds() -> Result<u64, i64> {
     }
 }
 
-/// `std::time::SystemTime::now`: the RTC's seconds, or a negative kernel
-/// refusal (std then panics rather than invent a time).
+/// `std::time::SystemTime::now`: software civil seconds, or a negative kernel
+/// refusal. C keeps this fallible result; the infallible std PAL alone
+/// supplies its documented bootstrap coordinate when no civil value exists.
 #[unsafe(no_mangle)]
 pub extern "C" fn __absd_std_wall_clock_seconds() -> i64 {
     match wall_clock_seconds() {
@@ -431,7 +459,8 @@ pub(crate) fn map(pages: u64) -> *mut u8 {
     if result < 0 {
         return core::ptr::null_mut();
     }
-    MAPPED_PAGES.fetch_add(pages, Ordering::Relaxed);
+    let mapped = MAPPED_PAGES.fetch_add(pages, Ordering::Relaxed) + pages;
+    MAPPED_PAGES_PEAK.fetch_max(mapped, Ordering::Relaxed);
     result as *mut u8
 }
 
@@ -521,6 +550,20 @@ fn heap_diag_line(label: &[u8], size: usize, pages: usize) {
 /// This excludes the kernel page tables retained for the address space.
 pub fn heap_mapped_pages() -> u64 {
     MAPPED_PAGES.load(Ordering::Relaxed)
+}
+
+/// The most anonymous heap pages the allocator has owned at once since the
+/// process started or since the last [`heap_peak_reset`]. Unlike a sample
+/// of [`heap_mapped_pages`], this sees a transient peak (a commit's image
+/// buffer) after it has been freed. One relaxed `fetch_max` per map call.
+pub fn heap_mapped_pages_peak() -> u64 {
+    MAPPED_PAGES_PEAK.load(Ordering::Relaxed)
+}
+
+/// Starts a new high-water interval at the current mapped count, so a
+/// caller can attribute a peak to one phase; returns the previous peak.
+pub fn heap_peak_reset() -> u64 {
+    MAPPED_PAGES_PEAK.swap(MAPPED_PAGES.load(Ordering::Relaxed), Ordering::Relaxed)
 }
 
 /// Process-local reusable pooled storage in page-equivalents:
@@ -649,7 +692,10 @@ pub unsafe extern "C" fn __absd_std_write(bytes: *const u8, length: usize) -> is
     if length == 0 {
         return 0;
     }
-    let handle = OUTPUT.load(Ordering::Relaxed);
+    let handle = match STARTUP_OUTPUT.load(Ordering::Relaxed) {
+        0 => OUTPUT.load(Ordering::Relaxed),
+        handle => handle,
+    };
     if handle == 0 {
         return -1;
     }
@@ -760,10 +806,13 @@ unsafe extern "C" fn __absd_start(console: u64, handles: *const u64, count: usiz
     argv.extend(words.iter().map(|word| word.as_ptr()));
     argv.push(core::ptr::null());
     // A client of a file server asks it who it is before anything else
-    // (`docs/RELEASE.md` section 3, item 5); a server of another protocol,
-    // or none that answers, refuses the process (status 104).
-    if fsd::active() {
-        fsd::require_server(0, false);
+    // (`docs/RELEASE.md` section 3, item 5). logs may inspect the kernel ring
+    // without storage: its first actual filesystem request checks instead.
+    // The name defers timing only; it grants no bypass of protocol admission.
+    let client_name = name.strip_suffix(b"\0").unwrap_or(&name);
+    let diagnostic = client_name.rsplit(|&byte| byte == b'/').next() == Some(b"logs".as_slice());
+    if fsd::active() && !diagnostic {
+        fsd::require_server_named(0, false, name.strip_suffix(b"\0").unwrap_or(&name));
     }
     #[cfg(not(feature = "c-entry"))]
     let status = unsafe { main(argv.len() as isize - 1, argv.as_ptr()) };
@@ -814,7 +863,10 @@ fn start_from_record(
     };
     let handle = |index: Option<usize>| index.map_or(0, |index| handles[index]);
     INPUT.store(handle(startup.stdin), Ordering::Relaxed);
+    LOCAL_TERMINAL.store(handle(startup.local_terminal), Ordering::Relaxed);
     STARTUP_OUTPUT.store(handle(startup.stdout), Ordering::Relaxed);
+    #[cfg(feature = "native-pcm-experiment")]
+    PLAYBACK.store(handle(startup.playback), Ordering::Relaxed);
     ERROR.store(handle(startup.stderr), Ordering::Relaxed);
     BLOCK.store(handle(startup.block), Ordering::Relaxed);
     if let Some(view) = startup.fs {
@@ -827,8 +879,11 @@ fn start_from_record(
     if !startup.cwd.is_empty() {
         cwd::set(startup.cwd.to_vec());
     }
+    terminal::install(handle(startup.terminal));
     NIC.store(handle(startup.nic), Ordering::Relaxed);
     MACHINE.store(handle(startup.machine), Ordering::Relaxed);
+    DIAGNOSTICS.store(handle(startup.diagnostics), Ordering::Relaxed);
+    CLOCK_OWNER.store(handle(startup.clock_owner),Ordering::Relaxed);
     if let (Some(events), Some(requests)) = (startup.session_events, startup.session_requests) {
         session::install(handles[events], handles[requests]);
     }
@@ -985,3 +1040,10 @@ fn c_entry(argv: &[*const u8]) -> i32 {
     }
     unsafe { __absd_program_main(argv.len() as isize - 1, argv.as_ptr(), envp.as_ptr()) }
 }
+
+pub mod kernel_log;
+pub mod civil_clock;
+mod kernel_log_wire;
+const SYS_WAIT_READABLE: u64 = 0x7fa8;
+mod readable;
+pub use readable::{WAIT_READABLE_MAX, WAIT_READABLE_POLL, wait_readable};

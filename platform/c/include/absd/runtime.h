@@ -92,4 +92,8 @@ ptrdiff_t __absd_std_handle_read(uint64_t handle, unsigned char *bytes, size_t l
 ptrdiff_t __absd_std_handle_write(uint64_t handle, const unsigned char *bytes, size_t length);
 int64_t __absd_std_handle_close(uint64_t handle);
 
+/* Private native terminal observation, not termios/ioctl. Returns 1 and
+   writes columns/rows when observed, or 0 when dimensions are unknown. */
+int __absd_terminal_size(uint32_t *columns, uint32_t *rows);
+
 #endif

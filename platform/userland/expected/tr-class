@@ -1,0 +1,5 @@
+status 0
+--- stdout
+ABC  123
+ÉTÉ
+--- stderr

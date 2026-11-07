@@ -1,0 +1,54 @@
+.Dd November 3, 2026
+.Dt BASE64 1
+.Os ABSD
+.Sh NAME
+.Nm base64
+.Nd encode or decode base64 data
+.Sh SYNOPSIS
+.Nm
+.Op Fl di
+.Op Fl w Ar columns
+.Op Ar file
+.Sh DESCRIPTION
+Encode input bytes with the standard base64 alphabet and write standard
+output.
+Input is one named file, or standard input when omitted or named
+.Ql - .
+Encoding wraps lines at 76 characters by default.
+.Fl w Ar columns
+changes that width; zero disables wrapping.
+.Fl d
+selects decoding.
+Decoding accepts newlines in the encoded input;
+.Fl i
+also ignores other non-alphabet bytes.
+.Pp
+Invalid encoded input returns failure and may already have emitted a
+partial decoded stream.
+Check status before treating a redirected output file as complete.
+Encoding provides no encryption, authenticity or checksum.
+The input file is unchanged; shell redirection, if used, owns output
+creation and truncation.
+.Sh EXIT STATUS
+0 after successful conversion; nonzero for invalid input, options
+or I/O failure. Diagnostics use standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+base64 /etc/alpha.txt
+base64 /etc/alpha.txt | base64 -d
+.Ed
+.Sh ABSD PROFILE
+This is the unmodified uutils 0.12.0 utility pinned by the platform build.
+The reference describes selected source-supported options; use
+.Fl Fl help
+for the complete upstream interface.
+File access uses the process's ABSD filesystem view, output uses its
+inherited stream, and the command acquires no additional authority.
+There are no native Unix processes, signals or permission bits underneath
+this port.
+The command matrix exercises the example forms below; other options
+listed here are source-checked, not separately guest-qualified.
+.Sh SEE ALSO
+.Xr cat 1 ,
+.Xr sha256sum 1 ,
+.Xr filesystem 7

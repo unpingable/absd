@@ -60,6 +60,7 @@ use absd_runtime::fsd::{self as fsd_client, ChildFs};
 use absd_net::{Carrier, Connection as TcpConn, Listener, NetError, NetWatch, NicLink, Stack};
 
 use crate::Config;
+use crate::session_pool::{Origin, Pool};
 use crate::conn::{
     self, Connection, ControlRequest, Exit, Identity, MachineRequest, SessionChild, Spawner,
 };
@@ -109,15 +110,21 @@ fn fatal(message: &str) -> ! {
 
 /// Reads one configuration file: its settings, or `None` when it does not
 /// exist. Any other failure, or a malformed file, refuses the start.
-fn configuration<T>(path: &str, parse: fn(&[u8]) -> Result<T, String>) -> Option<T> {
+fn remote_unavailable(config: &Config, slots: usize, message: &str) -> ! {
+    if absd_runtime::local_terminal_handle() != 0 {
+        eprintln!("SSH UNAVAILABLE {message}; local console remains available");
+        run_local_only(config.clone(), slots)
+    }
+    fatal(message)
+}
+
+fn configuration<T>(path: &str, parse: fn(&[u8]) -> Result<T, String>, config: &Config, slots: usize) -> Option<T> {
     match std::fs::read(path) {
         Ok(text) => Some(parse(&text).unwrap_or_else(|e| {
-            fatal(&format!(
-                "{path}: {e}; fix the file (network.conf(5), sshd.conf(5), afterboot(8))"
-            ))
+            remote_unavailable(config, slots, &format!("{path}: {e}; fix the file (network.conf(5), sshd.conf(5), time.conf(5), afterboot(8))"))
         })),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => fatal(&format!("{path}: {error}")),
+        Err(error) => remote_unavailable(config, slots, &format!("{path}: {error}")),
     }
 }
 
@@ -142,13 +149,17 @@ const ERROR_TIMEOUT: i64 = -110;
 pub struct AbsdChild {
     /// `None` once handed to the session ender (`Ending`).
     child: Option<Child>,
+    document: Option<crate::document::native::Ticket>,
     stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
     /// Reaped (its exit seen, or killed and waited), or being ended.
     ended: bool,
+    /// Earliest next timed status query for a child last observed alive.
+    next_wait: Option<Instant>,
     /// The shell's session control channel (sshd's ends).
     control: Option<Control>,
+    terminal: Option<absd_runtime::terminal::Publisher>,
     pid: u32,
     program: String,
     /// Held for its `Drop`, which releases the session's slots after this
@@ -240,12 +251,12 @@ impl Ending {
                 );
                 true
             }
-            Ok(Some(_)) | Err(_) => {
-                say!(
-                    "SSH SESSION END pid={} sent={} exited=true forced=false ms={took} read={read}",
-                    self.pid,
-                    u8::from(self.sent)
-                );
+            Ok(Some(status)) => {
+                crate::oplog::ending_result(self.pid, self.sent, took, read, Ok(status));
+                true
+            }
+            Err(error) => {
+                crate::oplog::ending_result(self.pid, self.sent, took, read, Err(error));
                 true
             }
         }
@@ -332,9 +343,10 @@ impl Drop for Control {
 
 /// The file server slots (channel numbers; 0 is the control channel) one
 /// session holds. Released when the session's child has ended.
-struct Binding {
+pub(super) struct Binding {
     pool: Rc<RefCell<Pool>>,
     slots: Vec<usize>,
+    origin: Origin,
 }
 
 impl Drop for Binding {
@@ -345,7 +357,7 @@ impl Drop for Binding {
         let frame = Frame::request(op::RELEASE).u8(primary as u8).finish();
         match fsd_client::request_on(0, frame) {
             Ok((closed, _)) if closed >= 0 => {
-                say!(
+                info!(
                     "SSH FS RELEASE slot={primary} spares={:?} closed={closed}",
                     &self.slots[1..]
                 )
@@ -360,35 +372,7 @@ impl Drop for Binding {
                 std::process::exit(1);
             }
         }
-        let mut pool = self.pool.borrow_mut();
-        for slot in &self.slots {
-            pool.busy[*slot] = false;
-        }
-        pool.sessions -= 1;
-    }
-}
-
-/// Which of the file server's client slots a session holds now.
-struct Pool {
-    /// Indexed by channel number; channel 0 (control) is never a slot.
-    busy: Vec<bool>,
-    /// Sessions holding a binding now.
-    sessions: usize,
-    /// Most sessions at once (sshd's connection limit).
-    max_sessions: usize,
-}
-
-impl Pool {
-    fn free(&self) -> Vec<usize> {
-        (1..self.busy.len())
-            .filter(|&slot| !self.busy[slot])
-            .collect()
-    }
-    /// Free slots kept back from a new binding's spares: a slot and one
-    /// spare for every further session sshd may still accept, so a later
-    /// shell can still run a pipeline, a redirected command, or `ro`.
-    fn reserve(&self) -> usize {
-        2 * self.max_sessions.saturating_sub(self.sessions + 1)
+        self.pool.borrow_mut().release(self.origin, &self.slots);
     }
 }
 
@@ -410,18 +394,16 @@ fn session_mounts(id: u64) -> Vec<Mount> {
 /// Binds a free slot (and, for a shell, spares) to a session's mounts.
 /// A slot some earlier session's processes still hold is refused by the
 /// server (busy) and skipped.
-fn bind(pool: &Rc<RefCell<Pool>>, mounts: &[Mount], spares_wanted: usize) -> io::Result<Binding> {
-    let (free, reserve) = {
-        let pool = pool.borrow();
-        (pool.free(), pool.reserve())
-    };
+fn bind(pool: &Rc<RefCell<Pool>>, mounts: &[Mount], spares_wanted: usize, origin: Origin) -> io::Result<Binding> {
+    let free = pool.borrow().free(origin);
     for (at, &primary) in free.iter().enumerate() {
-        // Spares only while the reserve stays free for later sessions.
         let after = &free[at + 1..];
+        // An admitted shell receives its full bounded pipeline allotment.
+        if after.len() < spares_wanted { break; }
         let spares: Vec<usize> = after
             .iter()
             .copied()
-            .take(spares_wanted.min(after.len().saturating_sub(reserve)))
+            .take(spares_wanted)
             .collect();
         for &slot in std::iter::once(&primary).chain(&spares) {
             // A reply an earlier holder never read would reach the next.
@@ -438,13 +420,11 @@ fn bind(pool: &Rc<RefCell<Pool>>, mounts: &[Mount], spares_wanted: usize) -> io:
                 let mut claimed = pool.borrow_mut();
                 let mut slots = vec![primary];
                 slots.extend(&spares);
-                for slot in &slots {
-                    claimed.busy[*slot] = true;
-                }
-                claimed.sessions += 1;
+                claimed.claim(origin, &slots);
                 return Ok(Binding {
                     pool: pool.clone(),
                     slots,
+                    origin,
                 });
             }
             Ok((status::BUSY, _)) => continue,
@@ -467,21 +447,12 @@ fn bind(pool: &Rc<RefCell<Pool>>, mounts: &[Mount], spares_wanted: usize) -> io:
 }
 
 fn read_pipe<P: AsRawHandle>(pipe: &mut Option<P>, buf: &mut [u8]) -> io::Result<Option<usize>> {
-    let Some(p) = pipe.as_ref() else {
-        return Ok(Some(0));
-    };
-    match absd_runtime::read_within(p.as_raw_handle(), buf, PIPE_WAIT_TICKS) {
-        Ok(0) => {
-            *pipe = None;
-            Ok(Some(0))
-        }
-        Ok(n) => Ok(Some(n)),
-        Err(ERROR_TIMEOUT) => Ok(None),
-        Err(code) => {
-            *pipe = None;
-            Err(io::Error::other(format!("pipe read {code}")))
-        }
-    }
+    crate::pipe_read::read(
+        pipe,
+        buf,
+        |p| fsd_client::pipe_info(p.as_raw_handle()),
+        |p, bytes| absd_runtime::read_within(p.as_raw_handle(), bytes, PIPE_WAIT_TICKS),
+    )
 }
 
 impl SessionChild for AbsdChild {
@@ -492,6 +463,10 @@ impl SessionChild for AbsdChild {
         read_pipe(&mut self.stderr, buf)
     }
     fn write_stdin(&mut self, buf: &[u8]) -> io::Result<Option<usize>> {
+        if let Some(ticket) = &self.document {
+            ticket.cancel();
+            return Err(io::ErrorKind::BrokenPipe.into());
+        }
         let Some(p) = self.stdin.as_ref() else {
             return Err(io::ErrorKind::BrokenPipe.into());
         };
@@ -502,20 +477,36 @@ impl SessionChild for AbsdChild {
         }
     }
     fn close_stdin(&mut self) {
+        if self.document.is_some() {
+            return;
+        }
         self.stdin = None;
     }
     fn try_wait(&mut self) -> io::Result<Option<Exit>> {
+        if let Some(ticket) = &self.document {
+            let exit = ticket.exit();
+            self.ended |= exit.is_some();
+            return Ok(exit);
+        }
         let Some(child) = self.child.as_mut() else {
             return Ok(Some(Exit::Abnormal));
         };
-        let status = child.try_wait()?;
+        let status = crate::child_wait::poll(&mut self.next_wait, Instant::now(), || child.try_wait())?;
         self.ended |= status.is_some();
         Ok(status.map(|status| match status.code() {
             Some(code) => Exit::Code(code as u32),
             None => Exit::Abnormal,
         }))
     }
+    fn final_wait(&mut self) -> io::Result<Option<Exit>> {
+        crate::child_wait::due_now(&mut self.next_wait);
+        self.try_wait()
+    }
     fn terminate(&mut self) {
+        if let Some(ticket) = &self.document {
+            ticket.cancel();
+            return;
+        }
         if self.ended {
             return;
         }
@@ -578,12 +569,21 @@ impl SessionChild for AbsdChild {
             Err(reason) => self.control_ended(reason),
         }
     }
+    fn terminal_changed(&mut self, terminal: &crate::tty::Terminal) -> io::Result<()> {
+        if let Some(publisher) = self.terminal.as_mut() {
+            publisher.update(absd_runtime::terminal::Size { columns: terminal.size.columns, rows: terminal.size.rows, source: terminal.size.source })
+                .map_err(|code| io::Error::other(format!("terminal metadata update: {code}")))?;
+        }
+        Ok(())
+    }
+
     fn control_reply(&mut self, status: u8, text: &str) {
         if let Some(control) = self.control.as_mut() {
             control.out.extend(control::reply(status, text));
         }
         self.pump_control();
     }
+    fn audit_pid(&self) -> Option<u64> { Some(self.pid as u64) }
     fn describe(&mut self) -> String {
         // Named: the one process of this session sshd holds a handle to.
         // The shell starts its commands itself, in the foreground only, so
@@ -662,7 +662,9 @@ impl AbsdChild {
         match frame {
             None => Ok(None),
             Some(ControlFrame::Machine(words)) => Ok(Some(ControlRequest::Machine(words))),
+            Some(ControlFrame::Clock(words)) => Ok(Some(ControlRequest::Clock(words))),
             Some(ControlFrame::List) => Ok(Some(ControlRequest::List)),
+            Some(ControlFrame::InputMode(prompt)) => Ok(Some(ControlRequest::InputMode(prompt))),
             Some(other) => Err(format!("unexpected frame {other:?}")),
         }
     }
@@ -692,6 +694,7 @@ const SERVED_WORKER_RESTART_STATUS: i32 = 98;
 
 struct AbsdSpawner<'c> {
     config: &'c Config,
+    documents: Rc<RefCell<crate::document::native::Issuer>>,
     started: u64,
     /// Sessions this boot tried to bind, started or not: the scratch name
     /// is never retried, so a name that cannot be bound is not retried
@@ -710,6 +713,11 @@ struct AbsdSpawner<'c> {
 
 impl Spawner for AbsdSpawner<'_> {
     type Child = AbsdChild;
+    fn release_id(&self) -> Option<&str> {
+        // require_server(0, true) compares the served image's release
+        // record with this identity before the listener is started.
+        Some(absd_release::RELEASE_ID)
+    }
     /// The operator identity (every authenticated session) may ask for a
     /// halt or a restart; sshd acts by ending its sessions and exiting with
     /// the status that tells init which. The first request wins.
@@ -731,7 +739,16 @@ impl Spawner for AbsdSpawner<'_> {
             }
         ))
     }
-    fn spawn(&mut self, command: &conn::Command, terminal: bool) -> io::Result<AbsdChild> {
+    fn clock_request(&mut self,words:&str)->Result<String,String>{crate::time_owner::operator(words)}
+    fn spawn(&mut self, command: &conn::Command, terminal: Option<&crate::tty::Terminal>) -> io::Result<AbsdChild> {
+        self.spawn_session(command, terminal, Origin::Remote)
+    }
+    fn spawn_local(&mut self, command: &conn::Command, terminal: Option<&crate::tty::Terminal>) -> io::Result<AbsdChild> {
+        self.spawn_session(command, terminal, Origin::Local)
+    }
+}
+impl AbsdSpawner<'_> {
+    fn spawn_session(&mut self, command: &conn::Command, terminal: Option<&crate::tty::Terminal>, origin: Origin) -> io::Result<AbsdChild> {
         if self.requested.is_some() {
             return Err(io::Error::other("the system is going down"));
         }
@@ -799,20 +816,28 @@ impl Spawner for AbsdSpawner<'_> {
                 _ => {}
             }
         }
-        let argv = self
+        let mut argv = self
             .config
             .argv(command)
             .map_err(|m| io::Error::new(io::ErrorKind::InvalidInput, m))?;
+        let document = if crate::document::admitted(command, &argv, self.config, terminal.is_some())? {
+            Some(self.documents.borrow().prepare()?)
+        } else {
+            None
+        };
+        if let Some((_, until)) = document {
+            argv.extend(["--grant-expiry".into(), until.to_string()]);
+        }
         // A shell starts the commands it is given, so it keeps the spawn
         // right; a program named directly by `exec` gets none.
         let shell = self.config.runs_shell(command);
         absd_runtime::process::deny_spawn_to_children(!shell);
-        absd_runtime::process::merge_output_for_children(terminal);
+        absd_runtime::process::merge_output_for_children(terminal.is_some());
         // The session's authority: a slot bound to its mounts. A shell,
         // which starts commands, also gets spares for its children.
         self.attempted += 1;
         let id = self.attempted;
-        let binding = bind(&self.pool, &session_mounts(id), if shell { 2 } else { 0 })?;
+        let binding = bind(&self.pool, &session_mounts(id), if shell { 2 } else { 0 }, origin)?;
         fsd_client::set_next_child(ChildFs::Slot {
             own: binding.slots[0],
             spares: binding.slots[1..].to_vec(),
@@ -830,18 +855,38 @@ impl Spawner for AbsdSpawner<'_> {
         } else {
             None
         };
-        let spawned = Command::new(&argv[0])
+        let publisher = terminal.map(|terminal| {
+            let size = absd_runtime::terminal::Size { columns: terminal.size.columns, rows: terminal.size.rows, source: terminal.size.source };
+            let publisher = absd_runtime::terminal::Publisher::new(size)?;
+            publisher.give_next_child()?;
+            Ok::<_, i64>(publisher)
+        }).transpose().map_err(|code| {
+            // Control was armed first; no later unrelated spawn may consume it
+            // if allocating the terminal observation failed before spawn.
+            absd_runtime::session::cancel_next_child();
+            absd_runtime::terminal::cancel_next_child();
+            io::Error::other(format!("terminal metadata: {code}"))
+        })?;
+        let initial_cwd = self.config.initial_cwd(command);
+        let mut command = Command::new(&argv[0]);
+        if let Some(terminal) = terminal {
+            if let Some(term) = &terminal.term { command.env("TERM", term); } else { command.env_remove("TERM"); }
+            if terminal.size.columns > 0 { command.env("COLUMNS", terminal.size.columns.to_string()); }
+            if terminal.size.rows > 0 { command.env("LINES", terminal.size.rows.to_string()); }
+        }
+        let spawned = command
             .args(&argv[1..])
-            .current_dir("/")
+            .current_dir(initial_cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn();
         // Spent by the spawn; if it never got that far, never by a later one.
         absd_runtime::session::cancel_next_child();
+        absd_runtime::terminal::cancel_next_child();
         let mut child = spawned?;
         self.started += 1;
-        say!(
+        info!(
             "SSH SESSION CHILD pid={} spawn_right={shell} argv0={} fs_slot={} spares={:?} control={}",
             child.id(),
             argv[0],
@@ -849,19 +894,29 @@ impl Spawner for AbsdSpawner<'_> {
             &binding.slots[1..],
             control.is_some()
         );
-        let stdin = child.stdin.take();
-        let stdout = child.stdout.take();
         let stderr = child.stderr.take();
+        let pid = child.id();
+        let (child, stdin, stdout, binding, document) = if let Some((peer, until)) = document {
+            let ticket = self.documents.borrow_mut().attach(child, peer, until, binding);
+            (None, None, None, None, Some(ticket))
+        } else {
+            let stdin = child.stdin.take();
+            let stdout = child.stdout.take();
+            (Some(child), stdin, stdout, Some(binding), None)
+        };
         Ok(AbsdChild {
-            pid: child.id(),
+            pid,
             program: argv[0].clone(),
-            child: Some(child),
+            child,
+            document,
             stdin,
             stdout,
             stderr,
             ended: false,
+            next_wait: None,
             control,
-            binding: Some(binding),
+            terminal: publisher,
+            binding,
         })
     }
 }
@@ -907,8 +962,8 @@ fn report_quiescent_capacity(
     });
     let heap_free_pages = absd_runtime::heap_free_pooled_pages();
     // The allocator guard has been released before formatting/logging.
-    // Direct stderr keeps this sample from queuing another FSD log write.
-    eprintln!(
+    // Ordinary stdout is captured by init without another FSD log request.
+    println!(
         "SERVED CAPACITY boot={boot} accepted_reclaimed={accepted_reclaimed} slots={slots} pool={pool} net_sockets={} net_closing={} processes={} handles={} pipes={} cells={} frames={} heap_pages_peak={} link={} heap_free_pages={heap_free_pages}",
         stack.socket_count(),
         stack.closing_count(),
@@ -923,10 +978,7 @@ fn report_quiescent_capacity(
 }
 
 pub fn run(config: Config) -> ! {
-    match entropy() {
-        Ok(()) => say!("SSH ENTROPY OK source=rdrand"),
-        Err(e) => fatal(&format!("entropy: {e}")),
-    }
+    let ssh_entropy = entropy();
     // Storage is the file server's: sshd has its control channel (which
     // no child of sshd ever gets) and the client slots, no block handle.
     fsd_client::set_default_child(ChildFs::None);
@@ -942,7 +994,7 @@ pub fn run(config: Config) -> ! {
     // anything is read through it and long before it listens. A refusal
     // exits 104 pre-ready with `FSD PROTOCOL REFUSED ...`.
     let server = fsd_client::require_server(0, true);
-    say!(
+    info!(
         "SSH RELEASE OK release={} fsd_protocol={}",
         String::from_utf8_lossy(&server.release),
         server.fsd_protocol
@@ -959,24 +1011,29 @@ pub fn run(config: Config) -> ! {
             )
         })
         .collect();
-    say!(
+    info!(
         "SSH STORAGE VIA FILE SERVER OK block=none control={} slots={slots}",
         shown.join(",")
     );
     CONSOLE.store(true, std::sync::atomic::Ordering::Relaxed);
     crate::oplog::open();
+    if let Err(e) = ssh_entropy { remote_unavailable(&config, slots, &format!("entropy: {e}")); }
+    info!("SSH ENTROPY OK source=rdrand");
+    println!("sshd: service diagnostics: logs -u sshd (stdout/stderr captured by init)");
     // Configuration: /etc/sshd.conf and /etc/network.conf, or the built-in
     // defaults when a file is absent; a malformed one refuses the start.
     let mut config = config;
-    let sshd_file = configuration(etc::SSHD_PATH, etc::parse_sshd);
+    let sshd_file = configuration(etc::SSHD_PATH, etc::parse_sshd, &config, slots);
     let settings = sshd_file.unwrap_or(etc::Sshd::DEFAULT);
     config.listen = format!("0.0.0.0:{}", settings.port);
     config.max_connections = settings.max_connections;
     config.limits.auth_timeout = settings.login_grace;
     config.limits.idle_timeout = settings.idle_timeout;
     config.limits.max_auth_failures = settings.max_auth_tries;
-    let network_file = configuration(etc::NETWORK_PATH, etc::parse_network);
+    let network_file = configuration(etc::NETWORK_PATH, etc::parse_network, &config, slots);
     let network = network_file.unwrap_or(etc::Network::DEFAULT);
+    let time_config=configuration(etc::TIME_PATH, etc::parse_time, &config, slots).unwrap_or(etc::Time::DEFAULT);
+    let mut time_service=crate::time_owner::Service::new(time_config);
     let from = |read: bool, path: &str| {
         if read {
             path.to_string()
@@ -1000,7 +1057,7 @@ pub fn run(config: Config) -> ! {
         settings.max_auth_tries,
         from(sshd_file.is_some(), etc::SSHD_PATH)
     ));
-    let host = keys::load(&config.host_key).unwrap_or_else(|e| fatal(&format!("host key: {e}")));
+    let host = keys::load(&config.host_key).unwrap_or_else(|e| remote_unavailable(&config, slots, &format!("host key: {e}")));
     say!(
         "SSH HOST KEY {} {} {}",
         if host.generated {
@@ -1020,20 +1077,20 @@ pub fn run(config: Config) -> ! {
     ));
     crate::oplog::notice(&format!("sshd: host key {}", host.openssh_public()));
     let authorized = keys::load_authorized(&config.authorized_keys)
-        .unwrap_or_else(|e| fatal(&format!("authorized keys: {e}")));
+        .unwrap_or_else(|e| remote_unavailable(&config, slots, &format!("authorized keys: {e}")));
 
-    let link = NicLink::from_startup().unwrap_or_else(|e| fatal(&format!("nic: {e:?}")));
+    let link = NicLink::from_startup().unwrap_or_else(|e| remote_unavailable(&config, slots, &format!("nic: {e:?}")));
     let net = absd_net::Config {
         address: absd_net::Ipv4Address::from(network.address),
         prefix_len: network.prefix_len,
         gateway: network.gateway.map(absd_net::Ipv4Address::from),
         ..absd_net::Config::qemu_user()
     };
-    let mut stack = Stack::open(link, net).unwrap_or_else(|e| fatal(&format!("stack: {e:?}")));
+    let mut stack = Stack::open(link, net).unwrap_or_else(|e| remote_unavailable(&config, slots, &format!("stack: {e:?}")));
     let port = settings.port;
     let listener: Listener = stack
         .listen(port, config.max_connections.clamp(1, 8))
-        .unwrap_or_else(|e| fatal(&format!("listen: {e:?}")));
+        .unwrap_or_else(|e| remote_unavailable(&config, slots, &format!("listen: {e:?}")));
     // A3: the first reading, before the readiness fact. A device that
     // disabled itself since `NicLink::open` gets the refusal `open` gives
     // (pre-ready, no reset); a link without carrier is not refused.
@@ -1042,7 +1099,7 @@ pub fn run(config: Config) -> ! {
     watch.observe(&stack);
     let first_read_end = absd_runtime::ticks();
     if watch.disabled() {
-        fatal(&format!("nic: {:?}", NetError::Nic(-5)));
+        remote_unavailable(&config, slots, &format!("nic: {:?}", NetError::Nic(-5)));
     }
     let boot = absd_runtime::boot_id()
         .unwrap_or_else(|code| fatal(&format!("boot identity: {code}")))
@@ -1066,7 +1123,7 @@ pub fn run(config: Config) -> ! {
     diagnostics.fresh(&watch, first_read_start, first_read_end, true, false);
     say!("SSH RECOVERY streak={streak}");
     say!("SSH NET {}", watch.fields(&stack));
-    say!(
+    info!(
         "SSH LISTENING port={port} authorized_keys={} preauth_per_source={PREAUTH_PER_SOURCE}",
         authorized.len()
     );
@@ -1076,12 +1133,10 @@ pub fn run(config: Config) -> ! {
         host_key: &host.key,
         authorized: &authorized,
     };
-    let pool = Rc::new(RefCell::new(Pool {
-        busy: vec![false; slots + 1],
-        sessions: 0,
-        max_sessions: config.max_connections,
-    }));
+    let pool = Rc::new(RefCell::new(Pool::new(slots, absd_runtime::local_terminal_handle() != 0, config.max_connections)));
+    let documents = Rc::new(RefCell::new(crate::document::native::Issuer::default()));
     let mut spawner = AbsdSpawner {
+        documents: documents.clone(),
         config: &config,
         started: 0,
         attempted: 0,
@@ -1090,6 +1145,8 @@ pub fn run(config: Config) -> ! {
         kill_shells: false,
         fault_at_end: false,
     };
+    let verifier = if absd_runtime::local_terminal_handle() != 0 { local_verifier() } else { None };
+    let mut local = crate::local_console::Manager::new(verifier.is_some());
     let mut slots: Vec<Slot> = Vec::new();
     let mut next_id = 1u64;
     let mut accepted_reclaimed = 0u64;
@@ -1102,8 +1159,17 @@ pub fn run(config: Config) -> ! {
         // One liveness beat per pass of the server loop (kernel
         // docs/service-lifecycle-20261008/LIVENESS.md).
         absd_runtime::liveness_beat();
+        if absd_runtime::local_terminal_handle() != 0 {
+            local_step(&mut local, &verifier, &mut spawner);
+        }
         crate::oplog::flush();
+        documents.borrow_mut().step(
+            &mut stack,
+            !watch.disabled() && watch.carrier() == Carrier::Up
+                && shutdown.is_none() && spawner.requested.is_none(),
+        );
         stack.poll();
+        time_service.poll(&mut stack,!watch.disabled()&&watch.carrier()==Carrier::Up&&shutdown.is_none()&&spawner.requested.is_none());
         let sample_start = absd_runtime::ticks();
         let sample = watch.sample_fresh(&stack);
         let sample_end = absd_runtime::ticks();
@@ -1115,15 +1181,18 @@ pub fn run(config: Config) -> ! {
         if watch.tx_changed(&stack) {
             say!("SSH NET TX {}", watch.tx_fields(&stack));
         }
+        if watch.disabled() || watch.carrier() != Carrier::Up {
+            documents.borrow_mut().step(&mut stack, false);
+        }
         // An operator shutdown or reboot already under way ends the
         // generation as requested. A session's request is latched into
         // `shutdown` in the same pass, so the `spawner.requested` term is a
         // redundant guard, kept for safety.
-        if watch.disabled() && shutdown.is_none() && spawner.requested.is_none() {
+        if watch.disabled() && shutdown.is_none() && spawner.requested.is_none() && absd_runtime::local_terminal_handle() == 0 {
             nic_disabled_fault();
         }
         let now = Instant::now();
-        while shutdown.is_none() && slots.len() < config.max_connections {
+        while shutdown.is_none() && !watch.disabled() && slots.len() < config.max_connections {
             let Some((tcp, (source, remote_port))) = stack.accept_filtered(listener, |peer| {
                 let Some((source, _)) = peer else {
                     say!("SSH PREAUTH REFUSED source=unknown reason=no-peer");
@@ -1146,7 +1215,7 @@ pub fn run(config: Config) -> ! {
             stack
                 .disable_transport_timeout(tcp)
                 .expect("accepted SSH timeout opt-out");
-            say!("sshd: conn {next_id}: from {source:?}:{remote_port}");
+            info!("sshd: conn {next_id}: from {source:?}:{remote_port}");
             slots.push(Slot {
                 conn: Connection::new(next_id, now),
                 tcp,
@@ -1164,7 +1233,7 @@ pub fn run(config: Config) -> ! {
                     "SSH GLOBAL REFUSED source={peer:?} limit={} slots={} pool={}",
                     config.max_connections,
                     slots.len(),
-                    spawner.pool.borrow().sessions
+                    spawner.pool.borrow().sessions()
                 );
                 false
             });
@@ -1221,12 +1290,12 @@ pub fn run(config: Config) -> ! {
             }
             if now >= *since + SHUTDOWN_GRACE + SHUTDOWN_CLOSE {
                 for slot in slots.iter_mut() {
-                    slot.conn.end_now("system shutdown");
+                    slot.conn.end_shutdown();
                 }
             }
             // Every connection is closed and every session's child is gone
             // (an `END` still under way holds its slots until then).
-            if slots.is_empty() && !ending {
+            if slots.is_empty() && !ending && documents.borrow().idle() {
                 let request = *request;
                 finish_shutdown(&mut stack, request, ended_by_shutdown, spawner, &boot_id);
             }
@@ -1239,14 +1308,15 @@ pub fn run(config: Config) -> ! {
             // acknowledging (and discarding) the peer's bytes until the
             // close completes.
             let _ = stack.close(slot.tcp);
-            say!("SSH SESSION RECLAIMED children_started={}", spawner.started);
+            info!("SSH SESSION RECLAIMED children_started={}", spawner.started);
             accepted_reclaimed += 1;
             false
         });
-        let pool_sessions = spawner.pool.borrow().sessions;
+        let pool_sessions = spawner.pool.borrow().sessions();
         if reported_reclaimed != Some(accepted_reclaimed)
             && slots.is_empty()
             && !ending
+            && documents.borrow().idle()
             && stack.closing_count() == 0
             && pool_sessions == 0
         {
@@ -1263,7 +1333,8 @@ pub fn run(config: Config) -> ! {
         if !busy {
             // Nothing moved: sleep in the NIC until a frame or a timer, at
             // most a few ticks (child pipes are looked at again after it).
-            let children = ending || slots.iter_mut().any(|s| s.conn.child_mut().is_some());
+            let children = ending || !documents.borrow().idle()
+                || slots.iter_mut().any(|s| s.conn.child_mut().is_some());
             stack.wait(if children { 1 } else { absd_net::MAX_WAIT_MS });
         }
     }
@@ -1333,9 +1404,14 @@ fn service(
                     conn.push_input(&buf[..n], now);
                     moved = true;
                 }
-                Err(NetError::Finished) | Err(_) => {
+                Err(NetError::Finished) => {
                     slot.net_eof = true;
-                    conn.input_closed();
+                    conn.input_closed(conn::InputClose::Eof);
+                    moved = true;
+                }
+                Err(_) => {
+                    slot.net_eof = true;
+                    conn.input_closed(conn::InputClose::Failure);
                     moved = true;
                 }
             }
@@ -1350,7 +1426,7 @@ fn service(
                 }
                 Err(_) => {
                     slot.net_eof = true;
-                    conn.input_closed();
+                    conn.input_closed(conn::InputClose::Failure);
                     break;
                 }
             }
@@ -1368,3 +1444,62 @@ fn service(
 }
 
 const ROUNDS_PER_PASS: usize = 8;
+
+/// Read only the bounded enrollment descriptor, never a token/default password.
+fn local_verifier() -> Option<crate::local_auth::Verifier> {
+    use std::io::Read;
+    let mut descriptor = Vec::new();
+    std::fs::File::open("/ssh/local-login").ok()?.take(128).read_to_end(&mut descriptor).ok()?;
+    crate::local_auth::Verifier::parse(&descriptor)
+}
+
+fn local_step(local: &mut crate::local_console::Manager<AbsdChild>, verifier: &Option<crate::local_auth::Verifier>, spawner: &mut AbsdSpawner<'_>) {
+    let now = Instant::now();
+    if spawner.requested.is_some() {
+        local.end_all(now);
+        return;
+    }
+    let (input, _) = absd_runtime::standard_stream_handles();
+    let mut bytes = [0; 128];
+    if let Ok(n) = absd_runtime::read_within(input, &mut bytes, 1) {
+        local.input(&bytes[..n], now, |token| verifier.as_ref().is_some_and(|v| v.verify(token)), spawner);
+    }
+    // Acquire the actual raw-input queue after the bounded read. Failure to
+    // inspect it cannot authorize reopening a recovered input producer.
+    let upstream_empty = absd_runtime::fsd::pipe_info(input)
+        .is_ok_and(|info| info[0] == 0);
+    local.poll(now, spawner, upstream_empty);
+    local.output(|bytes| absd_runtime::write_within(absd_runtime::local_terminal_handle(), bytes, 1).unwrap_or(0));
+}
+
+/// Same shell/session authority and cleanup as SSH, with no network dependency.
+/// Called after control-channel validation when the NIC cannot start.
+pub fn run_local_only(config: Config, slots: usize) -> ! {
+    let boot = absd_runtime::boot_id().unwrap_or_else(|e| fatal(&format!("boot identity: {e}")));
+    let boot: String = boot.iter().map(|b| format!("{b:02x}")).collect();
+    let boot_id = boot.as_bytes().try_into().unwrap();
+    let ledger = recovery_ledger(&boot_id).unwrap_or_else(|e| fatal(&e));
+    write_fact(absd_fsd::recovery::SERVED_READY, &boot_id, None).unwrap_or_else(|e| fatal(&format!("local ready: {e}")));
+    let verifier = if absd_runtime::local_terminal_handle() != 0 { local_verifier() } else { None };
+    let mut local = crate::local_console::Manager::new(verifier.is_some());
+    let mut spawner = AbsdSpawner {
+        documents: Rc::new(RefCell::new(crate::document::native::Issuer::default())),
+        config: &config, started: 0, attempted: 0,
+        pool: Rc::new(RefCell::new(Pool::new(slots, true, config.max_connections))),
+        requested: None, kill_shells: false, fault_at_end: false,
+    };
+    say!("SSH RECOVERY streak={}", ledger.streak);
+    info!("LOCAL READY boot={boot} enrolled={}", u8::from(verifier.is_some()));
+    loop {
+        absd_runtime::liveness_beat();
+        local_step(&mut local, &verifier, &mut spawner);
+        drive_endings(Instant::now());
+        if let Some(request) = spawner.requested {
+            local.end_all(Instant::now());
+            while drive_endings(Instant::now()) { absd_runtime::sleep_ticks(1); }
+            let _ = write_fact(absd_fsd::recovery::SERVED_END, &boot_id, Some(request.word()));
+            std::process::exit(match request { MachineRequest::Halt => 0, MachineRequest::Restart => SERVED_WORKER_RESTART_STATUS });
+        }
+        absd_runtime::sleep_ticks(1);
+    }
+}

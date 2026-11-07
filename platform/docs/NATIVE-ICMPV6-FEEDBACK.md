@@ -3,7 +3,7 @@
 Source attempt `b74bdc11-c767-4dae-8fa7-e1b56561fb5a` starts from composed
 IPv6/DHCP `aa83b82a924ca0702bc4d854b490c7360e6531ec`, tree
 `06d9ab4a77aa7fc431ef706b447951052107dda1`. The registry seals the final source
-and tree. Canonical coordination is recorded internally. This source task
+and tree. Canonical coordination remains coordination record #41. This source task
 executes no compiler, test, protocol, guest, provider or key operation. Source
 readiness is not interoperability or independent acceptance.
 

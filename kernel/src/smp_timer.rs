@@ -1,4 +1,5 @@
-//! Qualification-only local AP preemption. Global PIT time remains BSP-owned.
+//! Local AP preemption for admitted qualification and operator boots.
+//! Global PIT time remains BSP-owned.
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const VECTOR: u32 = absd_kernel::interrupt_vector::AP_TIMER as u32;
@@ -45,7 +46,10 @@ pub fn per_cpu_irqs(cpu: usize) -> u64 {
     USER_IRQS[cpu].load(Ordering::Acquire)
 }
 pub fn configure() {
-    assert!(cfg!(feature = "smp-user-test") && crate::smp_user::enabled());
+    assert!(
+        (cfg!(feature = "smp-user-test") || cfg!(feature = "smp-operator"))
+            && crate::smp_user::enabled()
+    );
     assert_eq!(crate::cpu::id(), 0);
     assert!(!ENABLED.swap(true, Ordering::AcqRel));
 }
@@ -61,7 +65,8 @@ pub fn start_ap() {
         return;
     }
     assert!(crate::cpu::id() > 0);
-    if crate::smp_app_pressure::enabled()
+    if crate::smp_operator::enabled()
+        || crate::smp_app_pressure::enabled()
         || crate::smp_bench::scale()
         || crate::smp_app_scale::enabled()
     {
@@ -72,6 +77,7 @@ pub fn start_ap() {
     let first = crate::sched::now();
     while crate::sched::now() == first {
         assert!(unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start) < 1 << 34);
+        crate::smp_operator::check_stop();
         core::hint::spin_loop();
     }
     crate::ap::lapic_write(0x320, MASK | VECTOR);
@@ -84,6 +90,7 @@ pub fn start_ap() {
     let (tick_a, count_a) = calibration_sample(start);
     while crate::sched::now().wrapping_sub(tick_a) < 8 {
         assert!(unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start) < 1 << 34);
+        crate::smp_operator::check_stop();
         core::hint::spin_loop();
     }
     let (tick_b, count_b) = calibration_sample(start);
@@ -127,6 +134,7 @@ fn ordered_tsc() -> u64 {
 }
 fn local_sample(start: u64) -> (u64, u64, u32) {
     loop {
+        crate::smp_operator::check_stop();
         let before = ordered_tsc();
         assert!(
             before
@@ -146,6 +154,7 @@ fn local_sample(start: u64) -> (u64, u64, u32) {
         if jitter <= MAX_SAMPLE_JITTER {
             return (before, after, count);
         }
+        crate::smp_operator::check_stop();
         core::hint::spin_loop();
     }
 }
@@ -154,8 +163,10 @@ fn calibrate_local() {
     crate::ap::lapic_write(0x320, MASK | VECTOR);
     crate::ap::lapic_write(0x3e0, 3);
     crate::ap::lapic_write(0x380, u32::MAX);
+    crate::smp_operator::calibration_control();
     let (a_before, a_after, count_a) = local_sample(start);
     loop {
+        crate::smp_operator::check_stop();
         let now = ordered_tsc();
         assert!(now.checked_sub(start).is_some_and(|delta| delta < 1 << 34));
         if now
@@ -165,6 +176,7 @@ fn calibrate_local() {
         {
             break;
         }
+        crate::smp_operator::check_stop();
         core::hint::spin_loop();
     }
     let (b_before, b_after, count_b) = local_sample(start);
@@ -206,6 +218,7 @@ fn calibrate_local() {
 }
 fn calibration_sample(start: u64) -> (u64, u32) {
     loop {
+        crate::smp_operator::check_stop();
         assert!(
             unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start) < 1 << 34,
             "AP calibration sample deadline"
@@ -222,6 +235,7 @@ fn calibration_sample(start: u64) -> (u64, u32) {
         if before == after {
             return (before, count);
         }
+        crate::smp_operator::check_stop();
         core::hint::spin_loop();
     }
 }
@@ -275,7 +289,8 @@ pub fn report_start() {
         crate::serial::decimal(crate::cpu::id() as u64);
         crate::serial::write(" vector=224 divide=16 initial=");
         crate::serial::decimal(INITIAL[crate::cpu::id() as usize].load(Ordering::Acquire));
-        if crate::smp_app_pressure::enabled()
+        if crate::smp_operator::enabled()
+            || crate::smp_app_pressure::enabled()
             || crate::smp_bench::scale()
             || crate::smp_app_scale::enabled()
         {
@@ -321,6 +336,7 @@ pub fn report_start() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ap_user_timer(frame: *mut u64) {
+    crate::smp_operator::check_stop();
     assert!(enabled());
     assert!(crate::cpu::id() > 0);
     let mutant = MUTANT.load(Ordering::Acquire);

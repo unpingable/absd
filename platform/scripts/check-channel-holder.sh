@@ -23,6 +23,8 @@ for name, source, module in (
     old = '#[path = "../../runtime/src/fsd.rs"]'
     assert text.count(old) == 1, source
     text = text.replace(old, '#[path = ' + json.dumps(str(out / module)) + ']')
+    text = text.replace('#[path = "../../runtime/src/wire_kind.rs"]',
+                        '#[path = ' + json.dumps(str(root / 'runtime/src/wire_kind.rs')) + ']')
     (out / (name + '-fixture.rs')).write_text(text)
 PY
 # Match Cargo's test-profile unwind strategy for these standalone host tests.

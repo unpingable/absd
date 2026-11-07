@@ -56,20 +56,29 @@ def read_ppm(path):
     data = pathlib.Path(path).read_bytes()
     fields, offset = [], 0
     while len(fields) < 4:
-        while data[offset : offset + 1].isspace():
+        while offset < len(data) and data[offset : offset + 1].isspace():
             offset += 1
+        if offset == len(data):
+            raise ValueError("truncated PPM header")
         if data[offset : offset + 1] == b"#":
-            offset = data.index(b"\n", offset) + 1
+            newline = data.find(b"\n", offset)
+            if newline < 0:
+                raise ValueError("unterminated PPM comment")
+            offset = newline + 1
             continue
         end = offset
-        while not data[end : end + 1].isspace():
+        while end < len(data) and not data[end : end + 1].isspace():
             end += 1
+        if end == len(data):
+            raise ValueError("truncated PPM header")
         fields.append(data[offset:end])
         offset = end
     offset += 1
     if fields[0] != b"P6" or fields[3] != b"255":
         raise ValueError(f"unexpected PPM header {fields}")
     width, height = int(fields[1]), int(fields[2])
+    if width <= 0 or height <= 0:
+        raise ValueError("invalid PPM dimensions")
     pixels = data[offset : offset + width * height * 3]
     if len(pixels) != width * height * 3:
         raise ValueError("truncated PPM")

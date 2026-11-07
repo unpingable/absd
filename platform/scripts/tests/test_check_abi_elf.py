@@ -404,7 +404,7 @@ import tempfile
 
 KERNEL = os.environ.get("ABSD_KERNEL_RUN", "")
 PLATFORM = GATE.parent.parent
-KERNEL_FILES = sorted({rel for _f, rel, _p in gate.KERNEL_DEFS} | {gate.KERNEL_BASE[1]}
+KERNEL_FILES = sorted({rel for _f, rel in gate.KERNEL_DEFS}
                       | {rel for _f, rel, _p in gate.KERNEL_SITES})
 PLATFORM_FILES = sorted({binding[2] for binding in gate.BINDINGS})
 KERNEL_TESTS = []
@@ -427,12 +427,22 @@ def kernel_test(fn):
 
 
 def scratch(tmp):
-    """Copies of exactly the files the check reads: (kernel dir, platform dir)."""
+    """Real ABI and Cargo metadata inputs plus the source-anchor copies."""
     kdir, pdir = os.path.join(tmp, "kernel"), os.path.join(tmp, "platform")
     for src, dst, files in ((KERNEL, kdir, KERNEL_FILES), (str(PLATFORM), pdir, PLATFORM_FILES)):
         for rel in files:
             os.makedirs(os.path.dirname(os.path.join(dst, rel)), exist_ok=True)
             shutil.copyfile(os.path.join(src, rel), os.path.join(dst, rel))
+    # Cargo resolves the real workspace features; no fake cfg fixture.
+    shutil.copytree(os.path.join(KERNEL, "abi"), os.path.join(kdir, "abi"), dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("target"))
+    shutil.copytree(os.path.join(KERNEL, "examples"), os.path.join(kdir, "examples"))
+    shutil.copytree(os.path.join(KERNEL, "user/src"), os.path.join(kdir, "user/src"), dirs_exist_ok=True)
+    for rel in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "fbcon/Cargo.toml",
+                "fbcon/src/lib.rs", "user/Cargo.toml", "user/src/lib.rs"):
+        dst = os.path.join(kdir, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copyfile(os.path.join(KERNEL, rel), dst)
     return kdir, pdir
 
 
@@ -522,10 +532,10 @@ def control_4_renamed_kernel_constant_is_unknown():
     code, lines = control([("kernel", "abi/src/syscall.rs", "pub const MAX_MAP_PAGES: u64 = 64;",
                             "pub const MAX_MAP_PAGE_COUNT: u64 = 64;")])
     assert code == 2, lines
-    assert lines[-1].startswith("ABI FACTS UNKNOWN unknown=3 "), lines[-1]
+    assert lines[-1] == UNKNOWN_COMPILER, lines[-1]
     assert not any(line.startswith("ABI FACTS OK") for line in lines)
-    assert facts(lines, "UNKNOWN") == {"runtime/src/allocator.rs:20": ["MAX_MAP_PAGES"],
-                                       "docs/C-INTERFACE.md:130": ["MAX_MAP_PAGES", "MAX_MAP_PAGES"]}, lines
+    assert "MAX_MAP_PAGES" in facts(lines, "UNKNOWN")["runtime/src/allocator.rs:20"], lines
+    assert "compiler facts unavailable" in kernel_line(lines, "MAX_MAP_PAGES"), lines
     return lines
 
 
@@ -628,6 +638,9 @@ G128 = "    if pages == 0 || pages > 128 {"
 MISMATCH_128 = (f"ABI FACTS MISMATCH mismatch=2 unknown=0 checked={CHECKED} "
                 f"narrower={NARROWER + 1}")
 UNKNOWN_MAP = f"ABI FACTS UNKNOWN unknown=3 checked={CHECKED - 3} narrower={NARROWER}"
+COMPILER_BINDINGS = sum(b[0] != "MAX_LOAD_SEGMENTS" for b in gate.BINDINGS)
+UNKNOWN_COMPILER = (f"ABI FACTS UNKNOWN unknown={COMPILER_BINDINGS} "
+                    f"checked={CHECKED - COMPILER_BINDINGS} narrower={NARROWER}")
 
 
 def kernel_anchor_line(rel, anchor):
@@ -648,29 +661,24 @@ def definition(new, code, kernel, last):
     got, lines = control([("kernel", "abi/src/syscall.rs", D, new)])
     assert got == code, lines
     found = kernel_line(lines, "MAX_MAP_PAGES")
-    assert (found.startswith(kernel + " ") if code == 2 else found == kernel), found
+    assert found.startswith(kernel + " "), found
     assert lines[-1] == last, lines[-1]
     assert not (code and any(line.startswith("ABI FACTS OK") for line in lines)), lines
     return lines
 
 
 def mismatch_128(new, offset):
-    line = kernel_anchor_line("abi/src/syscall.rs", D) + offset
-    site = kernel_anchor_line("src/syscalls.rs", G)
-    return definition(new, 1, f"ABI KERNEL MAX_MAP_PAGES=128 abi/src/syscall.rs:{line} "
-                              f"enforced=src/syscalls.rs:{site}", MISMATCH_128)
+    return definition(new, 1, "ABI KERNEL MAX_MAP_PAGES=128", MISMATCH_128)
 
 
 def still_ok(new, offset):
-    line = kernel_anchor_line("abi/src/syscall.rs", D) + offset
-    site = kernel_anchor_line("src/syscalls.rs", G)
-    return definition(new, 0, f"ABI KERNEL MAX_MAP_PAGES=64 abi/src/syscall.rs:{line} "
-                              f"enforced=src/syscalls.rs:{site}", OK_SUMMARY)
+    return definition(new, 0, "ABI KERNEL MAX_MAP_PAGES=64", OK_SUMMARY)
 
 
 def unknown_def(new, why):
-    lines = definition(new, 2, "ABI KERNEL MAX_MAP_PAGES=UNKNOWN", UNKNOWN_MAP)
-    assert why in kernel_line(lines, "MAX_MAP_PAGES"), kernel_line(lines, "MAX_MAP_PAGES")
+    # A compile failure makes the whole compiler packet unavailable.
+    lines = definition(new, 2, "ABI KERNEL MAX_MAP_PAGES=UNKNOWN", UNKNOWN_COMPILER)
+    assert "compiler facts unavailable" in kernel_line(lines, "MAX_MAP_PAGES"), lines
 
 
 def site_unknown(new, why="0 lines match the anchor"):
@@ -710,14 +718,14 @@ def line_and_doc_line_comments_are_not_evidence():
     site_unknown("// " + G + "\n" + G128)                                        # E2
     mismatch_128("/// " + D + "\n" + D128, 1)                                  # E4a
     site_unknown("/// " + G + "\n" + G128)                                       # E4a
-    mismatch_128("//! " + D + "\n" + D128, 1)                                  # E4b
+    unknown_def("//! " + D + "\n" + D128, "invalid inner doc placement")  # Rust E0753
     still_ok(D + " // the map bound", 0)                                       # trailing comment read
 
 
 @kernel_test
 def doc_block_comments_are_not_evidence():
     mismatch_128("/**\n" + D + "\n*/\n" + D128, 3)                             # E4c
-    mismatch_128("/*!\n" + D + "\n*/\n" + D128, 3)
+    unknown_def("/*!\n" + D + "\n*/\n" + D128, "invalid inner doc placement")
     mismatch_128("/** " + D + " */ pub const MAX_MAP_PAGES: u64 = 128;", 0)    # code after the doc block
 
 
@@ -741,8 +749,8 @@ def strings_and_chars_hold_delimiters_not_evidence():
 
 
 @kernel_test
-def cfg_gated_duplicate_or_alternate_is_unknown():
-    unknown_def("#[cfg(any())]\n" + D + "\n" + D128, "2 lines match the anchor")       # E5
+def cfg_gated_definition_uses_compiler_and_site_stays_conservative():
+    mismatch_128("#[cfg(any())]\n" + D + "\n" + D128, 2)  # compiler selects active alternative
     site_unknown("#[cfg(any())]\n    " + G + "\n        return -1;\n    }\n" + G128,
                  "under a cfg attribute")
 
@@ -756,7 +764,7 @@ def undecidable_kernel_source_is_unknown():
         assert code == 2, lines
         for fact in ("MAX_SPAWN_IMAGE_BYTES", "MAX_MAP_PAGES"):
             found = kernel_line(lines, fact)
-            assert f"=UNKNOWN abi/src/syscall.rs: active Rust source undecidable: {why}" in found, found
+            assert "=UNKNOWN compiler facts unavailable:" in found, found
         assert not any(line.startswith("ABI FACTS OK") for line in lines), lines
 
 

@@ -10,16 +10,62 @@ It is a research system. It is not production-ready, it supports no physical
 hardware, and it is not a Unix: there is no `fork`, there are no user IDs,
 and existing Unix or Linux software does not run without porting.
 
-> **Proposed RC1 source snapshot, 2026-10-18.** The component revisions are
-> the published RC1 pair: kernel `d208b61b` and platform `0fada7ed`.
-> This is a curated source snapshot, with development records omitted and
-> explicit sanitation edits recorded in `SOURCE-MANIFEST.toml` and
-> `tools/assembly.toml`. Assembly repeatability is separate from rebuilding
-> the published binaries. **A clean-room rebuild and the qualification
-> suites have not been run from this public tree.** See
-> [`docs/RC1-SOURCE.md`](docs/RC1-SOURCE.md) for the reconstruction recipe,
-> exact inputs, expected artifact digests and known correspondence gaps.
-> `SOURCE-MANIFEST.toml` records these checks under `not_run`.
+> **Preview 2 corresponding source, 2026-11-07.** Components are
+> kernel `919f0676` and platform `0b002f73`. Development records are filtered
+> by the recorded export configuration; no private Git history is included.
+> The export configuration records hash-bound adaptations of private labels,
+> host guards, optional artifact lookups and explicit execution inputs.
+> Source preparation repaired six public-recipe defects in staging, pinned
+> checker wheels, Git discovery, fetch delegation, Python bytecode handling
+> and the enrollment incremental-build setting. The preceding clean-room
+> attempt failed before compilation; that failure remains recorded.
+> This corrected source payload passed a separate source review and a fresh
+> cloud construction using its public instructions: operator media validated
+> 145 files, blank-disk checks passed, and enrollment passed 16 cases/61 checks.
+> Its operator ISO matches the local construction. All 45 embedded program
+> ELFs in each reconstructed operator and enrollment kernel match the sealed
+> reference. All three raw media differ from the sealed release; the cloud
+> enrollment ISO also differs from the local construction, and packaging
+> outside its extracted kernel and GRUB remains unexamined. Correspondence is
+> bounded; whole-image and runtime equivalence are not established.
+> `tools/check.sh kernel` still fails at the preserved Clippy `collapsible_if`
+> lint. The cloud all/platform checks could not run without KVM. The separate
+> `fuzz-test` fails on its legacy-entry self-test; the valid 64-copy capacity
+> case remains unexercised in this preview. Later diagnostic results do not
+> make the full public kernel check pass. See the release notes for details.
+> The licensing examination records its methods and limits; it is not legal
+> certification. The binary pair passed an accepted scripted newcomer
+> rehearsal under QEMU TCG with private staging; an outsider public-download
+> journey and hardware execution were not performed. The earlier kernel
+> candidate's console-framing refusal remains recorded separately.
+> See `SOURCE-MANIFEST.toml` for incomplete qualification and
+> `docs/PREVIEW2-SOURCE.md` for reconstruction instructions.
+
+The exported execution helpers require public, explicit inputs. Set
+`ABSD_APP_A_SSH_TARGET` and `ABSD_APP_A_SSH_IDENTITY` for the App A runner;
+neither has a lab default. SSH agent use and forwarding remain disabled,
+and strict host-key checks remain enabled. No private identity is supplied.
+For the ACPI reset observer and an executing native-installer experiment,
+set `ABSD_PROTECTED_HOST` to the host where execution must be refused.
+An unset policy refuses execution. An explicitly empty value is appropriate
+only inside an isolated disposable VM with no protected host in that scope.
+Kernel wrappers retain canonical-source and protected-checkout refusal via
+`ABSD_KERNEL_SOURCE`, `ABSD_KERNEL_PROTECTED` and `scripts/inputs.sh`. The
+SMP application collector also requires an explicit `ABSD_KERNEL_SOURCE`
+and refuses that canonical checkout. The optional physical bring-up ISO
+requires explicit `HARDWARE_FIXTURE_AHCI` and `HARDWARE_FIXTURE_RTL8125` BDFs;
+it has no configured lab devices. Physical hardware remains unsupported by
+this preview.
+
+Retained-artifact tests are opt-in: `ABSD_S4_CANDIDATE`,
+`ABSD_TEST_OPERATOR_ISO`, `ABSD_TEST_OPERATOR_EXTRACTION`, and
+`ABSD_TEST_USERLAND_BUILD` select the corresponding inputs. Unset inputs
+skip the checks that require them. Release-manifest lineage is present only
+with explicit `--components` or `ABSD_COMPONENTS_TOML`. Archived labels in
+fixtures have been rewritten; packet bytes, embedded content hashes,
+schemas and historical verdicts are preserved. Five guest-network literal
+lines and one bare-header negative fixture have scan exceptions bound to
+their file and exact content hashes.
 
 This repository is a **source release**: the kernel, the userspace, the
 build and image tooling and the tests, at the revisions named in
@@ -51,8 +97,8 @@ elsewhere; see [`RELEASING.md`](RELEASING.md) and
   a timing guarantee.
 - **Failure is stated, not absorbed.** The manual says when a file is
   durable (on close, on `sync`, at session end, or shortly after a write;
-  `platform/man/afterboot.8`), and nothing is restarted behind the
-  operator's back. A separate served-recovery budget (at most three
+  `platform/man/afterboot.8`), and service lifecycle and bounded logger recovery are reported
+  to the operator. A separate served-recovery budget (at most three
   whole-machine resets, then a stop that names its reason) is demonstrated
   by its own test and is not part of the gate.
 
@@ -107,44 +153,30 @@ it installs are the requirements:
   committed glyph table; this package does not add a font to the RC1 media.
 
 The platform build checks the Rust compiler, cargo, the standard-library
-source and the groff macro tree by digest and refuses others. The RC1 media
+source and the groff macro tree by digest and refuses others. The preview media
 profile additionally checks exact package versions and the kernel Rust
 binaries; see `platform/media/vm-operator.toml`. clang and Python are not
 fully pinned by that profile.
 
-For an attempt to reconstruct RC1, use `tools/rebuild-rc1.sh` as described
-in `docs/RC1-SOURCE.md`. It includes the C userland prerequisites absent
-from the older generic wrapper below, preserves the original release ID
-and public build-key input, and adapts the private-checkout media tool to
-the manifest-verified public snapshots. Its complete guest execution is
-not yet qualified. For a separately keyed development image, the older
-entry points remain available after those prerequisites are built:
+For this release's source build, follow
+[`docs/PREVIEW2-SOURCE.md`](docs/PREVIEW2-SOURCE.md) and
+`tools/rebuild-preview2.sh`. The recipe includes the C userland inputs,
+uses the recorded Preview 2 release ID and public construction key, and
+checks the manifest-bound public snapshots. Its exact clean-room result
+is recorded separately; construction alone does not establish reproduction.
+The historical RC1 recipe is linked from `docs/RC1-SOURCE.md`.
 
-```sh
-ssh-keygen -t ed25519 -N "" -f ~/absd-key   # the key that may log in to the image
-tools/fetch.sh                  # downloads and verifies Rust crate inputs
-tools/build.sh ~/absd-key.pub   # kernel, platform, operator image -> out/
-tools/smoke.sh ~/absd-key       # two boots and an SSH session; no KVM needed
-```
 
-`smoke.sh` is the quick, independent check: under QEMU's software emulation
-it boots the image, logs in, reads the manual, writes a file, shuts down,
-boots again and finds the file. To use the system yourself:
-
-```sh
-tools/boot.sh                                  # QEMU in the foreground
-ssh -p 2222 -i ~/absd-key operator@127.0.0.1   # from another terminal
-```
-
-In the session, `man intro` is the place to start; `shutdown` halts the
-machine. `platform/man/afterboot.8` describes the image, its configuration
-files and what survives a reboot.
+For the downloaded preview's SSH workflow, use its `QUICKSTART.md`.
+The reconstruction outputs use the published construction public key and
+are comparison artifacts. `platform/man/afterboot.8` describes the image,
+its configuration and what survives a reboot.
 
 The qualification suites are separate and much heavier:
 
 ```sh
-tools/check.sh kernel     # the kernel's suite; software emulation, no KVM
-tools/check.sh platform   # the platform gate; hours, 12 GiB of disk, needs /dev/kvm
+tools/check.sh kernel /absolute/path/preview2-work     # the kernel's suite; software emulation, no KVM
+tools/check.sh platform /absolute/path/preview2-work   # the platform gate; hours, 12 GiB of disk, needs /dev/kvm
 ```
 
 KVM is needed only by the platform gate, whose containment matrix runs

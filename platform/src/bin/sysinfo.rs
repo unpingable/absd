@@ -92,6 +92,11 @@ fn main() {
         }
     }
 
+    match absd_runtime::observation::capacity() {
+        Ok(capacity)=>println!("limits: {} processes, {} handles/process, {} spawn transfers, {} pipes, {} cells",capacity.processes,capacity.handles_per_process,capacity.spawn_handles,capacity.pipes,capacity.cells),
+        Err(code)=>{status=1;println!("limits: unknown (kernel capacity query refused: {code})");}
+    }
+
     if fsd::active() {
         match fsd::space() {
             Ok(space) => {

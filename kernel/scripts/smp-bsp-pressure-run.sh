@@ -17,5 +17,5 @@ grub-mkrescue -o "$out/boot.iso" "$out/iso" > "$out/iso.log" 2>&1
 qstatus=0
 SMP_BENCH_VCPUS=$cpus SMP_TOPOLOGY=separate python3 scripts/smp-user-qemu.py "$out" > "$out/runner.log" 2>&1 || qstatus=$?
 test "$qstatus" -eq 3
-python3 scripts/check-smp-bsp-pressure.py --serial "$out/serial.log" --placement "$out/vcpu-placement.json" --cpus "$cpus" --mode suite --expected-peak 16 > "$out/oracle.log" 2>&1
+python3 scripts/check-smp-bsp-pressure.py --serial "$out/serial.log" --placement "$out/vcpu-placement.json" --cpus "$cpus" --mode suite --expected-peak "$(python3 scripts/kernel_capacities.py)" > "$out/oracle.log" 2>&1
 result=0

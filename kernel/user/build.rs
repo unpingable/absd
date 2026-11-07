@@ -3,6 +3,43 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=ABSD_LOGD_FAULT");
+    let logd_fault = env::var("ABSD_LOGD_FAULT").unwrap_or_else(|_| "0".into());
+    assert!(
+        ["0", "1"].contains(&logd_fault.as_str()),
+        "ABSD_LOGD_FAULT must be 0 or 1"
+    );
+    println!("cargo:rustc-env=ABSD_LOGD_FAULT={logd_fault}");
+    println!("cargo:rerun-if-env-changed=ABSD_LOGD_PRESENT");
+    println!(
+        "cargo:rustc-env=ABSD_LOGD_PRESENT={}",
+        env::var("ABSD_LOGD_PRESENT").unwrap_or_default()
+    );
+    println!("cargo:rerun-if-env-changed=ABSD_LOCAL_CONSOLE");
+    if let Ok(value) = env::var("ABSD_LOCAL_CONSOLE") {
+        assert!(
+            value == "0" || value == "1",
+            "ABSD_LOCAL_CONSOLE must be 0 or 1"
+        );
+    }
+    println!("cargo:rerun-if-env-changed=ABSD_USER_SUCCESSOR");
+    println!("cargo:rerun-if-env-changed=ABSD_EXTERNAL_USER_ELF");
+    let digest = if env::var("ABSD_USER_SUCCESSOR").as_deref() == Ok("1") {
+        env::var_os("ABSD_EXTERNAL_USER_ELF")
+            .map(|path| {
+                println!("cargo:rerun-if-changed={}", PathBuf::from(&path).display());
+                let result = std::process::Command::new("sha256sum")
+                    .arg(path)
+                    .output()
+                    .expect("ELF digest");
+                assert!(result.status.success(), "ELF digest failed");
+                String::from_utf8(result.stdout).expect("digest UTF-8")[..64].to_owned()
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    println!("cargo:rustc-env=ABSD_MWM_SUCCESSOR_SHA={digest}");
     embed("ABSD_RESERVATION_ACTOR_EMBED", "reservation-actor.elf");
     embed("ABSD_CAPABILITY_ACTOR_EMBED", "capability-actor.elf");
     embed(

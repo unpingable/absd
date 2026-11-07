@@ -10,7 +10,7 @@ import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent
-WRITERS = {"build-cports.sh": 1, "build-tcc.sh": 1, "run-c-kit.sh": 1}
+WRITERS = {"build-cports.sh": 1, "run-c-kit.sh": 1}
 WRITE = re.compile(r'>\s*"?[^\s"<>|]*\.demand"?(\s|$)')
 PIN = re.compile(r"^\s*export LC_ALL=C\s*(#.*)?$")
 OTHER = re.compile(r"\bLC_ALL=(?!C\b)|\bLANG=|\bLC_COLLATE=")

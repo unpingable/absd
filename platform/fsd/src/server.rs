@@ -106,6 +106,7 @@ pub enum Event {
 enum Role {
     Unbound,
     Control,
+    Logger,
     /// A session's own channel and the spares reserved for its children.
     Session {
         spares: Vec<usize>,
@@ -140,6 +141,10 @@ struct Channel {
     next_open: u64,
 }
 
+fn logger_path(path:&[u8])->bool {
+    within(path,crate::journal::DIR) || [b"/var/log/journal-health".as_slice(),b"/var/log/sshd".as_slice(),b"/var/log/sshd.0".as_slice()].contains(&path)
+}
+
 impl Channel {
     fn new(role: Role) -> Self {
         Self {
@@ -154,7 +159,7 @@ impl Channel {
     fn serves(&self) -> bool {
         match self.role {
             Role::Unbound => false,
-            Role::Control | Role::Session { .. } => true,
+            Role::Control | Role::Logger | Role::Session { .. } => true,
             Role::Spare { bound, .. } => bound,
         }
     }
@@ -162,6 +167,7 @@ impl Channel {
     /// roots (`/releases`, `/absd`) is ever covered, whatever the mounts say: the selected tree is reached
     /// only through its binding (`Server::physical`).
     fn mount_for(&self, path: &[u8]) -> Option<&Mount> {
+        if self.role == Role::Logger && !logger_path(path) {return None;}
         if hidden(path) {
             return None;
         }
@@ -278,11 +284,20 @@ pub struct Server<D: Device> {
     release: Option<Vec<u8>>,
     /// The last wall-clock reading and the tick it was taken at.
     wall: Option<(u64, Option<u64>)>,
+    wall_generation:Option<u64>,
     /// Released channels that have left draining (see [`Server::settled`]).
     settled: u64,
 }
 
 impl<D: Device> Server<D> {
+    /// Software civil corrections invalidate a previously cached wall value
+    /// even when fewer than CLOCK_TICKS have passed. Normal samples retain the
+    /// existing bounded refresh budget; legacy callers need not supply a generation.
+    pub fn observe_clock_generation(&mut self,generation:u64) {
+        if self.wall_generation!=Some(generation){self.wall=None;self.wall_generation=Some(generation);}
+    }
+    /// A refused/corrupt civil observation must not reuse a known cached date.
+    pub fn forget_clock(&mut self){self.wall=None;self.wall_generation=None;}
     /// Sets the filesystem's clock (`Fs::set_clock`) for what happens next,
     /// at tick `ticks`: `read` is the wall clock (`None` when it is
     /// unavailable or refused), called only when the last reading is
@@ -320,8 +335,25 @@ impl<D: Device> Server<D> {
             dirty_since: None,
             release: None,
             wall: None,
+            wall_generation:None,
             settled: 0,
         }
+    }
+
+    /// Trusted construction only: init gave this trailing channel to one
+    /// non-spawning logger generation, never to a session or worker pool.
+    /// Its path ceiling is checked server-side on every ordinary operation.
+    pub fn attach_logger(&mut self, channel:usize)->bool {
+        let Some(target)=self.channels.get_mut(channel) else{return false};
+        if channel==CONTROL || target.role!=Role::Unbound{return false}
+        target.role=Role::Logger;target.mounts=alloc::vec![Mount::new(crate::log::DIR,true)];true
+    }
+    pub fn retire_logger(&mut self,channel:usize) {
+        if self.channels.get(channel).is_some_and(|c|c.role==Role::Logger){self.drop_opens(channel);}
+    }
+    pub fn logger_opens(&self)->usize {self.channels.iter().filter(|c|c.role==Role::Logger).map(|c|c.opens.len()).sum()}
+    pub fn logger_quiet(&self,channel:usize)->bool {
+        self.channels.get(channel).is_some_and(|c|c.role==Role::Logger&&c.opens.is_empty())
     }
 
     /// How many released channels have left draining since the server
@@ -486,6 +518,12 @@ impl<D: Device> Server<D> {
             return reply(Err(status::INVALID));
         };
         match code {
+            op::LOGGER_BEGIN if self.channels[channel].role != Role::Logger => reply(Err(status::DENIED)),
+            op::LOGGER_BEGIN => {
+                if !reader.0.is_empty() {return reply(Err(status::INVALID));}
+                self.drop_opens(channel);
+                reply(Ok(0))
+            }
             op::BIND | op::RELEASE | op::NOTICE if channel != CONTROL => reply(Err(status::DENIED)),
             op::NOTICE => {
                 let text = reader.rest();
@@ -859,19 +897,25 @@ impl<D: Device> Server<D> {
     /// Checks a session binding's mounts: normalized, absolute, never `/`,
     /// never touching [`RESERVED`], a [`HIDDEN`] root, or the recovery
     /// state (`recovery::DIR` and its staging directory, which only the
-    /// server and sshd's control channel reach), at most [`MAX_MOUNTS`],
-    /// no duplicates.
+    /// server and sshd's control channel reach), the writable guard or the
+    /// resume slot (`crate::write_guard::PATH`, `crate::resume::PATH`), at
+    /// most [`MAX_MOUNTS`], no duplicates.
     fn valid_session_mounts(mounts: &[Mount]) -> bool {
         mounts.len() <= MAX_MOUNTS
             && mounts.iter().enumerate().all(|(index, m)| {
                 normalize(&m.path).as_deref() == Some(&m.path[..])
                     && m.path != b"/"
+                    && !(m.writable && (within(&m.path, crate::log::DIR) || within(crate::log::DIR, &m.path)))
                     && !within(&m.path, RESERVED)
                     && !within(RESERVED, &m.path)
                     && !within(&m.path, recovery::DIR)
                     && !within(recovery::DIR, &m.path)
                     && !within(&m.path, recovery::STAGING)
                     && !within(recovery::STAGING, &m.path)
+                    && !within(&m.path, crate::write_guard::PATH)
+                    && !within(crate::write_guard::PATH, &m.path)
+                    && !within(&m.path, crate::resume::PATH)
+                    && !within(crate::resume::PATH, &m.path)
                     && !HIDDEN
                         .iter()
                         .any(|root| within(&m.path, root) || within(root, &m.path))

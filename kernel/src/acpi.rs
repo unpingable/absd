@@ -556,6 +556,103 @@ impl Fadt {
     }
 }
 
+/// The only admitted FADT reset profile: QEMU Q35 byte I/O reset.
+/// Private fields keep an unchecked firmware descriptor out of dispatch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResetPlan {
+    port: u16,
+    value: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResetError {
+    Disabled,
+    Missing,
+    UnsupportedFlag,
+    Space,
+    Width,
+    Offset,
+    Access,
+    Address,
+    Value,
+    Walk,
+}
+
+/// Selects an immutable plan from a validated unique FADT. This does not
+/// authorize reset, access the described register, or depend on S5 eligibility.
+pub fn qemu_reset_plan(enabled: bool, fadt: Option<&Fadt>) -> Result<ResetPlan, ResetError> {
+    if !enabled {
+        return Err(ResetError::Disabled);
+    }
+    let fadt = fadt.ok_or(ResetError::Missing)?;
+    let (gas, value) = fadt.reset.ok_or(ResetError::Missing)?;
+    if fadt.flags & FADT_RESET_REG_SUP == 0 {
+        return Err(ResetError::UnsupportedFlag);
+    }
+    if gas.space != SPACE_IO {
+        return Err(ResetError::Space);
+    }
+    if gas.width != 8 {
+        return Err(ResetError::Width);
+    }
+    if gas.offset != 0 {
+        return Err(ResetError::Offset);
+    }
+    if gas.access > 1 {
+        return Err(ResetError::Access);
+    }
+    // Compare the complete 64-bit address before narrowing it to an I/O port.
+    if gas.address != 0xcf9 {
+        return Err(ResetError::Address);
+    }
+    if value != 0x0f {
+        return Err(ResetError::Value);
+    }
+    Ok(ResetPlan {
+        port: gas.address as u16,
+        value,
+    })
+}
+
+/// Terminal operations consumed by the existing authorized reset caller.
+/// Retire must return successfully before any later operation is reached.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResetStep {
+    Retire,
+    DisableInterrupts,
+    Unavailable(ResetError),
+    Attempt,
+    Drain,
+    Write { port: u16, value: u8 },
+    Wait,
+    Returned,
+    Legacy,
+}
+
+/// Runs a single bounded FADT-first attempt, then the existing fallback
+/// when the write returns. The consumer supplies the terminal I/O operations.
+pub fn reset_sequence(
+    plan: impl FnOnce() -> Result<ResetPlan, ResetError>,
+    mut effect: impl FnMut(ResetStep),
+) {
+    effect(ResetStep::Retire);
+    effect(ResetStep::DisableInterrupts);
+    match plan() {
+        Ok(plan) => {
+            effect(ResetStep::Attempt);
+            effect(ResetStep::Drain);
+            effect(ResetStep::Write {
+                port: plan.port,
+                value: plan.value,
+            });
+            effect(ResetStep::Wait);
+            effect(ResetStep::Returned);
+        }
+        Err(error) => effect(ResetStep::Unavailable(error)),
+    }
+    effect(ResetStep::Legacy);
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PowerError {
     HardwareReduced,
@@ -956,6 +1053,168 @@ mod tests {
         }
         image.put(0x1000, &table(b"XSDT", 1, &xsdt_body));
         (image, rsdp_v2(0x1000, 0))
+    }
+
+    // These controls catch unchecked GAS narrowing, broadened tuple acceptance,
+    // writes on refusal, and reset I/O reordered ahead of AP retirement.
+    fn reset_fixture() -> Vec<u8> {
+        let mut bytes = table(b"FACP", 5, &fadt_body(0, 0, 0, 129));
+        bytes[128] = 0x0f;
+        fix(&mut bytes, 9);
+        bytes
+    }
+
+    fn reset_steps(bytes: &[u8], enabled: bool) -> Vec<ResetStep> {
+        let (mut image, rsdp) = machine(1);
+        let mut bytes = bytes.to_vec();
+        fix(&mut bytes, 9);
+        image.put(0x3000, &bytes);
+        let root = read_root(&mut image, &parse_rsdp(&rsdp).unwrap()).unwrap();
+        let address = root.find(b"FACP").unwrap();
+        let (_, bytes) = read_table(&mut image, address, Some(b"FACP")).unwrap();
+        let fadt = parse_fadt(bytes).unwrap();
+        let mut steps = Vec::new();
+        reset_sequence(
+            || qemu_reset_plan(enabled, Some(&fadt)),
+            |step| steps.push(step),
+        );
+        steps
+    }
+
+    #[test]
+    fn reset_q35_writes_once_after_retirement_then_falls_back_if_returned() {
+        for access in [0, 1] {
+            let mut bytes = reset_fixture();
+            bytes[119] = access;
+            let steps = reset_steps(&bytes, true);
+            assert_eq!(
+                steps,
+                vec![
+                    ResetStep::Retire,
+                    ResetStep::DisableInterrupts,
+                    ResetStep::Attempt,
+                    ResetStep::Drain,
+                    ResetStep::Write {
+                        port: 0xcf9,
+                        value: 0x0f
+                    },
+                    ResetStep::Wait,
+                    ResetStep::Returned,
+                    ResetStep::Legacy,
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn reset_plan_is_loaded_only_after_retirement_and_interrupt_disable() {
+        use std::cell::Cell;
+        let disabled = Cell::new(false);
+        reset_sequence(
+            || {
+                assert!(
+                    disabled.get(),
+                    "plan acquired before terminal interrupt disable"
+                );
+                Err(ResetError::Walk)
+            },
+            |step| {
+                if step == ResetStep::DisableInterrupts {
+                    disabled.set(true);
+                }
+            },
+        );
+        let mut reached = Vec::new();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            reset_sequence(
+                || panic!("plan acquired after failed retirement"),
+                |step| {
+                    reached.push(step);
+                    if step == ResetStep::Retire {
+                        panic!("missing retirement ACK");
+                    }
+                },
+            );
+        }));
+        assert!(result.is_err());
+        assert_eq!(reached, vec![ResetStep::Retire]);
+    }
+
+    #[test]
+    fn reset_disabled_missing_short_and_unsupported_never_write() {
+        let refuse = |selection| {
+            let mut steps = Vec::new();
+            reset_sequence(|| selection, |step| steps.push(step));
+            assert_eq!(steps.first(), Some(&ResetStep::Retire));
+            assert_eq!(steps.get(1), Some(&ResetStep::DisableInterrupts));
+            assert!(matches!(steps.get(2), Some(ResetStep::Unavailable(_))));
+            assert_eq!(steps.last(), Some(&ResetStep::Legacy));
+            assert_eq!(steps.len(), 4);
+        };
+        let bytes = reset_fixture();
+        let fadt = parse_fadt(&bytes).unwrap();
+        assert_eq!(
+            qemu_reset_plan(false, Some(&fadt)),
+            Err(ResetError::Disabled)
+        );
+        refuse(qemu_reset_plan(false, Some(&fadt)));
+        assert_eq!(qemu_reset_plan(true, None), Err(ResetError::Missing));
+        refuse(qemu_reset_plan(true, None));
+        for length in 116..129 {
+            let short = parse_fadt(&bytes[..length]).unwrap();
+            assert_eq!(
+                qemu_reset_plan(true, Some(&short)),
+                Err(ResetError::Missing)
+            );
+            refuse(qemu_reset_plan(true, Some(&short)));
+        }
+        let mut no_support = bytes.clone();
+        no_support[112..116].copy_from_slice(&0u32.to_le_bytes());
+        let fadt = parse_fadt(&no_support).unwrap();
+        assert_eq!(
+            qemu_reset_plan(true, Some(&fadt)),
+            Err(ResetError::UnsupportedFlag)
+        );
+        refuse(qemu_reset_plan(true, Some(&fadt)));
+        // Exhaust each one-byte field, including reserved values, independently.
+        for (offset, accepted) in [
+            (116, &[1][..]),
+            (117, &[8][..]),
+            (118, &[0][..]),
+            (119, &[0, 1][..]),
+            (128, &[15][..]),
+        ] {
+            for value in 0..=u8::MAX {
+                if accepted.contains(&value) {
+                    continue;
+                }
+                let mut altered = bytes.clone();
+                altered[offset] = value;
+                let fadt = parse_fadt(&altered).unwrap();
+                assert!(
+                    qemu_reset_plan(true, Some(&fadt)).is_err(),
+                    "offset={offset} value={value}"
+                );
+                refuse(qemu_reset_plan(true, Some(&fadt)));
+            }
+        }
+        for address in [
+            0,
+            1,
+            0xcf7,
+            0xcfa,
+            0xffff,
+            0x1_0cf9,
+            u32::MAX as u64,
+            0x1_0000_0cf9,
+            u64::MAX,
+        ] {
+            let mut altered = bytes.clone();
+            altered[120..128].copy_from_slice(&address.to_le_bytes());
+            let fadt = parse_fadt(&altered).unwrap();
+            assert_eq!(qemu_reset_plan(true, Some(&fadt)), Err(ResetError::Address));
+            refuse(qemu_reset_plan(true, Some(&fadt)));
+        }
     }
 
     #[test]

@@ -15,7 +15,7 @@ key.
 
 ## The enrollment image
 
-The configuration decision recorded internally on 2026-10-16 makes the enrollment image
+Owner ruling 2026-10-16 (coordination record #31, slice A) makes the enrollment image
 a separate image, chosen when it is built. No boot option enables
 enrollment, and no ABI provides it.
 
@@ -74,3 +74,35 @@ reports is a refusal of its own, with the disk as the error left it):
 
 `scripts/enroll-matrix.py` boots the enrollment image under QEMU through
 every case.
+
+## Booting and stopping a preview machine
+
+Start the machine with `absd-try boot DIR --login-key KEY`, where `KEY` is
+the private key corresponding to the public key you enrolled. The helper
+passes this path to SSH and never copies or stores the private key. Omit
+`--login-key` to use SSH's default identities or your existing agent.
+Shutdown authentication is noninteractive; unlock an encrypted key in your
+agent before booting if needed.
+
+Ctrl-C in the boot helper requests `shutdown` over SSH, using the host key
+recorded from the VM console. It waits for QEMU to confirm a clean halt and
+then exits successfully. The request and wait share the host shutdown
+allowance used by `media_operator.operator_boot` (180 seconds). This is the
+same authorized shutdown as typing `shutdown` in an operator session; it
+allows the machine to finish its writes.
+
+If SSH authentication fails or shutdown times out, the helper exits with a
+nonzero status and leaves QEMU running. It prints the process ID, machine
+directory and exact SSH shutdown command; diagnostics are in
+`DIR/shutdown.log`. Retry that command with your own identity, and wait for
+the machine to stop before booting it again. Do not replace the directory
+if it contains files you need. Before SSH is ready, the helper also leaves
+QEMU running, including an interrupt while QEMU is being started. If the
+console has not yet supplied a host key, keep the
+machine and seek help instead of disabling host-key verification.
+
+A second Ctrl-C **while the shutdown request is pending** explicitly forces
+a stop and prints a recovery warning. An unclean stop after writable startup
+can prevent the next boot. Preserve the machine directory; do not erase it
+to make an error disappear. The helper never turns a timeout into a forced
+stop. Ctrl-C inside an SSH session still interrupts that session's command.

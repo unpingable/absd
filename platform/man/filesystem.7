@@ -52,12 +52,14 @@ and
 .Pa /etc
 read-only and
 .Pa /var/log
-read-write, where the SSH server writes its log and the fixed
+read-write with read-only journal and collector-health carve-outs,
+where the SSH server writes the fixed
 .Pa network-status
 sample; see
 .Xr net-status 1 .
 The file server writes
-its own log into the filesystem directly.
+its own log and the bounded service journal into the filesystem directly; see
+.Xr logs 1 .
 A process can ask the server to bind a spare channel for a child with its
 own mounts or fewer, never more; see
 .Xr handles 7 .

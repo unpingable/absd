@@ -33,7 +33,9 @@ def main():
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(min(4, max(0.001, deadline - time.monotonic())))
         sock.bind(("192.0.2.1", 42030))
+        connect_started = time.monotonic_ns()
         sock.connect(("192.0.2.100", 7005))
+        connected = time.monotonic_ns()
         local, peer = sock.getsockname(), sock.getpeername()
         sock.settimeout(max(0.001, deadline - time.monotonic()))
         sock.sendall(data)
@@ -51,6 +53,8 @@ def main():
         verdict = {"disposition": "PASS", "scope": "independent Linux socket client only",
                    "local": local, "peer": peer, "bytes": len(result),
                    "sha256": hashlib.sha256(result).hexdigest(), "write_half_closed": True, "read_EOF": True}
+        verdict.update({"connect_started_monotonic_ns": connect_started, "connected_monotonic_ns": connected,
+                        "completed_monotonic_ns": time.monotonic_ns()})
     except BaseException as error:
         verdict = {"disposition": "FAIL", "error": repr(error)}
         raise

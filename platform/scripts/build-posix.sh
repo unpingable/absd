@@ -10,8 +10,10 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 camp=$(dirname "$root")
 kit=${ABSD_CKIT_BUILD:-$camp/ckit-build}/kit
 out=${ABSD_CPORTS_BUILD:-$camp/cports-build}
-mkdir -p "$out/lib" "$out/posix-obj"
 test -x "$kit/bin/absd-cc" || { echo "build-posix: $kit/bin/absd-cc missing: run scripts/build-c-kit.sh" >&2; exit 1; }
+# The shared kit must be this checkout's, built cleanly (scripts/c_kit_source.py).
+python3 -I "$root/scripts/c_kit_source.py" kit "$root" "$kit"
+mkdir -p "$out/lib" "$out/posix-obj"
 rm -f "$out/posix-obj/"*.o "$out/lib/libabsd-posix.a"
 # The tree, as spelled and physically, is mapped to /absd so that __FILE__
 # (assert()) names no checkout path and the archive hashes the same anywhere.

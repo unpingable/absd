@@ -1,0 +1,52 @@
+.Dd November 3, 2026
+.Dt HEAD 1
+.Os ABSD
+.Sh NAME
+.Nm head
+.Nd print the beginning of files
+.Sh SYNOPSIS
+.Nm
+.Op Fl n Ar lines | Fl c Ar bytes
+.Op Ar file ...
+.Sh DESCRIPTION
+Print the first ten lines of each file by default.
+Stop once the requested count is available, using buffered reads.
+.Pp
+.Fl n Ar count
+selects lines;
+.Fl c Ar count
+selects bytes.
+Counts are nonnegative decimal integers; zero selects no data.
+Repeated count options are accepted with the last one taking effect.
+Options must precede paths; there is no
+.Ql --
+terminator and no attached-count syntax such as
+.Ql -n3 .
+Use
+.Ql ./-name
+for a dash-leading file name.
+.Pp
+With no files, read standard input.
+An explicit
+.Ql -
+is a file name, not standard input.
+With multiple files, print a
+.Ql ==> file <==
+header for each file processed, separated by blank lines.
+Files must be readable through this process's view; nothing is modified.
+Input errors on named files are diagnosed on standard error and processing
+continues.
+An error while processing standard input sets status 1 without a diagnostic.
+.Sh EXIT STATUS
+0 for successful processing; 1 for an observed read or copy failure;
+2 for invalid options or counts.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+head -n 3 /var/log/sshd
+cat /etc/network.conf | head -c 20
+.Ed
+.Sh CAVEATS
+Final output-flush failures are not reflected reliably in this command's status.
+.Sh SEE ALSO
+.Xr cat 1 ,
+.Xr filesystem 7

@@ -78,6 +78,145 @@ class Tests(unittest.TestCase):
         matrix.compare_census("exit return", before, reading())
         self.assertEqual(matrix.samples[1]["kernel"], reading(67)["kernel"])
 
+    def held_matrix(self, samples, anchor=True):
+        """Exercise the real held-program route without a guest or identity."""
+        matrix = self.matrix(samples, anchor=anchor)
+        matrix.connections = 0
+        matrix.op = Path("local-test-fixture-no-key")
+        matrix.client = types.SimpleNamespace(base=lambda key: ["local-test-fixture"])
+        matrix.t = types.SimpleNamespace(spawn_count=lambda: 0,
+                                         await_spawns=lambda *args: None,
+                                         live_images=lambda: [1, 2], all_images=lambda: 0)
+
+        def ssh(command):
+            self.assertEqual(command, "/bin/sysinfo")
+            matrix.connections += 1
+            return 0, (reading(frames=759)["memory"] + "\n").encode(), b""
+
+        matrix.ssh = ssh
+        matrix.held_started_after_samples = []
+        held = types.SimpleNamespace(returncode=0, communicate=lambda *args, **kwargs: (b"", b""))
+
+        def start(*args, **kwargs):
+            matrix.held_started_after_samples.append(len(matrix.samples))
+            return held
+
+        return matrix, mock.Mock(side_effect=start)
+
+    def test_real_held_routes_confirm_rest_before_starting(self):
+        # The failed full gate took a transient 67-handle rest and later
+        # returned to 66. Reuse the ordinary case's judged 66-handle anchor.
+        for label, words in [("c", ["/bin/short"]), ("native", ["/bin/head", "-c", "1"])]:
+            with self.subTest(label=label):
+                matrix, start = self.held_matrix([reading(n) for n in (67, 67, 66, 66, 66, 66)])
+                with mock.patch.object(ck.subprocess, "Popen", start):
+                    self.assertEqual(matrix.live_frames(label, words), (16, 743))
+                self.assertEqual(matrix.held_started_after_samples, [4])
+                self.assertEqual(matrix.connections, 2)
+                self.assertEqual(matrix._settled_census, reading())
+
+    def test_held_route_refuses_changed_rest_before_starting(self):
+        changed = [reading(65), reading(67), reading(frames=744), dict(reading(), objects=[])]
+        for sample in changed:
+            with self.subTest(sample=sample):
+                matrix, start = self.held_matrix([sample])
+                with mock.patch.object(ck.subprocess, "Popen", start):
+                    with self.assertRaisesRegex(ck.sm.Failed, "C KIT RESOURCES UNSETTLED"):
+                        matrix.live_frames("c", ["/bin/short"])
+                start.assert_not_called()
+                self.assertGreaterEqual(ck.time.now, ck.CONFIRM_SECONDS)
+
+    def test_held_route_keeps_exact_after_comparison(self):
+        changed = [reading(67), reading(frames=744), dict(reading(), objects=[])]
+        for sample in changed:
+            with self.subTest(sample=sample):
+                matrix, start = self.held_matrix([reading(), reading(), sample])
+                began = ck.time.now
+                with mock.patch.object(ck.subprocess, "Popen", start):
+                    with self.assertRaisesRegex(ck.sm.Failed, "resources after frames c"):
+                        matrix.live_frames("c", ["/bin/short"])
+                start.assert_called_once()
+                self.assertGreaterEqual(ck.time.now - began, 20)
+
+    def test_held_route_initial_rest_requires_three_agreeing_readings(self):
+        matrix, start = self.held_matrix([reading(n) for n in (66, 67, 67, 66, 66, 66, 66, 66)],
+                                         anchor=False)
+        with mock.patch.object(ck.subprocess, "Popen", start):
+            self.assertEqual(matrix.live_frames("c", ["/bin/short"]), (16, 743))
+        self.assertEqual(matrix.held_started_after_samples, [6])
+
+    def test_unjudged_held_rehearsal_and_warmup_keep_their_existing_route(self):
+        for flag in ("rehearsal", "warmup"):
+            with self.subTest(flag=flag):
+                matrix, start = self.held_matrix([reading(67)] * 4)
+                with mock.patch.object(ck.subprocess, "Popen", start):
+                    self.assertEqual(matrix.live_frames("unjudged", ["/bin/short"], **{flag: True}),
+                                     (16, 743))
+                self.assertEqual(matrix.held_started_after_samples, [2])
+
+    def test_allowed_warmup_establishes_the_next_measured_anchor(self):
+        for growth in range(5):
+            with self.subTest(growth=growth):
+                warmed = reading(frames=743 + growth)
+                matrix, start = self.held_matrix([reading()] * 2 + [warmed] * 6)
+                with mock.patch.object(ck.subprocess, "Popen", start):
+                    self.assertEqual(matrix.live_frames("warmup", ["/bin/short"], warmup=True), (16, 743))
+                    self.assertEqual(matrix._settled_census, warmed)
+                    self.assertEqual(matrix.live_frames("c", ["/bin/short"]), (16 - growth, 743 + growth))
+                self.assertEqual(matrix.held_started_after_samples, [2, 6])
+
+    def test_rejected_warmup_does_not_advance_the_anchor(self):
+        changed = [reading(frames=748), reading(frames=742), reading(67), dict(reading(), objects=[])]
+        for sample in changed:
+            with self.subTest(sample=sample):
+                matrix, start = self.held_matrix([reading()] * 2 + [sample] * 2)
+                with mock.patch.object(ck.subprocess, "Popen", start):
+                    with self.assertRaisesRegex(ck.sm.Failed, "warmup: only the frame count"):
+                        matrix.live_frames("warmup", ["/bin/short"], warmup=True)
+                self.assertEqual(matrix._settled_census, reading())
+
+    def test_real_pin_run_measures_after_its_allowed_warmup(self):
+        # Ordinary before/after: five samples. Warmup rest: two more.
+        # Its permitted +1 frame must become the anchor for both held routes.
+        warmed = reading(frames=744)
+        matrix, start = self.held_matrix([reading()] * 7 + [warmed] * 10)
+        with tempfile.TemporaryDirectory(prefix="c-kit-held-pin-") as work:
+            matrix.work = Path(work)
+            matrix.op = Path(work) / "fixture"
+            matrix.op.with_suffix(".pub").write_text("fixture text, not an SSH identity")
+            matrix.t.setup = mock.Mock()
+            matrix.t.start = lambda **kw: {"public": "fixture"}
+            matrix.t.stop = mock.Mock()
+            matrix.t.port = 0
+            matrix.pin = ["fixture"]
+            matrix.cases = [("shell", "first", "-")]
+            matrix.probe_shell = lambda: {}
+            matrix.run_case = lambda *args: ("first", None, None, [])
+            matrix.judge = lambda *args: "agree"
+            matrix.run_vectors = lambda *args: None
+            matrix.alive = lambda *args: None
+            client = types.SimpleNamespace(trust=lambda key: None, base=lambda key: ["local-test-fixture"])
+            with mock.patch.object(ck.sm, "Client", return_value=client), \
+                    mock.patch.object(ck.subprocess, "Popen", start):
+                matrix.run()
+        self.assertEqual(matrix.held_started_after_samples, [7, 11, 15])
+        self.assertEqual(matrix._settled_census, warmed)
+
+    def test_bounded_held_histories_never_start_from_a_changed_anchor(self):
+        traces = 0
+        for length in range(1, 7):
+            for sequence in itertools.product((66, 67), repeat=length):
+                traces += 1
+                matrix, start = self.held_matrix([reading(n) for n in sequence])
+                with mock.patch.object(ck.subprocess, "Popen", start):
+                    try:
+                        matrix.live_frames("c", ["/bin/short"])
+                    except ck.sm.Failed:
+                        pass
+                for position in matrix.held_started_after_samples:
+                    self.assertEqual(matrix.samples[position - 1]["kernel"], reading()["kernel"], sequence)
+        self.assertEqual(traces, 126)
+
     def test_real_case_loop_keeps_the_preceding_judged_anchor(self):
         # Three initial readings plus two after readings establish the first
         # case. The next case's transient lasts three readings, so merely

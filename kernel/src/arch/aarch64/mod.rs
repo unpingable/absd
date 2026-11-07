@@ -18,6 +18,8 @@ pub struct AddressSpace {
     pub pdpt: u64,
     pub directory: u64,
     pub page_tables: [PageTableSlot; MAX_USER_PAGE_TABLES],
+    /// Every heap-window page below this address is mapped (0: none known).
+    pub heap_hint: u64,
 }
 impl AddressSpace {
     pub const EMPTY: Self = Self {
@@ -25,6 +27,7 @@ impl AddressSpace {
         pdpt: 0,
         directory: 0,
         page_tables: [PageTableSlot::EMPTY; MAX_USER_PAGE_TABLES],
+        heap_hint: 0,
     };
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1,0 +1,51 @@
+.Dd November 3, 2026
+.Dt BASENAME 1
+.Os ABSD
+.Sh NAME
+.Nm basename
+.Nd print final components of path strings
+.Sh SYNOPSIS
+.Nm
+.Ar name Op Ar suffix
+.Nm
+.Op Fl az
+.Op Fl s Ar suffix
+.Ar name ...
+.Sh DESCRIPTION
+Remove leading directory components and trailing separators from each
+path string and print the final component.
+This is a string operation: the named object need not exist and no file
+is opened.
+With two operands in the simple form, the second is a suffix to remove
+only when it matches and would not remove the whole name.
+.Pp
+.Fl a
+accepts multiple names rather than interpreting the second as a suffix.
+.Fl s Ar suffix
+selects suffix removal and also enables multiple names.
+.Fl z
+terminates results with NUL rather than newline.
+Use
+.Ql --
+before a name beginning with a dash.
+.Sh EXIT STATUS
+0 on success; nonzero for missing/extra operands, invalid options
+or output failure. Diagnostics use standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+basename /home/operator/notes.txt .txt
+.Ed
+.Sh ABSD PROFILE
+This is the unmodified uutils 0.12.0 utility pinned by the platform build.
+The reference describes selected source-supported options; use
+.Fl Fl help
+for the complete upstream interface.
+File access uses the process's ABSD filesystem view, output uses its
+inherited stream, and the command acquires no additional authority.
+There are no native Unix processes, signals or permission bits underneath
+this port.
+The command matrix exercises the example forms below; other options
+listed here are source-checked, not separately guest-qualified.
+.Sh SEE ALSO
+.Xr intro 1 ,
+.Xr filesystem 7

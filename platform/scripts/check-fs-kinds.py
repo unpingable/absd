@@ -331,7 +331,8 @@ MUTATIONS = [
     ("runtime/src/wire_kind.rs", "        _ => Err(UNKNOWN_KIND),", "        _ => Ok(WireKind::File),", "runtime/src/wire_kind.rs:decode"),
     ("runtime/src/wire_kind.rs", "    Dir,\n}", "    Dir,\n    Link,\n}", "runtime/src/wire_kind.rs:decode"),
     ("runtime/src/fsd.rs", "    crate::wire_kind::of_attr(attr)\n", "    Ok(if attr[0] == 2 { WireKind::Dir } else { WireKind::File })\n", "runtime/src/fsd.rs:kind"),
-    ("runtime/src/fsd.rs", "match kind(&attr)? {", "match kind(&attr).unwrap_or(WireKind::File) {", "runtime/src:kind-consumers"),
+    # Select read_file_into; child_cwd_kind also matches on kind(&attr)?.
+    ("runtime/src/fsd.rs", "    let attr = stat(path)?;\n    match kind(&attr)? {", "    let attr = stat(path)?;\n    match kind(&attr).unwrap_or(WireKind::File) {", "runtime/src:kind-consumers"),
     ("runtime/src/storage.rs", "            Ok(match crate::fsd::kind(&attr)? {\n                WireKind::File => Kind::File,\n                WireKind::Dir => Kind::Dir,\n            })", "            Ok(if crate::fsd::kind(&attr)? == WireKind::Dir { Kind::Dir } else { Kind::File })", "runtime/src/storage.rs:stat_kind"),
     ("runtime/src/storage.rs", "                Err(code) => return code,\n            };\n            write_attr", "                Err(_) => 1,\n            };\n            write_attr", "runtime/src/storage.rs:remote_attr"),
     ("runtime/src/storage.rs", "        kind,\n        readonly: half(4),", "        kind: half(0),\n        readonly: half(4),", "runtime/src/storage.rs:write_attr"),

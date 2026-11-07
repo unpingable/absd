@@ -230,7 +230,12 @@ pub unsafe extern "C" fn __absd_std_process_spawn_image(request: *const RawSpawn
     // spawn whatever its outcome; its drop closes this process's copies of
     // the child's ends.
     let control = crate::session::take_next();
-    match unsafe { spawn(request, control.as_ref()) } {
+    let terminal = crate::terminal::take_next();
+    let spawned = unsafe { spawn(request, control.as_ref(), terminal.as_ref()) };
+    // plan_child normally consumes this policy. Early argument/image errors
+    // must spend it too, rather than donate it to a later unrelated spawn.
+    crate::fsd::cancel_next_child();
+    match spawned {
         Ok(ends) => {
             unsafe { *out = ends };
             0
@@ -239,7 +244,7 @@ pub unsafe extern "C" fn __absd_std_process_spawn_image(request: *const RawSpawn
     }
 }
 
-unsafe fn spawn(request: &RawSpawn, control: Option<&crate::session::ChildEnds>) -> Result<[u64; 5], i64> {
+unsafe fn spawn(request: &RawSpawn, control: Option<&crate::session::ChildEnds>, terminal: Option<&crate::terminal::Child>) -> Result<[u64; 5], i64> {
     let path = unsafe { bytes(request.path, request.path_length) };
     if path.is_empty() || path.contains(&0) {
         return Err(SPAWN_INVALID);
@@ -258,17 +263,7 @@ unsafe fn spawn(request: &RawSpawn, control: Option<&crate::session::ChildEnds>)
     }
     let child_cwd = match unsafe { bytes(request.cwd, request.cwd_length) } {
         b"" => cwd::get().to_vec(),
-        given => {
-            let directory = cwd::normalize(given);
-            match crate::storage::stat_kind(&directory) {
-                Some(Ok(absd_fs::Kind::Dir)) => {}
-                Some(Ok(_)) => return Err(SPAWN_NOT_A_DIRECTORY),
-                Some(Err(code)) => return Err(code),
-                None if directory == b"/" => {}
-                None => return Err(-2),
-            }
-            directory
-        }
+        given => cwd::normalize(given),
     };
     // SAFETY: single-threaded runtime; no other reference to IMAGE is
     // live while `spawn` runs (see the static's comment).
@@ -323,9 +318,13 @@ unsafe fn spawn(request: &RawSpawn, control: Option<&crate::session::ChildEnds>)
             parent_ends[stream] = reader;
         }
     }
-    // Decided (and bound by the server) last, once nothing else can fail
-    // before the spawn but the spawn itself.
+    // Select the child's binding before checking its explicit cwd: sshd's
+    // control view deliberately cannot see a session's /home/operator.
     let plan = crate::fsd::plan_child()?;
+    if let Err(code) = validate_child_cwd(&plan, &child_cwd, request.cwd_length != 0) {
+        crate::fsd::child_failed(&plan);
+        return Err(code);
+    }
     let channel_ends = plan.ends();
     let block = BLOCK.load(Ordering::Relaxed);
     let view = if block != 0 && !matches!(plan, crate::fsd::Plan::NoFs) {
@@ -363,6 +362,27 @@ unsafe fn spawn(request: &RawSpawn, control: Option<&crate::session::ChildEnds>)
         roles.push((role::SESSION_REQUESTS, copies.len() as u8));
         copies.push([control.requests, RIGHT_WRITE, 0]);
     }
+    let terminal_handle = terminal.map(|t| t.handle).unwrap_or_else(|| {
+        if request.stdio.iter().any(|mode| matches!(*mode, STDIO_INHERIT | STDIO_PARENT_STDOUT | STDIO_PARENT_STDERR)) { crate::terminal::handle() } else { 0 }
+    });
+    if terminal_handle != 0 {
+        roles.push((role::TERMINAL, copies.len() as u8));
+        copies.push([terminal_handle, RIGHT_READ, 0]);
+    }
+    #[cfg(feature = "native-pcm-delegate")]
+    let playback = crate::playback_grant::claim(&crate::PLAYBACK, path);
+    #[cfg(feature = "native-pcm-delegate")]
+    if let Some(lease) = playback.as_ref() {
+        roles.push((role::PLAYBACK, copies.len() as u8));
+        copies.push([lease.handle(), RIGHT_READ | RIGHT_WRITE, 0]);
+    }
+    // Clock-owner authority is deliberately not inherited; only root init
+    // delegates role22 to the exact trusted owner.
+    let diagnostics=crate::diagnostics_handle();
+    if diagnostics!=0 {
+        roles.push((role::DIAGNOSTICS,copies.len() as u8));
+        copies.push([diagnostics,RIGHT_READ,0]);
+    }
     copies.push([child_ends[1], RIGHT_WRITE, COPY_CONSOLE]);
 
     let mut record = alloc::vec![0u8; MAX_STARTUP];
@@ -388,6 +408,17 @@ unsafe fn spawn(request: &RawSpawn, control: Option<&crate::session::ChildEnds>)
             return Err(code);
         }
     };
+    // Spend at kernel spawn, before startup delivery: after this point the
+    // child may act, so a later startup failure must never restore the grant.
+    #[cfg(feature = "native-pcm-delegate")]
+    if let Some(lease) = playback {
+        let handle = lease.commit();
+        let closed = unsafe { syscall3(SYS_CLOSE, handle, 0, 0) };
+        // A valid owned handle must close. Do not continue serving with an
+        // unaccounted writer if that invariant fails: the kernel releases the
+        // handle when it reaps the aborted server, not at the instant it dies.
+        assert!(closed == 0, "experimental playback parent close");
+    }
     // The child holds this copy now. Free it before FSD records its WAIT
     // holder: successful spawn needed one slot and used it for `child`,
     // so this guarantees another slot in the single-threaded runtime.
@@ -429,6 +460,22 @@ unsafe fn spawn(request: &RawSpawn, control: Option<&crate::session::ChildEnds>)
         }
     }
     Ok([IMAGE_CHILD | child, info[0], stdin, stdout, stderr])
+}
+
+fn validate_child_cwd(plan: &crate::fsd::Plan, directory: &[u8], explicit: bool) -> Result<(), i64> {
+    // Inherited cwd remains the existing logical label, even for nofs children.
+    if !explicit {
+        return Ok(());
+    }
+    let kind = crate::fsd::child_cwd_kind(plan, directory)
+        .or_else(|| crate::storage::stat_kind(directory));
+    match kind {
+        Some(Ok(absd_fs::Kind::Dir)) => Ok(()),
+        Some(Ok(_)) => Err(SPAWN_NOT_A_DIRECTORY),
+        Some(Err(code)) => Err(code),
+        None if directory == b"/" => Ok(()),
+        None => Err(-2),
+    }
 }
 
 /// The outcome value `std` reports, in the broker's encoding: the exit

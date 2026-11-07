@@ -45,6 +45,9 @@ for build in $(rows | cut -f4); do
     [ -f "$out/$build" ] || built=no
 done
 if [ "$built" = no ]; then
+    # The post-kit preflight inspects completed output and must not start
+    # another build if an input disappeared after its own presence check.
+    [ "${ABSD_PORTS_REQUIRE_BUILT:-0}" != 1 ] || fail 'post-kit products are missing; no build requested'
     sh "$root/scripts/build-userland.sh" >/dev/null ||
         fail "scripts/build-userland.sh failed (it needs the C kit: scripts/build-picolibc.sh, scripts/build-c-kit.sh)"
 fi
@@ -61,7 +64,15 @@ if [ "${1:-}" = --print ]; then
     exit 0
 fi
 
+# Every install caller, including prebuilt/transferred output, passes here.
+# --print only proposes rows and does not authorize an installation.
+kit=${ABSD_CKIT_BUILD:-$camp/ckit-build}/kit
+posix=${ABSD_CPORTS_BUILD:-$camp/cports-build}/lib/libabsd-posix.a
+python3 -I "$root/scripts/c_kit_source.py" verify "$root" "$kit" "$out" --posix "$posix"
 mkdir -p "$ports"
+# ports/ is unsealed until every C port is in; the seal is what the image
+# and matrix readers of ports/ check (c_kit_source.py installed).
+rm -f "$ports/.c-ports.built-from.json"
 n=0
 rows > "$tmp/rows"
 while IFS="$tab" read -r name upstream source build gated sha bytes; do
@@ -85,4 +96,5 @@ while IFS="$tab" read -r name upstream source build gated sha bytes; do
     n=$((n + 1))
 done < "$tmp/rows"
 python3 -I "$root/scripts/cmds-matrix.py" --host-check --without-image-list
+python3 -I "$root/scripts/c_kit_source.py" seal "$root" "$kit" "$out" --posix "$posix" --ports "$ports"
 printf '%s\n' "USERLAND PORTS INSTALLED n=$n"

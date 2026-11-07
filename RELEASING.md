@@ -29,7 +29,7 @@ the extended integration profile, and by the recorded sanitation edits.
 When edits exist, `filtered_tree` names the unchanged subset before them;
 `tree` names the final public component. An input, line or output hash
 mismatch refuses the assembly. The removed private text is not copied
-into the public instructions. See `docs/RC1-SOURCE.md` for this candidate's
+into the public instructions. See `docs/PREVIEW2-SOURCE.md` for this candidate's
 specific changes and reconstruction limits.
 
 Assembling the same configuration twice gives the same tree. That is a
@@ -58,8 +58,8 @@ them:
 6. **Nothing held.** The configuration lists reasons a release is held that
    no check can see; the list must be empty.
 
-For RC1 and any successor using these C-build inputs, the linked-input
-notice check in `docs/RC1-SOURCE.md` is also required before preparing
+For Preview 2 using the bound C-build inputs, the linked-input
+notice check in `docs/PREVIEW2-SOURCE.md` is also required before preparing
 release media/notices. It augments the Cargo inventory with the C kit,
 upstream driver notices and retained per-file notices. Input fingerprints
 that change require a fresh inventory audit; an old pass never clears them.

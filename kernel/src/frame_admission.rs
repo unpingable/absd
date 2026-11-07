@@ -163,7 +163,12 @@ mod tests {
         };
         image.segments[0].virtual_address = layout::USER_IMAGE_MIN;
         image.segments[0].memory_size = 4097;
-        assert_eq!(construction_frames(&image), Some(17)); // 2 image + 2 stack + 2 leaf + 3 upper + 8 kernel
+        // 2 image + 2 stack + 2 leaf + 3 upper + the kernel stack (8, or 16 in
+        // the builder profile).
+        assert_eq!(
+            construction_frames(&image),
+            Some(9 + layout::KERNEL_STACK_PAGES)
+        );
         image.segments[1] = image.segments[0];
         image.segment_count = 2;
         assert_eq!(construction_frames(&image), None);
@@ -280,11 +285,11 @@ mod refusal_tests {
         assert_eq!(read_request(true, 0, 0, |_| false), Err(-14));
         for (flags, count, total, expected) in [
             (0, 0, 1, true),
-            (SPAWN_NO_SPAWN, 64, 65536, true),
+            (SPAWN_NO_SPAWN, 64, MAX_FRAME_ADMISSION_FRAMES, true),
             (SPAWN_CONSOLE, 0, 1, false),
             (0, 65, 1, false),
             (0, 0, 0, false),
-            (0, 0, 65537, false),
+            (0, 0, MAX_FRAME_ADMISSION_FRAMES + 1, false),
         ] {
             let request = SpawnReservedRequest {
                 program_and_flags: flags,
@@ -307,7 +312,7 @@ mod refusal_tests {
             .allocate_contiguous(2, FrameOwner::UserPage(7))
             .unwrap();
         assert_eq!(admit_self(&mut frames, 7, false, 0, 1, 1), -1);
-        for total in [0, 1, 65537] {
+        for total in [0, 1, MAX_FRAME_ADMISSION_FRAMES + 1] {
             assert_eq!(admit_self(&mut frames, 7, true, total, 0, 0), -22);
         }
         assert_eq!(admit_self(&mut frames, 7, true, 9, 0, 0), -12);

@@ -1,0 +1,10 @@
+[
+  {"path":"/.absd-import-0000","reserved":true},
+  {"path":"/x/.absd-import-abCD/file","reserved":true},
+  {"path":"/.absd-import-ffff/","reserved":true},
+  {"path":"/normal","reserved":false},
+  {"path":"/.absd-import-000","reserved":false},
+  {"path":"/.absd-import-00000","reserved":false},
+  {"path":"/.absd-import-g000","reserved":false},
+  {"path":"/x/prefix.absd-import-0000","reserved":false}
+]

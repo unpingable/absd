@@ -1,5 +1,5 @@
 .\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
-.Dd October 12, 2026
+.Dd November 5, 2026
 .Dt ED 1
 .Os ABSD
 .Sh NAME
@@ -19,10 +19,15 @@ built for ABSD with the C kit and one declared patch
 see
 .Xr sbase 7 .
 It is the base userland's editor.
-No screen editor can work in an ABSD session: the SSH terminal is a line
-discipline in
-.Nm sshd
-with no raw mode, terminal type or window size
+SSH and local terminal sessions use a canonical line discipline without raw mode.
+SSH uses the client's advertised terminal type and window dimensions when supplied;
+local text uses TERM=dumb, with measured dimensions when available.
+Use
+.Xr terminal-size 1
+to inspect the current observation, including live SSH window changes.
+COLUMNS and LINES are command-start snapshots, not a live resize interface.
+The line editor does not require a fixed 80 by 25 terminal.
+Use the line editor rather than a full-screen editor
 .Pq Xr absd-sh 1 .
 .Nm
 reads commands a line at a time from standard input, so it works there,
@@ -47,9 +52,12 @@ What a person must know on ABSD:
 Start it in a writable directory.
 Its scratch file (the buffer's backing store) is
 .Pa ./ed.XXXXXX
-in the working directory; sessions start in read-only
-.Pa / ,
-so
+in the working directory.
+SSH login shells start in writable
+.Pa /home/operator .
+Command requests start in read-only
+.Pa / ;
+for those, or after changing elsewhere, use
 .Ql cd /home/operator
 or
 .Ql cd /tmp/session-N
@@ -130,9 +138,8 @@ without the modified warning: unsaved text is lost.
 .It interactive prompt
 only with
 .Fl p Ar string ;
-no line editing beyond
-.Nm sshd Ns 's
-erase.
+canonical terminal cursor editing, deletion and word erase apply to input
+lines. Shell command history is disabled while the editor runs.
 .El
 .Pp
 Behaviour on ABSD is predicted until the guest qualification
@@ -161,4 +168,5 @@ $ printf '1s/0/1/\enw\enq\en' | ssh -p 2222 operator@127.0.0.1 \e
 .Xr absd-sh 1 ,
 .Xr intro 1 ,
 .Xr sed 1 ,
+.Xr terminal-size 1 ,
 .Xr sbase 7

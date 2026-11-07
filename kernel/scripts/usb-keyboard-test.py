@@ -30,7 +30,7 @@ SHELL_DIAGNOSTIC = re.compile(
 TRACES = ["apic_deliver_irq", "usb_xhci_xfer_start", "usb_xhci_xfer_success",
           "usb_xhci_xfer_nak", "usb_xhci_oper_write", "usb_xhci_runtime_write",
           "usb_xhci_port_write", "usb_xhci_doorbell_write", "msix_write_config"]
-TRACE_RECORD = re.compile(rb"(?:" + b"|".join(name.encode() for name in TRACES) + rb") [^\n]*\n")
+TRACE_RECORD = re.compile(rb"(?:" + b"|".join(name.encode() for name in TRACES + ["pci_cfg_read", "pci_cfg_write"]) + rb") [^\n]*\n")
 CASES = ["keyboard", "nec", "held", "modifiers", "idle", "mixed", "absent",
          "unsupported", "no-msix", "masked", "unplug", "replug", "flood",
          "bootstick", "large-descriptor", "console-test", "combo-probe", "combo-ap",
@@ -128,7 +128,8 @@ def check(data, keyboard=True, masked=False):
 
 
 class Guest:
-    def __init__(self, name, qemu, work, serial=False, variant=None, keyboard=True):
+    def __init__(self, name, qemu, work, serial=False, variant=None, keyboard=True,
+                 devices=None, paused=False, extra_traces=()):
         self.name = name
         self.path = work / (name + ".log")
         self.path.write_bytes(b"")
@@ -146,9 +147,13 @@ class Guest:
         # One inherited append descriptor preserves emitted UART/trace byte order.
         # A file sink keeps draining output while the host waits for guest exit.
         args += ["-serial", "stdio"]
-        for trace in TRACES:
+        if paused:
+            args += ["-S"]
+        for trace in TRACES + list(extra_traces):
             args += ["-trace", trace]
-        if name not in {"absent", "combo-probe", "combo-ap"}:
+        if devices is not None:
+            args += devices
+        elif name not in {"absent", "combo-probe", "combo-ap"}:
             device = "nec-usb-xhci" if name in {"nec", "no-msix"} else "qemu-xhci"
             extra = ",msix=off" if name == "no-msix" else ",p2=12,p3=4" if name == "flood" else ",p2=8,p3=4" if name == "bootstick" else ""
             args += ["-device", device + ",id=xhci" + extra]

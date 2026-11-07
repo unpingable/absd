@@ -31,6 +31,28 @@ impl Session {
             }
         }
     }
+    /// Explicit experimental TCP v4; the UDP leg retains its v1 bytes.
+    pub fn grant_mtu_refusal<L: Link>(
+        stack: &mut Stack<L>,
+        udp: d::Grant,
+        tcp: stream::Grant,
+    ) -> Result<Self, stream::Error> {
+        if udp.peer != tcp.peer {
+            return Err(stream::Error::Denied);
+        }
+        let mut datagram = d::Session::grant(stack, udp).map_err(|e| match e {
+            d::Error::InUse => stream::Error::InUse,
+            d::Error::Exhausted => stream::Error::Exhausted,
+            _ => stream::Error::Invalid,
+        })?;
+        match stream::Session::grant_mtu_refusal(stack, tcp) {
+            Ok(tcp) => Ok(Self { udp: datagram, tcp }),
+            Err(error) => {
+                datagram.revoke(stack);
+                Err(error)
+            }
+        }
+    }
 }
 impl stream::channel::Handler for Session {
     fn request<L: Link>(
@@ -81,6 +103,14 @@ impl<P: Pipe> DatagramTcp<P> {
             live: true,
             udp: Datagram::new(Shared(shared.clone()), peer, pause),
             tcp: stream::Client::new(Shared(shared), peer, pause),
+        }
+    }
+    pub fn new_mtu_refusal(pipe: P, peer: Address, pause: fn(u64)) -> Self {
+        let shared = Rc::new(RefCell::new(pipe));
+        Self {
+            live: true,
+            udp: Datagram::new(Shared(shared.clone()), peer, pause),
+            tcp: stream::Client::new_mtu_refusal(Shared(shared), peer, pause),
         }
     }
 }

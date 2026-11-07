@@ -1,0 +1,67 @@
+.Dd November 3, 2026
+.Dt NL 1
+.Os ABSD
+.Sh NAME
+.Nm nl
+.Nd number input lines with logical page rules
+.Sh SYNOPSIS
+.Nm
+.Op Fl b Ar style
+.Op Fl v Ar start
+.Op Fl i Ar increment
+.Op Fl w Ar width
+.Op Fl s Ar separator
+.Op Fl n Ar format
+.Op Fl p
+.Op Ar file ...
+.Sh DESCRIPTION
+Copy files to standard output with line numbers.
+No files, or a file named
+.Ql - ,
+select standard input.
+By default number nonempty body lines starting at 1, incrementing by 1,
+right-aligned in a six-column field followed by a tab.
+Empty lines are printed without a number.
+.Pp
+.Fl b Ar style
+selects body numbering: a for every line, t for nonempty lines, n for none,
+or p followed by a regular expression for matching lines.
+.Fl v Ar start ,
+.Fl i Ar increment ,
+.Fl w Ar width
+and
+.Fl s Ar separator
+change number start, increment, minimum width and following text.
+.Fl n Ar format
+selects ln, rn or rz for left, right, or zero-padded right alignment.
+.Pp
+Logical page delimiter lines can switch header, body and footer sections;
+the default delimiter pair is backslash-colon, repeated three, two or one
+times respectively.
+Delimiters become blank output lines.
+Numbering normally restarts on each logical page;
+.Fl p
+suppresses restarting.
+Input files are only read; numbering does not edit them.
+.Sh EXIT STATUS
+0 on successful processing; nonzero for bad options, invalid styles
+or input/output failure. Diagnostics use standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+nl /etc/words.txt
+.Ed
+.Sh ABSD PROFILE
+This is the unmodified uutils 0.12.0 utility pinned by the platform build.
+The reference describes selected source-supported options; use
+.Fl Fl help
+for the complete upstream interface.
+File access uses the process's ABSD filesystem view, output uses its
+inherited stream, and the command acquires no additional authority.
+There are no native Unix processes, signals or permission bits underneath
+this port.
+The command matrix exercises the example forms below; other options
+listed here are source-checked, not separately guest-qualified.
+.Sh SEE ALSO
+.Xr cat 1 ,
+.Xr head 1 ,
+.Xr filesystem 7

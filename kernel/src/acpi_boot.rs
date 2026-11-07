@@ -15,10 +15,18 @@
 //! two pages, or one in other memory is refused with an `ACPI ACCESS
 //! REFUSED` line. This runs on the BSP before any AP start and before
 //! `mmio::freeze`.
+//!
+//! AMD-Vi discovery (#111 increment 2): the IVRS, when listed, is read the
+//! same way, validated by `absd_kernel::ivrs`, cross-checked against the
+//! IOMMU's PCI function (configuration reads only) and the memory map, and
+//! reported as `AMDVI` lines. Nothing is mapped, written or enabled: no
+//! MMIO register is read, so the firmware's handoff state of the unit
+//! (Control, Status, the live EFR) is not observed here.
 
 use crate::mmio;
-use crate::serial::{Serial, inb, write};
+use crate::serial::{Serial, finish_output as serial_finish_output, inb, write};
 use absd_kernel::acpi::{self, Access, Memory};
+use absd_kernel::ivrs::{self, Entries, Placement, Source, Unit, Variety};
 use absd_kernel::survey_facts::{TAG_ACPI_NEW, TAG_ACPI_OLD, TAG_MEMORY_MAP, tags};
 use core::arch::asm;
 use core::fmt::Write;
@@ -80,6 +88,24 @@ struct PowerOff {
 static ARMED: AtomicBool = AtomicBool::new(false);
 static mut POWER: Option<PowerOff> = None;
 
+// Written only by BSP discovery before AP startup; immutable afterward.
+// No borrowed table storage survives.
+// Separate publication from S5: DSDT/PM1 eligibility cannot suppress reset.
+static RESET_PUBLISHED: AtomicBool = AtomicBool::new(false);
+static mut RESET: Result<acpi::ResetPlan, acpi::ResetError> = Err(acpi::ResetError::Disabled);
+
+fn publish_reset(plan: Result<acpi::ResetPlan, acpi::ResetError>) {
+    unsafe { core::ptr::write(core::ptr::addr_of_mut!(RESET), plan) };
+    RESET_PUBLISHED.store(true, Ordering::Release);
+}
+
+pub fn reset_plan() -> Result<acpi::ResetPlan, acpi::ResetError> {
+    if !RESET_PUBLISHED.load(Ordering::Acquire) {
+        return Err(acpi::ResetError::Disabled);
+    }
+    unsafe { core::ptr::read(core::ptr::addr_of!(RESET)) }
+}
+
 /// What the existing SMP bring-up will assume, for the MADT cross-check.
 pub struct SmpView {
     /// A kernel-only AP start is configured for this boot.
@@ -128,8 +154,19 @@ fn space(space: u8) -> &'static str {
 
 /// Reads, validates and reports the ACPI tables, and arms S5 power-off when
 /// `poweroff` is set and the sleep type and PM1 ports were found. Returns
-/// whether the walk reached the end (`ACPI OK`). Never panics on a table.
-pub fn report(info: *const u8, total_size: usize, smp: SmpView, poweroff: bool) -> bool {
+/// whether the walk reached the end (`ACPI OK`). `reset` caches a checked
+/// Q35 plan only on a successful required walk. Never panics on a table.
+pub fn report(
+    info: *const u8,
+    total_size: usize,
+    smp: SmpView,
+    poweroff: bool,
+    reset: bool,
+) -> bool {
+    // A failed required walk leaves a named refusal, never a partially armed plan.
+    if reset {
+        publish_reset(Err(acpi::ResetError::Walk));
+    }
     let block = unsafe { core::slice::from_raw_parts(info, total_size) };
     let mut tag = None;
     let mut memory_map = None;
@@ -167,7 +204,7 @@ pub fn report(info: *const u8, total_size: usize, smp: SmpView, poweroff: bool) 
         highest: 0,
         refusals: 0,
     };
-    let ok = walk(&mut memory, &rsdp, smp, poweroff);
+    let ok = walk(&mut memory, &rsdp, smp, poweroff, reset);
     mmio::scratch_clear();
     let lowest = if memory.lowest == u64::MAX {
         0
@@ -193,7 +230,13 @@ pub fn report(info: *const u8, total_size: usize, smp: SmpView, poweroff: bool) 
     ok
 }
 
-fn walk(memory: &mut Physical, rsdp: &acpi::Rsdp, smp: SmpView, poweroff: bool) -> bool {
+fn walk(
+    memory: &mut Physical,
+    rsdp: &acpi::Rsdp,
+    smp: SmpView,
+    poweroff: bool,
+    reset: bool,
+) -> bool {
     let root = match acpi::read_root(memory, rsdp) {
         Ok(root) => root,
         Err(error) => {
@@ -226,6 +269,10 @@ fn walk(memory: &mut Physical, rsdp: &acpi::Rsdp, smp: SmpView, poweroff: bool) 
                 );
             }
         }
+    }
+    amdvi(memory, &root);
+    if crate::contain::active() {
+        keep_contain_tables(memory, &root);
     }
     let madt_ok = madt(memory, &root, smp);
     let fadt = match root
@@ -319,6 +366,19 @@ fn walk(memory: &mut Physical, rsdp: &acpi::Rsdp, smp: SmpView, poweroff: bool) 
     if poweroff && !ARMED.load(Ordering::Acquire) {
         write("ACPI POWEROFF REFUSED fallback=halt\n");
     }
+    if reset && madt_ok {
+        let plan = acpi::qemu_reset_plan(true, Some(&fadt));
+        match plan {
+            Ok(_) => write("ACPI RESET ARMED profile=q35-byte-io port=0xcf9 value=0x0f\n"),
+            Err(error) => {
+                let _ = writeln!(
+                    Serial,
+                    "ACPI RESET REFUSED reason={error:?} fallback=legacy"
+                );
+            }
+        }
+        publish_reset(plan);
+    }
     madt_ok
 }
 
@@ -362,6 +422,36 @@ fn madt(memory: &mut Physical, root: &acpi::Root, smp: SmpView) -> bool {
             return false;
         }
     };
+    if crate::smp_operator::enabled() {
+        let (low, high): (u32, u32);
+        unsafe {
+            asm!("rdmsr", in("ecx") 0x1bu32, out("eax") low, out("edx") high, options(nomem, nostack));
+        }
+        let msr = (u64::from(high) << 32) | u64::from(low);
+        if msr & (1 << 11) == 0
+            || msr & (1 << 10) != 0
+            || absd_kernel::operator_policy::topology(
+                madt.cpus(),
+                bsp_apic_id(),
+                madt.lapic_address,
+                msr & 0x000f_ffff_ffff_f000,
+                crate::cpu::count(),
+            )
+            .is_err()
+        {
+            write("SMP OPERATOR REFUSED reason=topology\n");
+            return false;
+        }
+        let _ = write!(
+            Serial,
+            "SMP OPERATOR TOPOLOGY enabled={} ids=0",
+            crate::cpu::count()
+        );
+        for id in 1..crate::cpu::count() {
+            let _ = write!(Serial, ",{id}");
+        }
+        write(" bsp=0 lapic=matched\n");
+    }
     for cpu in madt.cpus() {
         let _ = writeln!(
             Serial,
@@ -450,6 +540,7 @@ pub fn poweroff_if_armed() {
         opt_port(power.pm1b),
         power.typ_b
     );
+    serial_finish_output();
     // Let the UART drain its FIFO and shift register (bounded).
     for _ in 0..1_000_000 {
         if unsafe { inb(0x3f8 + 5) } & 0x40 != 0 {
@@ -474,4 +565,449 @@ pub fn poweroff_if_armed() {
         core::hint::spin_loop();
     }
     write("ACPI S5 POWEROFF FAILED fallback=halt\n");
+}
+
+// The parsed unit is ~1.5 KiB: kept off the 32 KiB bootstrap stack.
+static mut UNIT: Unit = Unit::EMPTY;
+static mut SCRATCH: Entries = Entries::EMPTY;
+/// Set when discovery reached its `AMDVI RESULT` line (structurally valid,
+/// PCI and memory-map cross-checks passed); read by increment 3's
+/// enforce-test boot (src/amdvi_hw.rs). Nothing else reads it.
+static mut DISCOVERED: Option<Discovered> = None;
+
+static mut MCFG: Option<absd_kernel::mcfg::Regions> = None;
+
+/// What the `dma-contain` path needs later: MCFG. No output, and only in that boot.
+fn keep_contain_tables(memory: &mut Physical, root: &acpi::Root) {
+    let Ok(address) = root.find(b"MCFG") else {
+        return;
+    };
+    if let Ok((_, bytes)) = acpi::read_table(memory, address, Some(b"MCFG"))
+        && let Ok(regions) = absd_kernel::mcfg::parse(bytes)
+    {
+        unsafe { *core::ptr::addr_of_mut!(MCFG) = Some(regions) };
+    }
+}
+
+/// A function's ECAM configuration page, when MCFG describes it.
+pub fn config_page(bus: u8, device: u8, function: u8) -> Option<u64> {
+    unsafe { *core::ptr::addr_of!(MCFG) }?.config_page(bus, device, function)
+}
+
+/// What discovery established, for the enforce-test boot.
+#[derive(Clone, Copy)]
+pub struct Discovered {
+    pub validation: ivrs::Validation,
+    /// The capability header as read in the PCI cross-check.
+    pub cap_header: u32,
+}
+
+/// The discovered unit, when discovery reached its result line.
+pub fn discovered() -> Option<(&'static Unit, Discovered)> {
+    let found = unsafe { *core::ptr::addr_of!(DISCOVERED) }?;
+    Some((unsafe { &*core::ptr::addr_of!(UNIT) }, found))
+}
+
+fn bdf(id: u16) -> (u16, u16, u16) {
+    (id >> 8, (id >> 3) & 0x1f, id & 7)
+}
+
+struct Id(u16);
+
+impl core::fmt::Display for Id {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let (bus, device, function) = bdf(self.0);
+        write!(f, "{bus:02x}:{device:02x}.{function}")
+    }
+}
+
+fn text(bytes: &[u8]) -> &str {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    match core::str::from_utf8(&bytes[..end]) {
+        Ok(text) if text.bytes().all(|b| b.is_ascii_graphic()) => text,
+        _ => "?",
+    }
+}
+
+/// Discovery only (#111 increment 2): find, validate and report the one
+/// AMD-Vi unit, or the precise refusal. Enables nothing.
+///
+/// A structurally valid table is reported with every deviation the parser
+/// found in its validated subset, cross-checked against PCI and the memory
+/// map, and summarised by one `AMDVI RESULT` line that carries the scope as
+/// separate properties: structure, deviations, how many fields were
+/// validated and carried unvalidated, and DMA admission, which increment 2
+/// never establishes.
+fn amdvi(memory: &mut Physical, root: &acpi::Root) {
+    let address = match root.find(b"IVRS") {
+        Ok(address) => address,
+        Err(acpi::Error::Missing) => {
+            write("AMDVI NONE reason=no-ivrs\n");
+            return;
+        }
+        Err(error) => {
+            let _ = writeln!(
+                Serial,
+                "AMDVI REFUSED class={} reason=table-{error:?}",
+                table_class(error)
+            );
+            return;
+        }
+    };
+    let bytes = match acpi::read_table(memory, address, Some(b"IVRS")) {
+        Ok((_, bytes)) => bytes,
+        Err(error) => {
+            let _ = writeln!(
+                Serial,
+                "AMDVI REFUSED class={} reason=table-{error:?} address={address:#x}",
+                table_class(error)
+            );
+            return;
+        }
+    };
+    let unit = unsafe { &mut *core::ptr::addr_of_mut!(UNIT) };
+    let scratch = unsafe { &mut *core::ptr::addr_of_mut!(SCRATCH) };
+    let ivinfo = if bytes.len() >= ivrs::HEADER_BYTES {
+        u32::from_le_bytes([bytes[36], bytes[37], bytes[38], bytes[39]])
+    } else {
+        0
+    };
+    let _ = writeln!(
+        Serial,
+        "AMDVI IVRS address={address:#x} length={} revision={} ivinfo={ivinfo:#010x} efrsup={} preboot-dma-protection={}",
+        bytes.len(),
+        bytes.get(8).copied().unwrap_or(0),
+        ivinfo & ivrs::IVINFO_EFR_SUP,
+        (ivinfo & ivrs::IVINFO_DMA_REMAP) >> 1
+    );
+    let validation = match ivrs::parse(bytes, unit, scratch) {
+        Ok(validation) => validation,
+        Err(error) => {
+            report_refusal(&error);
+            return;
+        }
+    };
+    report_unit(unit);
+    for finding in unit.findings.items() {
+        let _ = writeln!(
+            Serial,
+            "AMDVI DEVIATION block={} offset={:#x} field={} rule={} {}",
+            Block(finding.block),
+            finding.offset,
+            finding.field.name(),
+            finding.field.rule(),
+            finding.detail
+        );
+    }
+    let window = unit.window();
+    let (base_check, cap_header) = match pci_cross_check(unit) {
+        Ok(check) => check,
+        Err(reason) => {
+            let _ = writeln!(
+                Serial,
+                "AMDVI REFUSED class={} reason=pci-{reason}",
+                pci_refusal_class(reason)
+            );
+            return;
+        }
+    };
+    let rows = memory.memory_map.map(acpi::memory_map_entries);
+    let placement = match rows {
+        None => {
+            write("AMDVI REFUSED class=unsupported reason=no-memory-map\n");
+            return;
+        }
+        Some(rows) => ivrs::placement(unit.base, window, rows),
+    };
+    match placement {
+        Ok(placement) => {
+            let _ = writeln!(
+                Serial,
+                "AMDVI MEMORY base={:#x} window={window:#x} map={}",
+                unit.base,
+                match placement {
+                    Placement::Reserved => "reserved",
+                    Placement::Unlisted => "unlisted",
+                }
+            );
+        }
+        Err(kind) => {
+            let _ = writeln!(
+                Serial,
+                "AMDVI REFUSED class=mismatch reason=base-in-memory base={:#x} window={window:#x} row-type={kind}",
+                unit.base
+            );
+            return;
+        }
+    }
+    report_handoff();
+    let _ = writeln!(
+        Serial,
+        "AMDVI RESULT devid={} base={:#x} pci-base={} structure=valid deviations={} validated-fields={} unvalidated-fields={} dma-admission={} preboot-dma=uncontained",
+        Id(unit.devid),
+        unit.base,
+        match base_check {
+            BaseCheck::Matched => "matched",
+            BaseCheck::Unverified => "unverified-enable-0",
+        },
+        validation.deviations,
+        validation.validated.len(),
+        validation.unvalidated.len(),
+        validation.dma_admission.name()
+    );
+    unsafe {
+        *core::ptr::addr_of_mut!(DISCOVERED) = Some(Discovered {
+            validation,
+            cap_header,
+        })
+    };
+}
+
+/// A finding's block: the IVRS header, or an IVHD type.
+struct Block(u8);
+
+impl core::fmt::Display for Block {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            0 => f.write_str("header"),
+            kind => write!(f, "{kind:02x}h"),
+        }
+    }
+}
+
+/// An IVRS the ACPI reader refuses: a second IVRS (§5.2: "a single
+/// IVRS in a system"), a bad checksum or length are malformed; a table the
+/// reader cannot reach or count is beyond what it supports.
+fn table_class(error: acpi::Error) -> &'static str {
+    match error {
+        acpi::Error::Unreachable | acpi::Error::TooManyTables => ivrs::Class::Unsupported.name(),
+        _ => ivrs::Class::Malformed.name(),
+    }
+}
+
+/// What is known about the unit's live state. No IOMMU MMIO register is
+/// read in increment 2 (Control, Status and the live EFR are unobserved),
+/// so the firmware's handoff state is printed as not observed; what ABSD
+/// itself did is a fact of this code: it wrote nothing to the unit.
+fn report_handoff() {
+    if cfg!(absd_mutant_amdvi_claim_disabled) {
+        write("AMDVI HANDOFF iommu-en=0 translation=none absd-enabled=no\n");
+        return;
+    }
+    write("AMDVI HANDOFF iommu-en=not-observed translation=not-observed absd-enabled=no\n");
+}
+
+fn report_refusal(error: &ivrs::Error) {
+    let _ = write!(
+        Serial,
+        "AMDVI REFUSED class={} reason={}",
+        error.class().name(),
+        error.name()
+    );
+    if let Some(offset) = error.offset() {
+        let _ = write!(Serial, " offset={offset:#x}");
+    }
+    let _ = match *error {
+        ivrs::Error::Entry { problem, .. } => writeln!(Serial, " problem={problem:?}"),
+        ivrs::Error::Inconsistent { field, .. } => writeln!(Serial, " field={field}"),
+        ivrs::Error::UnknownBlock { kind, .. }
+        | ivrs::Error::Ivmd { kind, .. }
+        | ivrs::Error::IvmdMalformed { kind, .. }
+        | ivrs::Error::BlockNotAllowed { kind, .. } => writeln!(Serial, " block={kind:#04x}"),
+        ivrs::Error::Revision(value) => writeln!(Serial, " revision={value}"),
+        ivrs::Error::Segment { segment, kind, .. } => {
+            writeln!(Serial, " block={kind:#04x} segment={segment}")
+        }
+        ivrs::Error::CapabilityOffset { capability, .. } => {
+            writeln!(Serial, " capability={capability:#x}")
+        }
+        ivrs::Error::HatsReserved { kind, raw, .. } => {
+            writeln!(Serial, " block={kind:#04x} raw={raw:#x}")
+        }
+        ivrs::Error::HostTranslationDisabled { kind, raw, .. } => {
+            writeln!(Serial, " block={kind:#04x} raw={raw:#x}")
+        }
+        ivrs::Error::BaseAlignment(base) | ivrs::Error::BaseRange(base) => {
+            writeln!(Serial, " base={base:#x}")
+        }
+        _ => writeln!(Serial),
+    };
+}
+
+/// A PCI cross-check refusal. Apart from an out-of-range capability offset
+/// (malformed; the parser already refuses it), these say the table and this
+/// machine disagree (no such function, not an IOMMU, another base): the
+/// table is not checked against the spec here but against the hardware, so
+/// the class is `mismatch`.
+fn pci_refusal_class(reason: &str) -> &'static str {
+    if reason == "capability-offset" {
+        ivrs::Class::Malformed.name()
+    } else {
+        "mismatch"
+    }
+}
+
+fn report_unit(unit: &Unit) {
+    // Raw images for the report only; decisions use validated accessors.
+    let images = unit.images();
+    let _ = write!(
+        Serial,
+        "AMDVI UNIT devid={} cap={:#x} base={:#x} window={:#x} segment={} {} used={:02x}h present=",
+        Id(unit.devid),
+        unit.capability,
+        unit.base,
+        unit.window(),
+        unit.segment,
+        images.header(),
+        unit.used
+    );
+    let mut first = true;
+    for (bit, name) in [(1u8, "10h"), (2, "11h"), (4, "40h")] {
+        if unit.present & bit != 0 {
+            let _ = write!(Serial, "{}{name}", if first { "" } else { "," });
+            first = false;
+        }
+    }
+    let _ = write!(Serial, " {}", images.efr());
+    match unit.host_levels() {
+        Some(levels) => {
+            let _ = writeln!(Serial, " host-levels={levels} ivmd=0");
+        }
+        None => write(" host-levels=unknown ivmd=0\n"),
+    }
+    for span in unit.entries.spans() {
+        let _ = write!(
+            Serial,
+            "AMDVI ENTRY {} first={} last={} setting={:#04x}",
+            if span.alias.is_some() {
+                "alias"
+            } else {
+                "plain"
+            },
+            Id(span.first),
+            Id(span.last),
+            span.setting
+        );
+        if let Some(extended) = span.extended {
+            let _ = write!(Serial, " extended={extended:#010x}");
+        }
+        match span.alias {
+            Some(target) => {
+                let _ = writeln!(Serial, " source={}", Id(target));
+            }
+            None => write("\n"),
+        }
+    }
+    for special in unit.entries.specials() {
+        let _ = writeln!(
+            Serial,
+            "AMDVI SPECIAL {} handle={} source={} setting={:#04x}",
+            match special.variety {
+                Variety::IoApic => "ioapic",
+                Variety::Hpet => "hpet",
+            },
+            special.handle,
+            Id(special.source),
+            special.setting
+        );
+    }
+    for hid in unit.entries.hids() {
+        let _ = writeln!(
+            Serial,
+            "AMDVI HID devid={} hid={} uid={} setting={:#04x} use=recorded-only",
+            Id(hid.devid),
+            text(&hid.hid),
+            text(hid.uid()),
+            hid.setting
+        );
+    }
+    let _ = writeln!(
+        Serial,
+        "AMDVI SUMMARY spans={} aliased-ids={} specials={} hids={} padding={} own-source={}",
+        unit.entries.spans().len(),
+        unit.aliased(),
+        unit.entries.specials().len(),
+        unit.entries.hids().len(),
+        unit.entries.padding,
+        match unit.source(unit.devid) {
+            Source::Own => "yes",
+            Source::Alias(_) => "alias",
+            Source::Undescribed => "undescribed",
+        }
+    );
+}
+
+/// How far the capability's base address registers could be compared.
+#[derive(Clone, Copy)]
+enum BaseCheck {
+    /// Enable = 1 and the registers name the IVHD base.
+    Matched,
+    /// Enable = 0: the registers are not (yet) the decode address (§3.2,
+    /// Capability Offset 04h[Enable]), so they can neither confirm nor
+    /// contradict the IVHD. QEMU 8.2.2 shows this, with registers that do
+    /// not encode its base at all.
+    Unverified,
+}
+
+/// The IVHD's DeviceID must be an IOMMU function (class 08h/06h/00h, §3)
+/// with an IOMMU capability block (ID 0Fh, type 3) at the IVHD's offset;
+/// when the block's Enable bit is set its base address registers must name
+/// the IVHD base (§3.2). Configuration reads only. The register offsets come
+/// from `Unit::capability_registers`, which the parser bounds to
+/// conventional configuration space; a unit that somehow names an offset
+/// outside it is refused here, never read.
+fn pci_cross_check(unit: &Unit) -> Result<(BaseCheck, u32), &'static str> {
+    let (bus, device, function) = bdf(unit.devid);
+    let function = crate::pci::Function {
+        bus: bus as u8,
+        device: device as u8,
+        function: function as u8,
+    };
+    let read = |offset: u8| crate::pci::read32(function, offset);
+    let Some([cap, low_at, high_at]) = unit.capability_registers() else {
+        return Err("capability-offset");
+    };
+    if read(0) & 0xffff == 0xffff {
+        return Err("absent");
+    }
+    let class = read(0x08) >> 8;
+    // Walk the list from 0x34 (bounded) to find the IVHD's offset.
+    let mut at = if read(0x04) >> 16 & 0x10 != 0 {
+        read(0x34) as u8 & 0xfc
+    } else {
+        0
+    };
+    let mut steps = 0;
+    while at != 0 && at != cap && steps < 48 {
+        at = (read(at) >> 8) as u8 & 0xfc;
+        steps += 1;
+    }
+    let header = read(cap);
+    let low = read(low_at);
+    let high = read(high_at);
+    let base = (u64::from(high) << 32) | u64::from(low & 0xffff_c000);
+    let _ = writeln!(
+        Serial,
+        "AMDVI PCI devid={} ids={:#010x} class={class:#08x} cap={cap:#x} listed={} cap-header={header:#010x} base-low={low:#010x} base-high={high:#010x} base={base:#x} base-enable={}",
+        Id(unit.devid),
+        read(0),
+        if at == cap { "yes" } else { "no" },
+        low & 1
+    );
+    if class != 0x08_0600 {
+        return Err("class");
+    }
+    if at != cap {
+        return Err("capability-not-listed");
+    }
+    if header & 0xff != 0x0f || (header >> 16) & 7 != 3 {
+        return Err("capability-type");
+    }
+    if low & 1 == 0 {
+        return Ok((BaseCheck::Unverified, header));
+    }
+    if base != unit.base {
+        return Err("base");
+    }
+    Ok((BaseCheck::Matched, header))
 }

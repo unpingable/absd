@@ -1,7 +1,7 @@
 #!/bin/sh
 # Stages the source-portability probe's programs (compat/programs.tsv,
-# docs/COMPATIBILITY-LEDGER.md) beside this repository, in
-# `absd-std-staged-compat/`:
+# docs/COMPATIBILITY-LEDGER.md) in this worktree's sibling directory
+# `${root}.staged-compat/`, outside the checkout's Cargo configuration ancestry:
 #   linux/<crate>  the registry archive exactly as published, for the Linux
 #                  reference build with its own Cargo.lock;
 #   absd/<crate>   the same archive with one stanza appended to Cargo.toml,
@@ -20,7 +20,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-stage=$(dirname "$root")/absd-std-staged-compat
+stage=${root}.staged-compat
 cache=${CARGO_HOME:-$HOME/.cargo}/registry/cache/index.crates.io-1949cf8c6b5b557f
 
 rm -rf "${stage:?}/linux" "${stage:?}/absd"

@@ -94,7 +94,7 @@ fn run(start: MultiStart<'_>) -> Result<(), &'static str> {
         "COMPOSE stale-token same-slot=true replacement-value=77 unchanged=true census=equal",
     )?;
     let capacity_cell = Cell::create(33).map_err(|_| "capacity-cell")?;
-    let mut held = [0u64; 64];
+    let mut held = [0u64; absd_abi::syscall::MAX_PROCESS_HANDLES];
     let mut count = 0;
     loop {
         match duplicate(capacity_cell.raw(), RIGHT_READ) {
@@ -108,7 +108,7 @@ fn run(start: MultiStart<'_>) -> Result<(), &'static str> {
         }
     }
     need(
-        count == 62 && capacity_cell.read() == Ok((0, 33)),
+        count == absd_abi::syscall::MAX_PROCESS_HANDLES - 2 && capacity_cell.read() == Ok((0, 33)),
         "capacity-state",
     )?;
     need(

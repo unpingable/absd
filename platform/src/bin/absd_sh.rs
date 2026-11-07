@@ -1,8 +1,9 @@
 #![feature(restricted_std)]
 #![feature(absd_fs_ext)]
-//! absd-sh: the minimal command shell (logic in `sh/src/lib.rs`, host-tested;
+//! absd-sh: the native script and interactive shell (logic in `sh/src/lib.rs`, host-tested;
 //! the platform, pipelines and redirections, in `src/sh_host.rs`).
-//! `absd-sh` reads lines from stdin with a prompt; `absd-sh -c LINE` runs one.
+//! `sh FILE [ARG...]`, `sh -s` and `sh -c COMMAND` execute script input.
+//! Without arguments it reads interactive commands with continuation prompts.
 //! Children are filesystem executables started by `std::process::Command`
 //! with the shell's working directory; a stream that is not piped or
 //! redirected is the shell's own. Children get no spawn right: a command
@@ -16,6 +17,9 @@ mod sh_host;
 #[path = "../../ssh/src/control.rs"]
 #[allow(dead_code)]
 mod session_control;
+
+#[path = "../sh_input.rs"]
+mod sh_input;
 
 use shell::Shell;
 use std::io;
@@ -46,12 +50,23 @@ fn main() {
         .filter(|p| p.starts_with('/'))
         .unwrap_or_else(|| "/".to_string());
     let mut shell = Shell::new(sh_host::Absd::new(), cwd);
-    let status = shell::session(
-        &mut shell,
-        mode,
-        &mut io::stdin().lock(),
-        &mut io::stdout(),
-        &mut io::stderr(),
-    );
+    shell.set_environment(std::env::vars());
+    let status = if mode == shell::Mode::Interactive {
+        shell::session(
+            &mut shell,
+            mode,
+            &mut sh_input::interactive(),
+            &mut io::stdout(),
+            &mut io::stderr(),
+        )
+    } else {
+        shell::session(
+            &mut shell,
+            mode,
+            &mut io::stdin().lock(),
+            &mut io::stdout(),
+            &mut io::stderr(),
+        )
+    };
     std::process::exit(status);
 }

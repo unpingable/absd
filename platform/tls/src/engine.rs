@@ -6,11 +6,11 @@ use crate::{
 };
 use absd_net::{datagram::channel::Pipe, stream};
 use rustls::{
+    ClientConfig, ClientConnection, RootCertStore,
     client::Resumption,
     pki_types::{CertificateDer, ServerName},
     time_provider::TimeProvider,
     version::TLS13,
-    ClientConfig, ClientConnection, RootCertStore,
 };
 use std::{
     io::{self, Read, Write},
@@ -23,6 +23,82 @@ pub struct Settings {
     pub child_start_ms: u64,
     pub grant_expiry_ms: u64,
     pub expected_body_len: usize,
+}
+pub struct DocumentSettings<'a> {
+    pub peer: absd_net::datagram::Address,
+    pub name: &'a str,
+    pub path: &'a str,
+    pub issuer_spki: [u8; 32],
+    pub time: Arc<crate::app_policy::AppTime>,
+}
+
+pub(crate) fn document_request(document: &DocumentSettings<'_>) -> Result<Vec<u8>, Outcome> {
+    if document.peer.port == 0
+        || document.peer.ip[0] == 0
+        || document.peer.ip[0] >= 224
+        || document.name.len() > 253
+        || document.path.len() > 1024
+        || !document.path.starts_with('/')
+        || !document
+            .name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".-".contains(&b))
+        || !document
+            .path
+            .bytes()
+            .all(|b| (0x21..=0x7e).contains(&b) && b != b'#')
+    {
+        return Err(Outcome::Config);
+    }
+    rustls::pki_types::DnsName::try_from(document.name).map_err(|_| Outcome::Config)?;
+    Ok(format!(
+        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
+        document.path, document.name, document.peer.port
+    )
+    .into_bytes())
+}
+
+fn verify_document(
+    tls: &ClientConnection,
+    issuer: &[u8],
+    document: &DocumentSettings<'_>,
+) -> Result<(u64, u64), Outcome> {
+    let bounds = document.time.bounds().ok_or(Outcome::Time)?;
+    let leaf = tls
+        .peer_certificates()
+        .and_then(|chain| chain.first())
+        .ok_or(Outcome::Certificate)?;
+    let upper = bounds.1.checked_add(15_000).ok_or(Outcome::Time)?;
+    // One immutable direct leaf has one contiguous validity interval. Validate
+    // a larger coverage window once; actual clock uncertainty stays <=5 seconds.
+    // Near-expiry leaves may be conservatively refused before sending HTTP.
+    for point in [bounds.0, upper] {
+        crate::app_policy::verify_direct(
+            issuer,
+            &document.issuer_spki,
+            leaf.as_ref(),
+            document.name,
+            (point, point),
+        )
+        .map_err(|_| Outcome::Certificate)?;
+    }
+    let coverage = (
+        bounds.0 / 1000 * 1000,
+        upper.checked_add(999).ok_or(Outcome::Time)? / 1000 * 1000,
+    );
+    within_coverage(document, coverage)?;
+    Ok(coverage)
+}
+
+pub(crate) fn within_coverage(
+    document: &DocumentSettings<'_>,
+    coverage: (u64, u64),
+) -> Result<(u64, u64), Outcome> {
+    let bounds = document.time.bounds().ok_or(Outcome::Time)?;
+    if bounds.0 < coverage.0 || bounds.1 > coverage.1 {
+        return Err(Outcome::Time);
+    }
+    Ok(bounds)
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Hooks {
@@ -128,8 +204,12 @@ pub struct Report {
     pub cleanup_error: Option<Outcome>,
     /// Secondary best-effort output; `outcome` keeps the original TLS failure.
     pub error_output: Option<ErrorOutput>,
-    /// Maximum measured init/process/plaintext-write/close-notify wall-clock span.
+    /// Maximum measured init/process/document-verification/write/close wall-clock span.
     pub max_crypto_ms: u64,
+    /// Application output is released only after the complete terminal checks.
+    pub document: Option<Vec<u8>>,
+    pub leaf_der: Option<Vec<u8>>,
+    pub verified_time: Option<(u64, u64)>,
 }
 impl Report {
     fn new() -> Self {
@@ -153,6 +233,9 @@ impl Report {
             cleanup_error: None,
             error_output: None,
             max_crypto_ms: 0,
+            document: None,
+            leaf_der: None,
+            verified_time: None,
         }
     }
 }
@@ -266,6 +349,16 @@ fn prepare(
     hooks: Hooks,
     report: &mut Report,
 ) -> Result<(ClientConnection, ResponseParser, u64), Outcome> {
+    prepare_profile(root, settings, hooks, report, None)
+}
+
+fn prepare_profile(
+    root: &[u8],
+    settings: Settings,
+    hooks: Hooks,
+    report: &mut Report,
+    document: Option<&DocumentSettings<'_>>,
+) -> Result<(ClientConnection, ResponseParser, u64), Outcome> {
     let now = (hooks.now_ms)();
     if now < settings.child_start_ms {
         return Err(Outcome::Clock);
@@ -288,20 +381,29 @@ fn prepare(
     if root.is_empty() || root.len() > 4096 {
         return Err(Outcome::Config);
     }
-    let parser = ResponseParser::new(settings.expected_body_len).map_err(|_| Outcome::Config)?;
-    let mut roots = RootCertStore::empty();
-    roots
-        .add(CertificateDer::from(root.to_vec()))
-        .map_err(|_| Outcome::Config)?;
-    let time = Arc::new(
-        FixtureTime::new(
-            settings.unix_seconds,
-            settings.child_start_ms,
-            settings.grant_expiry_ms,
-            hooks.now_ms,
-        )
-        .ok_or(Outcome::Time)?,
-    );
+    let (parser, roots, time): (_, _, Arc<dyn TimeProvider>) = if let Some(document) = document {
+        document_request(document)?;
+        let roots = crate::app_policy::pinned_roots(root, &document.issuer_spki)
+            .map_err(|_| Outcome::Config)?;
+        (ResponseParser::document(), roots, document.time.clone())
+    } else {
+        let parser =
+            ResponseParser::new(settings.expected_body_len).map_err(|_| Outcome::Config)?;
+        let mut roots = RootCertStore::empty();
+        roots
+            .add(CertificateDer::from(root.to_vec()))
+            .map_err(|_| Outcome::Config)?;
+        let time = Arc::new(
+            FixtureTime::new(
+                settings.unix_seconds,
+                settings.child_start_ms,
+                settings.grant_expiry_ms,
+                hooks.now_ms,
+            )
+            .ok_or(Outcome::Time)?,
+        );
+        (parser, roots, time)
+    };
     time.current_time().ok_or(Outcome::Time)?;
     let mut config = ClientConfig::builder_with_details(
         Arc::new(rustls::crypto::ring::default_provider()),
@@ -319,7 +421,7 @@ fn prepare(
     let start = (hooks.now_ms)();
     let initialized = ClientConnection::new(
         Arc::new(config),
-        ServerName::try_from(crate::SERVER_NAME)
+        ServerName::try_from(document.map_or(crate::SERVER_NAME, |d| d.name))
             .map_err(|_| Outcome::Config)?
             .to_owned(),
     );
@@ -415,7 +517,18 @@ fn drain_error_output<P: Pipe>(
 }
 
 pub fn run<P: Pipe>(pipe: P, root_der: &[u8], settings: Settings, hooks: Hooks) -> Report {
-    run_with_ipv6_peer(pipe, root_der, settings, hooks, None)
+    run_with_ipv6_peer(pipe, root_der, settings, hooks, None, None)
+}
+
+/// Fetch one configured bounded document over an existing native stream grant.
+pub fn run_document<P: Pipe>(
+    pipe: P,
+    issuer_der: &[u8],
+    settings: Settings,
+    hooks: Hooks,
+    document: &DocumentSettings<'_>,
+) -> Report {
+    run_with_ipv6_peer(pipe, issuer_der, settings, hooks, None, Some(document))
 }
 
 /// Run the same bounded fixture over an explicitly selected IPv6 stream grant.
@@ -428,7 +541,7 @@ pub fn run_ipv6<P: Pipe>(
     settings: Settings,
     hooks: Hooks,
 ) -> Report {
-    run_with_ipv6_peer(pipe, root_der, settings, hooks, Some(peer))
+    run_with_ipv6_peer(pipe, root_der, settings, hooks, Some(peer), None)
 }
 
 fn run_with_ipv6_peer<P: Pipe>(
@@ -437,10 +550,15 @@ fn run_with_ipv6_peer<P: Pipe>(
     settings: Settings,
     hooks: Hooks,
     peer: Option<absd_net::ipv6::Address>,
+    document: Option<&DocumentSettings<'_>>,
 ) -> Report {
     let mut report = Report::new();
     (hooks.phase_event)(Phase::Init);
-    let (mut tls, mut parser, deadline) = match prepare(root_der, settings, hooks, &mut report) {
+    let prepared = match document {
+        Some(d) => prepare_profile(root_der, settings, hooks, &mut report, Some(d)),
+        None => prepare(root_der, settings, hooks, &mut report),
+    };
+    let (mut tls, mut parser, deadline) = match prepared {
         Ok(value) => value,
         Err(error) => {
             drop(pipe);
@@ -453,19 +571,35 @@ fn run_with_ipv6_peer<P: Pipe>(
     };
     let mut transport = match peer {
         Some(peer) => NativeTransport::new_ipv6(pipe, peer, deadline, hooks),
-        None => NativeTransport::new(pipe, deadline, hooks),
+        None => match document {
+            Some(d) => NativeTransport::new_peer(pipe, d.peer, deadline, hooks),
+            None => NativeTransport::new(pipe, deadline, hooks),
+        },
     };
     let mut gate = Gate::new();
     gate.phase = Phase::Handshake;
     (hooks.phase_event)(gate.phase);
     let mut last_phase = gate.phase;
     let mut request_at = 0;
-    let request=b"GET /native-network HTTP/1.1\r\nHost: absd-fixture.test:4443\r\nConnection: close\r\n\r\n";
+    let document_request = document.map(|d| document_request(d).expect("validated request"));
+    let request = document_request.as_deref().unwrap_or(b"GET /native-network HTTP/1.1\r\nHost: absd-fixture.test:4443\r\nConnection: close\r\n\r\n");
     let mut sent_close = false;
+    let mut verified_coverage = None;
     if transport.connect().is_err() {
         report.outcome = gate.fail(transport.outcome.unwrap_or(Outcome::Native));
     } else {
         'pump: while gate.io_allowed() {
+            if let Some(document) = document {
+                let checked = if let Some(coverage) = verified_coverage {
+                    within_coverage(document, coverage)
+                } else {
+                    document.time.bounds().ok_or(Outcome::Time)
+                };
+                if let Err(cause) = checked {
+                    report.outcome = gate.fail(cause);
+                    break;
+                }
+            }
             if transport.check().is_err() {
                 let cause = transport.outcome.unwrap_or(Outcome::Native);
                 if gate.incomplete {
@@ -583,6 +717,20 @@ fn run_with_ipv6_peer<P: Pipe>(
                 }
             }
             if gate.phase == Phase::Handshake && !tls.is_handshaking() {
+                if let Some(document) = document {
+                    let before = (hooks.now_ms)();
+                    let checked = verify_document(&tls, root_der, document);
+                    match observe_crypto_span(before, hooks, &mut report).and(checked) {
+                        Ok(coverage) => verified_coverage = Some(coverage),
+                        Err(cause) => {
+                            if cause == Outcome::Certificate {
+                                report.tls_error_code = Some("DIRECT_ISSUER_COVERAGE");
+                            }
+                            report.outcome = gate.fail(cause);
+                            break;
+                        }
+                    }
+                }
                 let tls13 = tls.protocol_version() == Some(rustls::ProtocolVersion::TLSv1_3);
                 let alpn = tls.alpn_protocol() == Some(b"http/1.1".as_slice());
                 report.protocol_version =
@@ -680,6 +828,26 @@ fn run_with_ipv6_peer<P: Pipe>(
             }
             if !progress {
                 (hooks.pause_ms)(5);
+            }
+        }
+    }
+    if report.outcome == Outcome::Success {
+        if let Some(document) = document {
+            let checked = transport
+                .terminal_check()
+                .and_then(|_| verified_coverage.ok_or(Outcome::Certificate))
+                .and_then(|coverage| within_coverage(document, coverage))
+                .and_then(|bounds| transport.terminal_check().map(|_| bounds));
+            match checked {
+                Ok(bounds) => {
+                    report.document = parser.take_document();
+                    report.leaf_der = tls
+                        .peer_certificates()
+                        .and_then(|c| c.first())
+                        .map(|c| c.as_ref().to_vec());
+                    report.verified_time = Some(bounds);
+                }
+                Err(cause) => report.outcome = gate.fail(cause),
             }
         }
     }
@@ -791,7 +959,7 @@ mod tests {
     #[test]
     fn standard_verifier_checks_fixture_chain_signature_name_time_and_der() {
         use rustls::{
-            client::{danger::ServerCertVerifier, WebPkiServerVerifier},
+            client::{WebPkiServerVerifier, danger::ServerCertVerifier},
             pki_types::UnixTime,
         };
         use std::{path::PathBuf, time::Duration};

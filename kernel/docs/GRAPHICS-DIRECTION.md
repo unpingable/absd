@@ -1,17 +1,25 @@
 # ABSD graphics direction
 
-Disposition: `CAPTURED_AND_DEFERRED`.
+Disposition: **G0 accepted; G1 component source integrated in private `latest`, whole-G1 runtime acceptance open; later gates remain `CAPTURED_AND_DEFERRED`**.
 
-Class P4 of `docs/MATURITY-BACKLOG.md`: architecturally worth preserving,
-but nothing is designed or implemented until the platform is substantially
-more settled and a real workload earns it. It stays below the U1 items
-(survivability, install, update, recovery, exact hardware qualification,
-administration), below native Constellation work (U2), and below the stable
-application/platform interface work. No current release milestone depends on
-graphics.
+Class P4 of `docs/MATURITY-BACKLOG.md`: architecturally worth preserving, but
+implementation stays below the U1 items (survivability, install, update,
+recovery, exact hardware qualification, administration), below native
+Constellation work (U2), and below the stable application/platform interface
+work. No current release milestone depends on graphics.
 
-This note records a direction, not a plan. Where it says "do not decide" or
-"do not design", that is the instruction, not a gap to fill.
+This note records a direction, not a general implementation plan. The bounded
+G0 contract/reference review in coordination record #127 is complete; its artifacts are
+in [`mwm-g0-20261103/`](mwm-g0-20261103/README.md). The separately accepted
+G1 exception in coordination record #128 now has an experimental copied-frame kernel
+interface, standalone MWM, and independent offline oracle, documented in
+[`MWM-G1-PRESENTATION.md`](MWM-G1-PRESENTATION.md). It remains feature-gated.
+The component and its ordinary exact-pair health checks are integrated in
+private `latest`; whole-G1 pixel acceptance and the corrected observer's final
+execution review remain open. It establishes no supported interface, production
+compositor, benchmark result, or admission of #129–#132. Where this note says
+"do not decide" or "do not design", that remains the instruction outside the
+accepted G0/G1 exceptions.
 
 ## What this note is not
 

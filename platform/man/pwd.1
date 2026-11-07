@@ -1,0 +1,28 @@
+.Dd November 3, 2026
+.Dt PWD 1
+.Os ABSD
+.Sh NAME
+.Nm pwd
+.Nd print the process working directory
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+Print the working directory supplied by the process startup record,
+or the runtime default
+.Pa / .
+The shell's
+.Ic cd
+builtin supplies that directory to commands it starts.
+This command neither changes it nor enumerates filesystem authority.
+Additional arguments are ignored; no physical/logical path options are
+implemented.
+.Sh EXIT STATUS
+0 when the directory was obtained; 1 for a current-directory error,
+diagnosed on standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+pwd
+.Ed
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr process 7

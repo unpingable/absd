@@ -5,8 +5,8 @@ not make arbitrary authority-bearing jobs replayable. Full R23 remains PARTIAL.
 
 The live fixed-case path in scripts/run-agent-exec.sh now establishes the accepted
 warm_baseline contract before its measured Runner.run. Only the complete canonical
-cases.tsv is admitted. Candidate gating is unchanged: candidate0 omits C12;
-candidate2 includes its upload, compile/run, and listing. An alternate case file
+cases.tsv is admitted. Candidate gating is unchanged; the case file has no gated
+case since C12 was removed on 2026-10-29. An alternate case file
 with different rows refuses; it is not silently approximated. A source modification
 to the canonical case set requires renewed adapter/effect-contract review.
 
@@ -23,7 +23,7 @@ valid capacity line. Samples are observations, not an atomic global snapshot.
 
 Reset checks whole logical object inventory using existing system_objects log and
 recovery-state exclusions. Generation serials are not logical file identities.
-It admits only /home/operator/agent and exactly in.txt, plus t.c and t under C12;
+It admits only /home/operator/agent and exactly in.txt;
 input content must match the canonical uploaded bytes. All original objects must
 remain unchanged. Before a reset, the complete previous end-state must still
 match. Unknown children, different types/flags, or unrelated effects refuse before
@@ -44,7 +44,7 @@ remain the original per-case reporting choice and cannot bypass the added gate.
 ## Actual job recipe and external consumer
 
 The retained candidate6 recipe specifies readonly-analysis.json and
-misbehaving.json, not compile-run.json. Readonly-analysis still creates persistent
+misbehaving.json. Readonly-analysis still creates persistent
 workspace/artifact objects. The second set includes bounded timeout/cancel/output
 cap and intended undeclared-write outcomes, all of which remain legitimate
 expected behavior. agent-job.py assigns random persistent workspaces and has no
@@ -66,11 +66,11 @@ performed here.
 ## Evidence and formalization
 
 Host tests run real Runner methods against finite append-only transport fixtures:
-complete cold/reset/rehearsal/baseline/measured transitions, candidate2, unknown
+complete cold/reset/rehearsal/baseline/measured transitions, unknown
 and unrelated effects, input/type mutations, reset failure, stale/new-boot samples,
 missing cancellation/refusal evidence, unchanged Runner AST and measured bound
-refusal. They do not prove guest convergence, image-reader atomicity, actual
-compiler effects or a full campaign result. Finite state-transition fixtures and
+refusal. They do not prove guest convergence, image-reader atomicity or a full
+campaign result. Finite state-transition fixtures and
 explicit isolation assumptions suffice for this bounded adapter; arbitrary-job
 reset premises remain absent. Root owns interpretation and independent acceptance;
 separately admitted guest qualification remains required.

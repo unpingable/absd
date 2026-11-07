@@ -6,9 +6,28 @@
 #![no_std]
 #![no_main]
 
+// Private #96 producers: only an opt-in build (scripts/build-user.sh,
+// ABSD_USER_NATIVE_PCM=1) has these startup modes; default init refuses them
+// as unknown.
+#[cfg(feature = "mwm-experiment")]
+#[path = "../mwm_coordinator.rs"]
+mod mwm_coordinator;
+#[cfg(feature = "native-pcm-experiment")]
+#[path = "../pcm_tone.rs"]
+mod pcm_tone;
 use core::fmt::Write;
+#[path = "../console_lines.rs"]
+mod console_lines;
+const _: () = assert!(console_lines::WRITE_BYTES == absd_user::MAX_WRITE);
+#[path = "../logd_policy.rs"]
+mod logd_policy;
+#[path = "../worker_console.rs"]
+mod worker_console;
 
-use absd_abi::layout::{USER_ADDRESS_LIMIT, USER_HEAP_BASE, USER_STACK_BASE, USER_STACK_TOP};
+use absd_abi::layout::{
+    BUILDER_LARGE_ENVELOPE, BUILDER_PROFILE, USER_ADDRESS_LIMIT, USER_HEAP_BASE, USER_STACK_BASE,
+    USER_STACK_TOP,
+};
 use absd_abi::syscall::{
     VECTOR_DIVIDE_ERROR, VECTOR_GENERAL_PROTECTION, VECTOR_INVALID_OPCODE, VECTOR_PAGE_FAULT,
     VECTOR_SIMD_ERROR,
@@ -16,11 +35,11 @@ use absd_abi::syscall::{
 use absd_user::program::{ServedEndFailure, ServedEscalation};
 use absd_user::{
     Cell, Child, Console, Error, INFO_STATE_LIVE, INFO_STATE_TERMINAL, INFO_STATE_WAITING,
-    LineBuffer, MAX_SPAWN_HANDLES, Outcome, Pipe, RIGHT_KILL, RIGHT_READ, RIGHT_WAIT, RIGHT_WRITE,
-    SpawnHandleCopy, Start, abi_version, close, duplicate, getpid, info, kill, pipe_info,
-    pipe_info_raw, program, resource_census, sleep, spawn, spawn_captured, spawn_many_copy,
-    spawn_many_copy_raw, spawn_with, syscall3, time, wait, wait_any, wait_any_timeout,
-    wait_timeout, wall_clock, yield_now,
+    LineBuffer, MAX_SPAWN_HANDLES, MAX_WRITE, Outcome, Pipe, RIGHT_KILL, RIGHT_READ, RIGHT_WAIT,
+    RIGHT_WRITE, SpawnHandleCopy, Start, abi_version, close, duplicate, getpid, info, kill,
+    pipe_info, pipe_info_raw, program, resource_census, sleep, spawn, spawn_captured,
+    spawn_many_copy, spawn_many_copy_raw, spawn_with, syscall3, time, wait, wait_any,
+    wait_any_timeout, wait_timeout, wall_clock, yield_now,
 };
 use absd_user::{
     MACHINE_RIGHT_RECOVER, MACHINE_RIGHT_RESTART, MACHINE_RIGHT_STOP, STOP_CODE_MAX, STOP_CODE_MIN,
@@ -29,7 +48,7 @@ use absd_user::{
 use absd_user::{frame_stats, frame_stats_raw, map, unmap};
 
 /// Maximum child capacity with no kernel-reserved qualification processes.
-const SPAWN_CAPACITY: usize = 15;
+const SPAWN_CAPACITY: usize = absd_abi::syscall::MAX_PROCESS_SLOTS - 1;
 const PROCESS_TABLE_CAPACITY: usize = SPAWN_CAPACITY + 1;
 const PRIVATE_TEST_SYSCALL: u64 = 0x7fff;
 const TOPOLOGY_RESERVATION_OP: u64 = 12;
@@ -41,7 +60,17 @@ const OBJECT_CAPACITY_CYCLES: usize = 3;
 const SUPERVISOR_WAIT_TICKS: u64 = 500;
 /// Lines the pipe child sends; 16 bytes each, more than the pipe holds.
 const PIPER_LINES: u64 = 150;
-const EXTERNAL_WAIT_TICKS: u64 = 120_000;
+// The accepted workload limit is 120,000 ticks. Only the #115 builder profile
+// raises it: its fixed recipe runs 56 sequential compiler invocations inside a
+// finite two-hour deadline, and the builder envelope, whose single compiles of
+// `core` outlast two hours on the native allocator, gets eight.
+const EXTERNAL_WAIT_TICKS: u64 = if BUILDER_LARGE_ENVELOPE {
+    28_800_000
+} else if BUILDER_PROFILE {
+    7_200_000
+} else {
+    120_000
+};
 /// A worker holding the NIC in a qualification boot is a server whose run
 /// is paced by its network peers, not by its input: it gets an hour, or
 /// what the build's `ABSD_NET_WAIT_TICKS` says (a harness shortens it to
@@ -67,7 +96,18 @@ const FILE_SERVER_PRESENT: bool = !env!("ABSD_FILE_SERVER_PRESENT").is_empty();
 /// option selects it. Such an image boots nothing else.
 const ENROLL_STREAM: bool = !env!("ABSD_ENROLL_STREAM").is_empty();
 /// The control channel and the client slots of an `fsd` boot.
+const LOGD_FAULT: bool = matches!(env!("ABSD_LOGD_FAULT").as_bytes(), b"1");
+const LOGD_PRESENT: bool = !env!("ABSD_LOGD_PRESENT").is_empty();
 const FSD_CHANNELS: usize = 1 + program::FILE_SERVER_SLOTS;
+const FSD_TOTAL_CHANNELS: usize = FSD_CHANNELS + if LOGD_PRESENT { 1 } else { 0 };
+// Startup vectors retain their 64-entry wire contract, including optional PCM.
+const _: () = assert!(7 + 2 * FSD_TOTAL_CHANNELS <= MAX_SPAWN_HANDLES);
+const _: () = assert!(
+    10 + 2 * FSD_CHANNELS + cfg!(feature = "native-pcm-experiment") as usize <= MAX_SPAWN_HANDLES
+);
+// Four channel endpoints, seven inherited/liveness/diagnostic handles, six
+// temporary capture/startup ends and one child at the FSD construction peak.
+const _: () = assert!(4 * FSD_TOTAL_CHANNELS + 14 <= absd_abi::syscall::MAX_PROCESS_HANDLES);
 /// How long init waits for the file server to finish after the worker
 /// ended (it sees end of file on its control channel, commits, and exits).
 const FSD_STOP_TICKS: u64 = 30_000;
@@ -88,6 +128,9 @@ const SERVED_RECOVERY_DRAIN_TICKS: u64 = 2_000;
 /// init's verdict for the next generation's recovery ledger after an
 /// orderly end completed (one mount, one fact, one commit).
 const SERVED_FINALIZE_TICKS: u64 = 5_000;
+
+#[path = "../local_console.rs"]
+mod local_console;
 
 #[path = "../init_broker.rs"]
 mod broker;
@@ -121,6 +164,18 @@ fn main(start: Start) -> i32 {
         return 99;
     }
     let result = match start.arg {
+        #[cfg(feature = "native-pcm-experiment")]
+        0x50434d => pcm_tone::run(console),
+        #[cfg(feature = "native-pcm-experiment")]
+        0x50434e => pcm_tone::underrun(console),
+        #[cfg(feature = "native-pcm-experiment")]
+        0x50434f => pcm_tone::stop_pending(console),
+        #[cfg(feature = "native-pcm-experiment")]
+        0x504350 => pcm_tone::producer_death(console),
+        #[cfg(feature = "native-pcm-experiment")]
+        0x504351 => pcm_tone::death_child(console, start.handle),
+        #[cfg(feature = "mwm-experiment")]
+        0x4d57 => mwm_coordinator::run(console),
         program::INIT_MODE_SUITE => topology_reservation().and_then(|reserve| {
             let _ = console.write_str("init: spawning demonstration programs\n");
             run(console, reserve).and_then(|()| verify_machine_right(console))
@@ -195,6 +250,9 @@ fn main(start: Start) -> i32 {
     };
     match result {
         Ok(()) => {
+            if served() {
+                local_console::release(console);
+            }
             let _ = console.write_str("USERSPACE BOOTSTRAP OK\n");
             0
         }
@@ -282,20 +340,106 @@ fn expect_client_service_process_baseline(reserve: usize) -> Result<(), &'static
 }
 
 fn external_line(console: Console, line: &LineBuffer) -> Result<(), &'static str> {
-    match console.write_once(line.as_bytes()) {
-        Ok(written) if written == line.as_bytes().len() => Ok(()),
-        _ => Err("external serial frame"),
-    }
+    console_lines::frame(console, line.as_bytes())
 }
 
 fn external_chunk(console: Console, offset: usize, bytes: &[u8]) -> Result<(), &'static str> {
-    let mut line = LineBuffer::new();
-    let _ = write!(line, "EXTERNAL OUTPUT CHUNK offset={offset:016x} data=");
-    for byte in bytes {
-        let _ = write!(line, "{byte:02x}");
+    // Both stdout and stderr use this formatter. A stderr read can exceed
+    // the stdout caller's 96-byte batch; bound the encoded frame here.
+    for (index, chunk) in bytes.chunks(96).enumerate() {
+        let offset = offset + index * 96;
+        let mut line = LineBuffer::new();
+        let _ = write!(line, "EXTERNAL OUTPUT CHUNK offset={offset:016x} data=");
+        for byte in chunk {
+            let _ = write!(line, "{byte:02x}");
+        }
+        let _ = writeln!(line);
+        external_line(console, &line)?;
     }
-    let _ = writeln!(line);
+    Ok(())
+}
+
+fn external_worker_chunk(
+    console: Console,
+    terminal: Option<&mut local_console::Terminal>,
+    output: &mut worker_console::Output,
+    stream: usize,
+    bytes: &[u8],
+) -> Result<(), &'static str> {
+    if terminal.is_some() && !local_console::startup_capture_closed() {
+        // A trusted worker marker can arrive after FSD wrote its witness but
+        // before init read that queued line. Drain after receiving the worker
+        // bytes, before framing them. Sixteen bounded transfers exceed both
+        // finite FSD pipes; a continuing/partial stream refuses startup.
+        let mut drained = false;
+        for _ in 0..16 {
+            if drain_fsd_logs(console) {
+                drained = true;
+                break;
+            }
+        }
+        if !drained {
+            return Err("local startup FSD publication incomplete");
+        }
+    }
+    if terminal.is_none_or(|terminal| terminal.capture_worker(stream, bytes)) {
+        output.push(stream, bytes)?;
+    } else {
+        output.omit(bytes)?;
+    }
+    Ok(())
+}
+
+fn external_split_notice(
+    console: Console,
+    stream: usize,
+    reason: worker_console::Split,
+    offset: usize,
+    bytes: usize,
+) -> Result<(), &'static str> {
+    let mut line = LineBuffer::new();
+    let stream = if stream == 0 { "stdout" } else { "stderr" };
+    let _ = writeln!(
+        line,
+        "EXTERNAL OUTPUT SPLIT stream={stream} reason={} offset={offset:016x} bytes={bytes}",
+        reason.name()
+    );
     external_line(console, &line)
+}
+
+fn external_worker_startup(
+    console: Console,
+    terminal: &mut local_console::Terminal,
+    output: &mut worker_console::Output,
+    input: Pipe,
+    fsd_idle: bool,
+) -> Result<(), &'static str> {
+    if fsd_idle && terminal.startup_ready() && !local_console::startup_capture_closed() {
+        output.before_handoff()?;
+        console_lines::boundary(console)?;
+    }
+    terminal.startup_drained(fsd_idle);
+    terminal.step(console, input);
+    Ok(())
+}
+
+fn external_output_end(
+    console: Console,
+    local: bool,
+    output_offset: usize,
+    digest: u32,
+) -> Result<(), &'static str> {
+    // Internal count/digest still cover omitted runtime bytes. Do not claim
+    // that a local startup prefix is a complete physical transcript.
+    if local && local_console::startup_capture_closed() {
+        return Ok(());
+    }
+    let mut end = LineBuffer::new();
+    let _ = writeln!(
+        end,
+        "EXTERNAL OUTPUT END bytes={output_offset} digest={digest:08x}"
+    );
+    external_line(console, &end)
 }
 
 /// Ends a child whose run init gave up on. The child is killed and waited
@@ -305,6 +449,15 @@ fn external_chunk(console: Console, offset: usize, bytes: &[u8]) -> Result<(), &
 /// refused). An enrollment image keeps the writer open if the child did not
 /// end; the boot is failing anyway.
 fn external_abort(child: Child, input_writer: Pipe, writer_open: bool, output_reader: Pipe) {
+    let _ = external_abort_outcome(child, input_writer, writer_open, output_reader);
+}
+
+fn external_abort_outcome(
+    child: Child,
+    input_writer: Pipe,
+    writer_open: bool,
+    output_reader: Pipe,
+) -> Option<Outcome> {
     let _ = kill(child);
     let ended = wait_timeout(Some(child), 500);
     if let Ok(outcome) = &ended
@@ -317,6 +470,7 @@ fn external_abort(child: Child, input_writer: Pipe, writer_open: bool, output_re
         let _ = close(input_writer.raw());
     }
     let _ = close(output_reader.raw());
+    ended.ok()
 }
 
 fn live_input_refused(console: Console, reason: &str) {
@@ -344,16 +498,28 @@ fn console_read_exact(
     Ok(())
 }
 
-fn write_pipe_exact(writer: Pipe, mut bytes: &[u8], deadline: u64) -> Result<(), &'static str> {
+enum LiveInputError {
+    Failed(&'static str),
+    ReaderClosed,
+}
+
+impl From<&'static str> for LiveInputError {
+    fn from(error: &'static str) -> Self {
+        Self::Failed(error)
+    }
+}
+
+fn write_pipe_exact(writer: Pipe, mut bytes: &[u8], deadline: u64) -> Result<(), LiveInputError> {
     while !bytes.is_empty() {
         if time() >= deadline {
-            return Err("external live pipe timeout");
+            return Err("external live pipe timeout".into());
         }
         match writer.write_timeout(bytes, 2) {
-            Ok(0) => return Err("external live zero pipe write"),
+            Ok(0) => return Err("external live zero pipe write".into()),
             Ok(count) => bytes = &bytes[count..],
             Err(Error::Timeout) => {}
-            Err(_) => return Err("external live pipe write"),
+            Err(Error::BrokenPipe) => return Err(LiveInputError::ReaderClosed),
+            Err(_) => return Err("external live pipe write".into()),
         }
     }
     Ok(())
@@ -363,7 +529,7 @@ fn receive_live_input(
     console: Console,
     writer: Pipe,
     deadline: u64,
-) -> Result<usize, &'static str> {
+) -> Result<usize, LiveInputError> {
     external_line(console, &{
         let mut line = LineBuffer::new();
         let _ = writeln!(
@@ -376,11 +542,11 @@ fn receive_live_input(
     let input_deadline = time().saturating_add(EXTERNAL_LIVE_IO_TICKS).min(deadline);
     if let Err(error) = console_read_exact(console, &mut magic, input_deadline) {
         live_input_refused(console, "header-timeout");
-        return Err(error);
+        return Err(error.into());
     }
     if &magic != EXTERNAL_LIVE_MAGIC {
         live_input_refused(console, "bad-header");
-        return Err("external live input header");
+        return Err("external live input header".into());
     }
     external_line(console, &{
         let mut line = LineBuffer::new();
@@ -400,7 +566,7 @@ fn receive_live_input(
         let input_deadline = time().saturating_add(EXTERNAL_LIVE_IO_TICKS).min(deadline);
         if let Err(error) = console_read_exact(console, &mut length_bytes, input_deadline) {
             live_input_refused(console, "truncated-chunk-header");
-            return Err(error);
+            return Err(error.into());
         }
         let length = usize::from(u16::from_be_bytes(length_bytes));
         if length == 0 {
@@ -412,13 +578,13 @@ fn receive_live_input(
         }
         if length > credit {
             live_input_refused(console, "chunk-exceeds-credit");
-            return Err("external live input credit");
+            return Err("external live input credit".into());
         }
         let mut payload = [0u8; EXTERNAL_LIVE_CREDIT];
         let input_deadline = time().saturating_add(EXTERNAL_LIVE_IO_TICKS).min(deadline);
         if let Err(error) = console_read_exact(console, &mut payload[..length], input_deadline) {
             live_input_refused(console, "truncated-chunk-payload");
-            return Err(error);
+            return Err(error.into());
         }
         write_pipe_exact(writer, &payload[..length], deadline)?;
         total += length;
@@ -537,8 +703,9 @@ fn run_durable(console: Console, block: u64, selected: u64, step: u64) -> Result
 /// client ends are gone once the worker has them, so no replacement could
 /// get them. The boot fails if the server ends while the worker runs.
 // Private wrappers for this embedded S1 consumer, not a general user library.
-const SERVED_INIT_FRAMES: u64 = 16427;
+const SERVED_INIT_FRAMES: u64 = frame_budget(option_env!("ABSD_SERVED_INIT_FRAMES"), 16427);
 const SERVED_FSD_FRAMES: u64 = frame_budget(option_env!("ABSD_SERVED_FSD_FRAMES"), 9333);
+const SERVED_LOGD_FRAMES: u64 = frame_budget(option_env!("ABSD_SERVED_LOGD_FRAMES"), 9333);
 const SERVED_SSHD_FRAMES: u64 = frame_budget(option_env!("ABSD_SERVED_SSHD_FRAMES"), 9434);
 const fn frame_budget(value: Option<&str>, fallback: u64) -> u64 {
     let Some(value) = value else {
@@ -628,6 +795,9 @@ fn run_durable_fsd(
     step: u64,
     fixture: FsdFixture,
 ) -> Result<(), &'static str> {
+    if served() {
+        local_console::claim(console)?;
+    }
     if block == 0 {
         return Err("no block device");
     }
@@ -642,9 +812,9 @@ fn run_durable_fsd(
         return Err("fsd boot takes no broker policy or reader");
     }
     // server[i] = (request reader, reply writer); client[i] the opposite.
-    let mut server = [(0u64, 0u64); FSD_CHANNELS];
-    let mut client = [(0u64, 0u64); FSD_CHANNELS];
-    for index in 0..FSD_CHANNELS {
+    let mut server = [(0u64, 0u64); FSD_TOTAL_CHANNELS];
+    let mut client = [(0u64, 0u64); FSD_TOTAL_CHANNELS];
+    for index in 0..FSD_TOTAL_CHANNELS {
         let (request_reader, request_writer) = split_pipe()?;
         let (reply_reader, reply_writer) = split_pipe()?;
         server[index] = (request_reader, reply_writer);
@@ -662,13 +832,25 @@ fn run_durable_fsd(
         let server_cell = Cell::create(0).map_err(|_| "served liveness cell")?;
         unsafe { SERVED_LIVENESS_CELLS = (worker_cell.raw(), server_cell.raw()) };
     }
+    // Real consumers: private logd, legacy local collection and the guarded
+    // FSD finalizer. Init retains their separate explicit READ grant.
+    let diagnostic = absd_user::kernel_log::mint_diagnostics(console.raw())
+        .map_err(|_| "logging diagnostics mint")?;
+    unsafe {
+        SERVICE_DIAGNOSTICS = diagnostic;
+    }
     let (server_child, server_pid) = spawn_file_server(console, block, &server, fixture)?;
     for (request, reply) in server {
         close(request).map_err(|_| "fsd server end close")?;
         close(reply).map_err(|_| "fsd server end close")?;
     }
     unsafe {
-        FSD_CLIENT = client;
+        (&mut *core::ptr::addr_of_mut!(FSD_CLIENT)).copy_from_slice(&client[..FSD_CHANNELS]);
+        if LOGD_PRESENT {
+            LOGD_CHANNEL = *client
+                .get(FSD_CHANNELS)
+                .ok_or("logger channel construction")?;
+        }
         FSD_SERVER_PID = server_pid;
         if served() {
             FSD_SERVER_HANDLE = server_child.raw();
@@ -678,7 +860,7 @@ fn run_durable_fsd(
     let mut line = LineBuffer::new();
     let _ = writeln!(
         line,
-        "FILE SERVER START pid={server_pid} channels={FSD_CHANNELS}"
+        "FILE SERVER START pid={server_pid} channels={FSD_TOTAL_CHANNELS}"
     );
     external_line(console, &line)?;
     let step_cell = Cell::create(step).map_err(|_| "durable step cell")?;
@@ -692,6 +874,9 @@ fn run_durable_fsd(
         Party::Worker(1),
     );
     close(step_cell.raw()).map_err(|_| "durable step cell close")?;
+    if LOGD_PRESENT {
+        logd_finish(console)?;
+    }
     if served() {
         // An exit 0 or 98 is the operator's request: `end_served` decides
         // its outcome. Anything else is a fault during service; the step
@@ -714,6 +899,7 @@ fn run_durable_fsd(
         None => {
             let deadline = time().saturating_add(FSD_STOP_TICKS);
             loop {
+                drain_fsd_logs(console);
                 match wait_any_timeout(1) {
                     Ok(result) if result.pid == server_pid => {
                         unsafe { FSD_SERVER_HANDLE = 0 };
@@ -736,6 +922,8 @@ fn run_durable_fsd(
         "FILE SERVER OUTCOME pid={server_pid} status={server_status}"
     );
     external_line(console, &line)?;
+    finish_fsd_logs(console);
+    service_outcome(console, server_pid, 2, server_status);
     let outcome = outcome?;
     let result = match outcome {
         Outcome::Exited(0) => Ok(()),
@@ -745,7 +933,11 @@ fn run_durable_fsd(
     if server_status != 0 {
         return Err("file server outcome");
     }
-    result
+    result?;
+    // The bounded boot's worker succeeded, its output ended, the file
+    // server was reaped successfully and no descendant remains. Regrant
+    // this same boot's block authority only for its checked finalizer.
+    finalize_file_server(console, block, true)
 }
 
 /// The end of a served boot. The worker (sshd) has ended its sessions and
@@ -764,6 +956,7 @@ fn end_served(
     server_pid: u64,
     stream_failed: bool,
 ) -> Result<(), &'static str> {
+    local_console::release(console);
     unsafe { SERVED_END_DECIDED = true };
     // The worker is reaped; the file server ends on its own at the channel
     // EOF. Neither beats again, and the cells must not survive init.
@@ -775,6 +968,7 @@ fn end_served(
         None => {
             let deadline = time().saturating_add(FSD_STOP_TICKS);
             loop {
+                drain_fsd_logs(console);
                 match wait_any_timeout(1) {
                     Ok(result) if result.pid == server_pid => {
                         unsafe { FSD_SERVER_HANDLE = 0 };
@@ -792,6 +986,8 @@ fn end_served(
             }
         }
     };
+    finish_fsd_logs(console);
+    service_outcome(console, server_pid, 2, server_status);
     if server_failure.is_none() {
         let mut line = LineBuffer::new();
         let _ = writeln!(
@@ -856,8 +1052,11 @@ fn end_served(
 /// Runs the file server in finalize mode and reports its outcome; the
 /// requested end proceeds whatever that outcome is.
 fn finalize_served(console: Console) {
+    let _ = finalize_file_server(console, unsafe { SERVED_BLOCK }, false);
+}
+
+fn finalize_file_server(console: Console, block: u64, bounded: bool) -> Result<(), &'static str> {
     use absd_user::broker::{ROLE_BLOCK, ROLE_STDIN, ROLE_STEP, startup_record};
-    let block = unsafe { SERVED_BLOCK };
     let mut line = LineBuffer::new();
     // The runtime takes a startup record only on a vector of at least
     // five handles with every middle one named: the durable shape
@@ -876,9 +1075,15 @@ fn finalize_served(console: Console) {
             SpawnHandleCopy::new(stdin_reader, RIGHT_READ),
             SpawnHandleCopy::new(block, RIGHT_READ | RIGHT_WRITE),
             SpawnHandleCopy::new(step.raw(), RIGHT_READ),
+            SpawnHandleCopy::new(unsafe { SERVICE_DIAGNOSTICS }, RIGHT_READ),
             SpawnHandleCopy::console(console.raw(), RIGHT_WRITE),
         ];
-        let roles = [(ROLE_STDIN, 1u8), (ROLE_BLOCK, 2u8), (ROLE_STEP, 3u8)];
+        let roles = [
+            (ROLE_STDIN, 1u8),
+            (ROLE_BLOCK, 2u8),
+            (ROLE_STEP, 3u8),
+            (absd_user::broker::ROLE_DIAGNOSTICS, 4u8),
+        ];
         let spawned = spawn_many_copy(
             program::FILE_SERVER | absd_abi::syscall::SPAWN_NO_SPAWN,
             &copies,
@@ -887,14 +1092,18 @@ fn finalize_served(console: Console) {
         let _ = close(stdin_reader);
         let _ = close(step.raw());
         let child = spawned.map_err(|_| "finalize spawn")?;
-        const FLAG: &[u8] = b"--finalize";
-        let mut encoded = [0u8; 4 + FLAG.len()];
+        let flag: &[u8] = if bounded {
+            b"--finalize-bounded"
+        } else {
+            b"--finalize"
+        };
+        let mut encoded = [0u8; 32];
         encoded[..2].copy_from_slice(&1u16.to_le_bytes());
-        encoded[2..4].copy_from_slice(&(FLAG.len() as u16).to_le_bytes());
-        encoded[4..].copy_from_slice(FLAG);
+        encoded[2..4].copy_from_slice(&(flag.len() as u16).to_le_bytes());
+        encoded[4..4 + flag.len()].copy_from_slice(flag);
         let mut record = [0u8; 128];
-        let length =
-            startup_record(&mut record, &roles, &encoded).ok_or("finalize startup record")?;
+        let length = startup_record(&mut record, &roles, &encoded[..4 + flag.len()])
+            .ok_or("finalize startup record")?;
         startup_writer
             .write_all(&record[..length])
             .map_err(|_| "finalize startup write")?;
@@ -909,19 +1118,31 @@ fn finalize_served(console: Console) {
             Err(_) => Err("finalize wait"),
         }
     })();
-    match outcome {
+    let prefix = if bounded {
+        "FSD SHUTDOWN"
+    } else {
+        "SERVED SHUTDOWN"
+    };
+    let successful = match outcome {
         Ok(outcome) => {
             let _ = writeln!(
                 line,
-                "SERVED SHUTDOWN FINALIZED status={}",
+                "{prefix} FINALIZED status={}",
                 outcome_status(outcome)
             );
+            outcome_status(outcome) == 0
         }
         Err(step) => {
-            let _ = writeln!(line, "SERVED SHUTDOWN FINALIZE FAILED step={step}");
+            let _ = writeln!(line, "{prefix} FINALIZE FAILED step={step}");
+            false
         }
-    }
+    };
     let _ = external_line(console, &line);
+    if successful {
+        Ok(())
+    } else {
+        Err("file server finalization")
+    }
 }
 
 /// The one `SERVED SHUTDOWN action=` line every orderly end prints, before
@@ -997,7 +1218,11 @@ fn escalate_served(
 /// committed metadata or refuses it under the filesystem's rules; data
 /// without a completed sync may reflect a subset of prior writes.
 fn recover_served(console: Console, reason: &'static str) -> i32 {
-    if !unsafe { SERVED_READY } {
+    if LOGD_PRESENT && logd_finish(console).is_err() {
+        let _ = console.write_str("SERVED RECOVERY REFUSED logd_reap_unconfirmed\n");
+        return 99;
+    }
+    if !unsafe { SERVED_READY } && !local_console::enabled() {
         let _ = console.write_str("SERVED RECOVERY REFUSED generation_not_ready\n");
         let _ = console.write_str("init: FAILED at ");
         let _ = console.write_str(reason);
@@ -1045,6 +1270,9 @@ fn recover_served(console: Console, reason: &'static str) -> i32 {
             Err(_) => break false,
         }
     };
+    if local_console::enabled() && !unsafe { SERVED_READY } {
+        local_console::hold(console, reason);
+    }
     // Init is the only writer of the probe; read it through a raw pointer
     // like `observe_served_ready` does.
     let streak = unsafe { (*core::ptr::addr_of!(SERVED_READY_PROBE)).streak() };
@@ -1057,6 +1285,7 @@ fn recover_served(console: Console, reason: &'static str) -> i32 {
                 program::SERVED_RECOVERY_BUDGET
             );
             let _ = external_line(console, &line);
+            local_console::release(console);
             machine_recover(unsafe { MACHINE })
         }
         // A reset is decided only on an advertised streak; without one
@@ -1087,12 +1316,19 @@ fn recover_served(console: Console, reason: &'static str) -> i32 {
                 program::SERVED_RECOVERY_BUDGET
             );
             let _ = external_line(console, &line);
+            if local_console::enabled() {
+                local_console::hold(console, why);
+            }
+            local_console::release(console);
             machine_stop(unsafe { MACHINE }, code)
         }
     };
     let mut line = LineBuffer::new();
     let _ = writeln!(line, "SERVED RECOVERY REFUSED error={refusal:?}");
     let _ = external_line(console, &line);
+    if local_console::enabled() {
+        local_console::hold(console, "machine recovery refused");
+    }
     99
 }
 
@@ -1154,6 +1390,9 @@ static mut SERVED_REQUEST: Option<Outcome> = None;
 
 /// Records the operator's request when the served worker is reaped.
 fn note_served_worker(outcome: Outcome) {
+    if LOGD_PRESENT {
+        logd_stop_request();
+    }
     if served()
         && matches!(
             outcome,
@@ -1257,6 +1496,611 @@ fn split_pipe() -> Result<(u64, u64), &'static str> {
     Ok((reader, writer))
 }
 
+// Init is the sole authority for these labels. The kernel checks the init
+// role and its writable Console; service payload bytes never set metadata.
+fn service_record(console: Console, pid: u64, service: u64, stream: u64, text: &[u8]) {
+    // Bounded nonblocking append. Ring contention/loss is visible to readers.
+    let _ = absd_user::kernel_log::append_service(
+        console.raw(),
+        pid,
+        service,
+        stream,
+        &text[..text.len().min(256)],
+    );
+}
+// A new capture read end must not survive any early supervision return.
+struct CapturedStderr(u64);
+impl CapturedStderr {
+    fn close(&mut self) {
+        if self.0 != 0 {
+            let _ = close(self.0);
+            self.0 = 0;
+        }
+    }
+}
+impl Drop for CapturedStderr {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+fn service_outcome(console: Console, pid: u64, service: u64, status: i64) {
+    let mut text = LineBuffer::new();
+    let _ = write!(text, "ended status={status}");
+    service_record(console, pid, service, 3, text.as_bytes());
+}
+static mut SERVICE_DIAGNOSTICS: u64 = 0;
+static mut LOGD_CHANNEL: (u64, u64) = (0, 0);
+static mut LOGD_CHILD: u64 = 0;
+static mut LOGD_PID: u64 = 0;
+// Observation sequence only; exact child handles remain the lifecycle identity.
+static mut LOGD_GENERATION: u64 = 0;
+static mut LOGD_SPAWN_ERROR: Option<i64> = None;
+static mut LOGD_INPUT: u64 = 0;
+static mut LOGD_OUTPUT: u64 = 0;
+static mut LOGD_CELL: u64 = 0;
+static mut LOGD_BEAT: (u64, u64) = (0, 0);
+static mut LOGD_COLLECT_PROBE: logd_policy::Collected = logd_policy::Collected::new();
+static mut LOGD_UNKNOWN_REAP: logd_policy::ReapGuard = logd_policy::ReapGuard::new();
+static mut LOGD_FAULT_AT: u64 = u64::MAX;
+static mut LOGD_FAULT_INJECTED: bool = false;
+static mut LOGD_POLICY: logd_policy::Policy = logd_policy::Policy::new();
+// Every endpoint below is occurrence-owned; a refused spawn closes all copies.
+struct LogdHandles([u64; 6]);
+impl LogdHandles {
+    fn keep(&mut self, handle: u64) {
+        for h in &mut self.0 {
+            if *h == handle {
+                *h = 0;
+            }
+        }
+    }
+}
+impl Drop for LogdHandles {
+    fn drop(&mut self) {
+        for h in self.0 {
+            if h != 0 {
+                let _ = close(h);
+            }
+        }
+    }
+}
+fn logd_spawn(console: Console, initial: bool) -> Result<(), &'static str> {
+    unsafe { LOGD_SPAWN_ERROR = None };
+    use absd_user::broker::logd_startup_record;
+    let mut owned = LogdHandles([0; 6]);
+    let (sr, sw) = split_pipe()?;
+    owned.0[0] = sr;
+    owned.0[1] = sw;
+    let (ir, iw) = split_pipe()?;
+    owned.0[2] = ir;
+    owned.0[3] = iw;
+    let (or, ow) = split_pipe()?;
+    owned.0[4] = or;
+    owned.0[5] = ow;
+    if unsafe { LOGD_CELL } == 0 {
+        unsafe {
+            LOGD_CELL = Cell::create(0).map_err(|_| "logd liveness cell")?.raw();
+        }
+    }
+    let channel = unsafe { LOGD_CHANNEL };
+    let copies = [
+        SpawnHandleCopy::new(sr, RIGHT_READ),
+        SpawnHandleCopy::new(ir, RIGHT_READ),
+        SpawnHandleCopy::new(channel.0, RIGHT_WRITE),
+        SpawnHandleCopy::new(channel.1, RIGHT_READ),
+        SpawnHandleCopy::new(unsafe { SERVICE_DIAGNOSTICS }, RIGHT_READ),
+        SpawnHandleCopy::new(unsafe { LOGD_CELL }, RIGHT_READ | RIGHT_WRITE),
+        SpawnHandleCopy::console(ow, RIGHT_WRITE),
+    ];
+    let mut record = [0u8; 128];
+    let length = logd_startup_record(&mut record).ok_or("logd startup record")?;
+    if Pipe::from_raw(sw).write_all(&record[..length]).is_err() {
+        return Err("logd startup write");
+    }
+    let selected = program::LOGD | absd_abi::syscall::SPAWN_NO_SPAWN;
+    let child = if served() && initial {
+        spawn_served_reserved(console, "logd", SERVED_LOGD_FRAMES, selected, &copies)
+    } else {
+        spawn_many_copy(selected, &copies)
+    }
+    .map_err(|error| {
+        unsafe { LOGD_SPAWN_ERROR = Some(error.code()) };
+        "logd spawn"
+    })?;
+    unsafe { LOGD_GENERATION = LOGD_GENERATION.saturating_add(1) };
+    unsafe {
+        (*core::ptr::addr_of_mut!(LOGD_POLICY)).spawned();
+    }
+    let pid = match info(Some(child)) {
+        Ok(info) => info.pid,
+        Err(_) => {
+            let _ = kill(child);
+            // Never retry while the created identity may still be live.
+            let disposition = unsafe {
+                (*core::ptr::addr_of_mut!(LOGD_UNKNOWN_REAP)).poll(|| {
+                    wait_timeout(Some(child), 1000)
+                        .map(|_| ())
+                        .map_err(Error::code)
+                })
+            };
+            if disposition == logd_policy::Reap::Confirmed {
+                logd_ended(console, 0, -1);
+            } else {
+                unsafe {
+                    LOGD_CHILD = child.raw();
+                    (*core::ptr::addr_of_mut!(LOGD_POLICY)).stop();
+                }
+                service_record(
+                    console,
+                    getpid(),
+                    3,
+                    3,
+                    if disposition == logd_policy::Reap::Quarantined {
+                        logd_policy::QUARANTINED_NOTICE.as_bytes()
+                    } else {
+                        logd_policy::UNCONFIRMED_NOTICE.as_bytes()
+                    },
+                );
+            }
+            return Err("logd identity");
+        }
+    };
+    let version = Cell::from_raw(unsafe { LOGD_CELL })
+        .read()
+        .map(|v| v.0)
+        .unwrap_or(0);
+    unsafe {
+        LOGD_CHILD = child.raw();
+        LOGD_PID = pid;
+        LOGD_INPUT = iw;
+        LOGD_OUTPUT = or;
+        LOGD_BEAT = (version, time());
+        LOGD_COLLECT_PROBE = logd_policy::Collected::new();
+    }
+    owned.keep(iw);
+    owned.keep(or);
+    if unsafe { (*core::ptr::addr_of!(LOGD_POLICY)).reporting() } {
+        service_record(
+            console,
+            pid,
+            3,
+            3,
+            b"started; exclusive private logger channel",
+        );
+    }
+    Ok(())
+}
+// Kernel bootstrap authority closes at the unchanged stdout READY delivery.
+// The one reserved attempt happens before init reads any worker output.
+fn logd_bootstrap(console: Console) {
+    let policy = unsafe { &mut *core::ptr::addr_of_mut!(LOGD_POLICY) };
+    if policy.state != logd_policy::State::Dormant || !policy.begin(time()) {
+        return;
+    }
+    if let Err(reason) = logd_spawn(console, true) {
+        // Refuse only the logger. FSD/sshd boot continues, but this generation
+        // never falls back to unreserved creation or retries retired admission.
+        unsafe { (*core::ptr::addr_of_mut!(LOGD_POLICY)).stop() };
+        let event = if unsafe { LOGD_CHILD } != 0 {
+            "reserved start unconfirmed; child state unknown"
+        } else {
+            "reserved start refused; not running"
+        };
+        logd_problem(console, 1, event, reason, unsafe { LOGD_SPAWN_ERROR }, None);
+    }
+}
+// Both physical console and the typed lifecycle ring retain a bounded fact.
+// This does not claim live persistence or turn the observation number into authority.
+fn logd_problem(
+    console: Console,
+    generation: u64,
+    event: &str,
+    reason: &str,
+    code: Option<i64>,
+    next: Option<u64>,
+) {
+    let mut line = LineBuffer::new();
+    let _ = write!(
+        line,
+        "logd: {event}. service=logd generation={generation} error={reason:?} code="
+    );
+    match code {
+        Some(code) => {
+            let _ = write!(line, "{code}");
+        }
+        None => {
+            let _ = write!(line, "unknown");
+        }
+    }
+    let _ = write!(line, " next_backoff_ticks=");
+    match next {
+        Some(ticks) => {
+            let _ = write!(line, "{ticks}");
+        }
+        None => {
+            let _ = write!(line, "none");
+        }
+    }
+    service_record(console, getpid(), 3, 3, line.as_bytes());
+    let _ = writeln!(line);
+    let _ = console_lines::frame(console, line.as_bytes());
+}
+fn logd_output(console: Console) {
+    let h = unsafe { LOGD_OUTPUT };
+    if h == 0 {
+        return;
+    }
+    let mut bytes = [0u8; 256];
+    let read = Pipe::from_raw(h).read_timeout(&mut bytes, 1);
+    if matches!(read, Ok(0)) || matches!(read, Err(error) if error != Error::Timeout) {
+        let _ = console_lines::finish(console, console_lines::LOGD);
+    }
+    if let Ok(n) = read
+        && n > 0
+    {
+        let collected = unsafe { (*core::ptr::addr_of_mut!(LOGD_COLLECT_PROBE)).push(&bytes[..n]) };
+        if collected
+            && unsafe { (*core::ptr::addr_of!(LOGD_POLICY)).state } == logd_policy::State::Running
+        {
+            let sustained = unsafe { (*core::ptr::addr_of_mut!(LOGD_POLICY)).collected(time()) };
+            if sustained {
+                let mut notice = LineBuffer::new();
+                let _ = logd_policy::write_observation(
+                    &mut notice,
+                    false,
+                    0,
+                    unsafe { (*core::ptr::addr_of!(LOGD_POLICY)).restarts },
+                    0,
+                );
+                service_record(console, getpid(), 3, 3, notice.as_bytes());
+            }
+            if LOGD_FAULT && !unsafe { LOGD_FAULT_INJECTED } {
+                unsafe {
+                    LOGD_FAULT_AT = time().saturating_add(20);
+                }
+            }
+        }
+        // Retain every bounded output read and R4 progress/fault handling.
+        // Local presentation ownership gates only the physical rendering.
+        service_record(console, unsafe { LOGD_PID }, 3, 1, &bytes[..n]);
+        if !local_console::startup_capture_closed() {
+            let _ = console_lines::forward(console, console_lines::LOGD, &bytes[..n]);
+        }
+    }
+}
+fn logd_release_streams(console: Console) {
+    for _ in 0..8 {
+        logd_output(console);
+    }
+    let _ = console_lines::finish(console, console_lines::LOGD);
+    for h in unsafe { [LOGD_INPUT, LOGD_OUTPUT] } {
+        if h != 0 {
+            let _ = close(h);
+        }
+    }
+    unsafe {
+        LOGD_INPUT = 0;
+        LOGD_OUTPUT = 0;
+    }
+}
+fn logd_retry_notice(console: Console) {
+    let policy = unsafe { &*core::ptr::addr_of!(LOGD_POLICY) };
+    if policy.state == logd_policy::State::Exhausted {
+        service_record(
+            console,
+            getpid(),
+            3,
+            3,
+            logd_policy::EXHAUSTED_NOTICE.as_bytes(),
+        );
+    } else if policy.state == logd_policy::State::Backoff && policy.should_notice() {
+        let mut text = LineBuffer::new();
+        let _ = logd_policy::write_observation(
+            &mut text,
+            true,
+            policy.unproductive,
+            policy.restarts,
+            policy.due.saturating_sub(time()),
+        );
+        service_record(console, getpid(), 3, 3, text.as_bytes());
+    }
+}
+fn logd_ended(console: Console, pid: u64, status: i64) {
+    if status != logd_policy::REATTACH_EXIT_STATUS
+        || unsafe { (*core::ptr::addr_of!(LOGD_POLICY)).reporting() }
+    {
+        service_outcome(console, pid, 3, status);
+    }
+    unsafe {
+        (*core::ptr::addr_of_mut!(LOGD_POLICY)).ended(time(), status);
+    }
+    let policy = unsafe { &*core::ptr::addr_of!(LOGD_POLICY) };
+    let next =
+        (policy.state == logd_policy::State::Backoff).then(|| policy.due.saturating_sub(time()));
+    logd_problem(
+        console,
+        unsafe { LOGD_GENERATION },
+        "generation ended",
+        "child outcome",
+        Some(status),
+        next,
+    );
+    logd_retry_notice(console);
+}
+fn logd_step(console: Console) {
+    logd_output(console);
+    if unsafe { LOGD_CHILD } != 0 {
+        // Unknown/quarantined identity is owned by the bounded exact reaper;
+        // no watchdog or fault path may act on that raw handle here.
+        if unsafe { LOGD_PID } == 0 {
+            return;
+        }
+        if LOGD_FAULT && !unsafe { LOGD_FAULT_INJECTED } && time() >= unsafe { LOGD_FAULT_AT } {
+            unsafe {
+                LOGD_FAULT_INJECTED = true;
+            }
+            service_record(
+                console,
+                unsafe { LOGD_PID },
+                3,
+                3,
+                b"fault fixture: one kill requested after ready and flushed acquisition",
+            );
+            let result = kill(Child::from_raw(unsafe { LOGD_CHILD }));
+            if result.is_err() {
+                service_record(
+                    console,
+                    unsafe { LOGD_PID },
+                    3,
+                    3,
+                    b"fault fixture: kill refused; no successful fault claimed",
+                );
+            }
+        }
+        let cell = Cell::from_raw(unsafe { LOGD_CELL });
+        if let Ok((version, _)) = cell.read() {
+            let (old, since) = unsafe { LOGD_BEAT };
+            if version != old {
+                unsafe {
+                    LOGD_BEAT = (version, time());
+                }
+            } else if time().saturating_sub(since) > 5000 {
+                service_record(
+                    console,
+                    unsafe { LOGD_PID },
+                    3,
+                    3,
+                    b"liveness stale for 5000 ticks; watchdog kill requested",
+                );
+                if kill(Child::from_raw(unsafe { LOGD_CHILD })).is_err() {
+                    service_record(
+                        console,
+                        unsafe { LOGD_PID },
+                        3,
+                        3,
+                        b"watchdog kill refused; collector identity retained",
+                    );
+                }
+                unsafe {
+                    LOGD_BEAT = (old, time());
+                }
+            }
+        }
+        return;
+    }
+    // Cold startup waits for FSD/sshd readiness on the ordinary served path.
+    if served() && !unsafe { SERVED_READY } {
+        return;
+    }
+    if unsafe { (*core::ptr::addr_of_mut!(LOGD_POLICY)).begin(time()) }
+        && let Err(reason) = logd_spawn(console, false)
+    {
+        // A post-spawn metadata/reap failure already owns its disposition.
+        if unsafe { (*core::ptr::addr_of!(LOGD_POLICY)).state } != logd_policy::State::Starting {
+            let policy = unsafe { &*core::ptr::addr_of!(LOGD_POLICY) };
+            let next = (policy.state == logd_policy::State::Backoff)
+                .then(|| policy.due.saturating_sub(time()));
+            logd_problem(
+                console,
+                unsafe { LOGD_GENERATION },
+                "replacement identity unavailable",
+                reason,
+                unsafe { LOGD_SPAWN_ERROR },
+                next,
+            );
+            return;
+        }
+        let mut notice = LineBuffer::new();
+        let _ = write!(notice, "init: logd start refused: {reason}");
+        if unsafe { (*core::ptr::addr_of!(LOGD_POLICY)).reporting() } {
+            service_record(console, getpid(), 3, 3, notice.as_bytes());
+        }
+        unsafe {
+            (*core::ptr::addr_of_mut!(LOGD_POLICY)).refused(time());
+        }
+        let policy = unsafe { &*core::ptr::addr_of!(LOGD_POLICY) };
+        logd_problem(
+            console,
+            unsafe { LOGD_GENERATION }.saturating_add(1),
+            "replacement refused; not running",
+            reason,
+            unsafe { LOGD_SPAWN_ERROR },
+            Some(policy.due.saturating_sub(time())),
+        );
+        logd_retry_notice(console);
+    }
+}
+fn logd_stop_request() {
+    unsafe {
+        (*core::ptr::addr_of_mut!(LOGD_POLICY)).stop();
+    }
+    let h = unsafe { LOGD_INPUT };
+    if h != 0 {
+        let _ = close(h);
+        unsafe {
+            LOGD_INPUT = 0;
+        }
+    }
+}
+fn logd_finish(console: Console) -> Result<(), &'static str> {
+    logd_stop_request();
+    if unsafe { (*core::ptr::addr_of!(LOGD_UNKNOWN_REAP)).quarantined } {
+        service_record(
+            console,
+            getpid(),
+            3,
+            3,
+            logd_policy::QUARANTINED_NOTICE.as_bytes(),
+        );
+        return Err("logd child quarantined");
+    }
+    let handle = unsafe { LOGD_CHILD };
+    if handle != 0 {
+        let deadline = time().saturating_add(2000);
+        loop {
+            logd_output(console);
+            drain_fsd_logs(console);
+            match wait_timeout(Some(Child::from_raw(handle)), 1) {
+                Ok(outcome) => {
+                    service_outcome(console, unsafe { LOGD_PID }, 3, outcome_status(outcome));
+                    break;
+                }
+                Err(Error::Timeout) if time() < deadline => {}
+                Err(error) if error != Error::Timeout && unsafe { LOGD_PID } == 0 => {
+                    unsafe {
+                        (*core::ptr::addr_of_mut!(LOGD_UNKNOWN_REAP)).poll(|| Err(error.code()));
+                    }
+                    service_record(
+                        console,
+                        getpid(),
+                        3,
+                        3,
+                        logd_policy::QUARANTINED_NOTICE.as_bytes(),
+                    );
+                    return Err("logd exact wait refused");
+                }
+                _ => {
+                    let _ = kill(Child::from_raw(handle));
+                    if let Err(error) = wait_timeout(Some(Child::from_raw(handle)), 1000) {
+                        if unsafe { LOGD_PID } == 0 {
+                            unsafe {
+                                (*core::ptr::addr_of_mut!(LOGD_UNKNOWN_REAP))
+                                    .poll(|| Err(error.code()));
+                            }
+                        }
+                        service_record(
+                            console,
+                            unsafe { LOGD_PID },
+                            3,
+                            3,
+                            if unsafe { (*core::ptr::addr_of!(LOGD_UNKNOWN_REAP)).quarantined } {
+                                logd_policy::QUARANTINED_NOTICE.as_bytes()
+                            } else {
+                                logd_policy::UNCONFIRMED_NOTICE.as_bytes()
+                            },
+                        );
+                        return Err("logd reap unconfirmed");
+                    }
+                    service_record(
+                        console,
+                        unsafe { LOGD_PID },
+                        3,
+                        3,
+                        b"shutdown drain timed out; collector killed",
+                    );
+                    break;
+                }
+            }
+        }
+    }
+    logd_release_streams(console);
+    for h in unsafe { [LOGD_CHANNEL.0, LOGD_CHANNEL.1, LOGD_CELL] } {
+        if h != 0 {
+            let _ = close(h);
+        }
+    }
+    unsafe {
+        LOGD_CHILD = 0;
+        LOGD_PID = 0;
+        LOGD_CHANNEL = (0, 0);
+        LOGD_CELL = 0;
+    }
+    Ok(())
+}
+
+static mut FSD_LOG_READERS: [u64; 2] = [0; 2];
+static mut FSD_SERIAL_FAILED: bool = false;
+fn drain_fsd_logs(console: Console) -> bool {
+    // One transfer per stream per supervision pass prevents a flood from
+    // monopolizing init. Service output never waits for filesystem writes.
+    let mut idle = true;
+    for (stream, handle) in unsafe { FSD_LOG_READERS }.into_iter().enumerate() {
+        if handle == 0 {
+            continue;
+        }
+        let mut bytes = [0u8; 256];
+        match Pipe::from_raw(handle).read_timeout(&mut bytes, 1) {
+            Ok(0) => {
+                let _ = close(handle);
+                if console_lines::finish(console, console_lines::FSD_STDOUT + stream).is_err() {
+                    unsafe { FSD_SERIAL_FAILED = true };
+                }
+                unsafe { FSD_LOG_READERS[stream] = 0 };
+            }
+            Ok(count) => {
+                idle = false;
+                service_record(
+                    console,
+                    unsafe { FSD_SERVER_PID },
+                    2,
+                    stream as u64 + 1,
+                    &bytes[..count],
+                );
+                // Preserve anchored startup records without interleaving
+                // other output into a partial FSD line. Runtime bytes remain
+                // in the service journal after local presentation begins.
+                if !local_console::startup_capture_closed() {
+                    if console_lines::forward(
+                        console,
+                        console_lines::FSD_STDOUT + stream,
+                        &bytes[..count],
+                    )
+                    .is_err()
+                    {
+                        unsafe { FSD_SERIAL_FAILED = true };
+                    }
+                }
+            }
+            Err(Error::Timeout) => {}
+            Err(_) => {
+                let _ = close(handle);
+                if console_lines::finish(console, console_lines::FSD_STDOUT + stream).is_err() {
+                    unsafe { FSD_SERIAL_FAILED = true };
+                }
+                unsafe { FSD_LOG_READERS[stream] = 0 };
+            }
+        }
+    }
+    idle && unsafe { !FSD_SERIAL_FAILED }
+        && console_lines::source_boundary(console_lines::FSD_STDOUT)
+        && console_lines::source_boundary(console_lines::FSD_STDERR)
+}
+fn finish_fsd_logs(console: Console) {
+    // Pipe capacity is finite; sixteen transfers exceed both pipe buffers.
+    for _ in 0..16 {
+        drain_fsd_logs(console);
+    }
+    for (i, handle) in unsafe { FSD_LOG_READERS }.into_iter().enumerate() {
+        if handle != 0 {
+            let _ = close(handle);
+        }
+        if console_lines::finish(console, console_lines::FSD_STDOUT + i).is_err() {
+            unsafe { FSD_SERIAL_FAILED = true };
+        }
+        unsafe { FSD_LOG_READERS[i] = 0 };
+    }
+}
+
 fn outcome_status(outcome: Outcome) -> i64 {
     match outcome {
         Outcome::Exited(status) => status as i64,
@@ -1272,16 +2116,22 @@ fn outcome_status(outcome: Outcome) -> i64 {
 fn spawn_file_server(
     console: Console,
     block: u64,
-    server: &[(u64, u64); FSD_CHANNELS],
+    server: &[(u64, u64); FSD_TOTAL_CHANNELS],
     fixture: FsdFixture,
 ) -> Result<(Child, u64), &'static str> {
     use absd_user::broker::{
-        ROLE_BLOCK, ROLE_FS_REPLY, ROLE_FS_REQUEST, ROLE_LIVENESS, startup_record,
+        ROLE_BLOCK, ROLE_FS_REPLY, ROLE_FS_REQUEST, ROLE_LIVENESS, ROLE_STDERR, ROLE_STDOUT,
+        startup_record,
     };
+    // Refuse poisoned publication before allocating pipes or spawning a child.
+    console_lines::start(console, console_lines::FSD_STDOUT)?;
+    console_lines::start(console, console_lines::FSD_STDERR)?;
     let (startup_reader, startup_writer) = split_pipe()?;
     let startup_writer = Pipe::from_raw(startup_writer);
-    let mut copies = [SpawnHandleCopy::new(0, 0); 4 + 2 * FSD_CHANNELS];
-    let mut roles = [(0u8, 0u8); 2 + 2 * FSD_CHANNELS];
+    let (stdout_reader, stdout_writer) = split_pipe()?;
+    let (stderr_reader, stderr_writer) = split_pipe()?;
+    let mut copies = [SpawnHandleCopy::new(0, 0); 7 + 2 * FSD_TOTAL_CHANNELS];
+    let mut roles = [(0u8, 0u8); 5 + 2 * FSD_TOTAL_CHANNELS];
     copies[0] = SpawnHandleCopy::new(startup_reader, RIGHT_READ);
     copies[1] = SpawnHandleCopy::new(block, RIGHT_READ | RIGHT_WRITE);
     roles[0] = (ROLE_BLOCK, 1);
@@ -1303,6 +2153,20 @@ fn spawn_file_server(
         count += 1;
         role_count += 1;
     }
+    for (handle, role) in [(stdout_writer, ROLE_STDOUT), (stderr_writer, ROLE_STDERR)] {
+        copies[count] = SpawnHandleCopy::new(handle, RIGHT_WRITE);
+        roles[role_count] = (role, count as u8);
+        count += 1;
+        role_count += 1;
+    }
+    // Normal FSD with a private logger has no local ring reader. Without
+    // that logger its existing local Collector still consumes the ring.
+    if !LOGD_PRESENT {
+        copies[count] = SpawnHandleCopy::new(unsafe { SERVICE_DIAGNOSTICS }, RIGHT_READ);
+        roles[role_count] = (absd_user::broker::ROLE_DIAGNOSTICS, count as u8);
+        count += 1;
+        role_count += 1;
+    }
     copies[count] = SpawnHandleCopy::console(console.raw(), RIGHT_WRITE);
     count += 1;
     let selected = program::FILE_SERVER | absd_abi::syscall::SPAWN_NO_SPAWN;
@@ -1319,6 +2183,16 @@ fn spawn_file_server(
     };
     close(startup_reader).map_err(|_| "fsd startup reader close")?;
     let child = spawned.map_err(|_| "file server spawn")?;
+    close(stdout_writer).map_err(|_| "fsd stdout writer close")?;
+    close(stderr_writer).map_err(|_| "fsd stderr writer close")?;
+    unsafe { FSD_LOG_READERS = [stdout_reader, stderr_reader] };
+    service_record(
+        console,
+        info(Some(child)).map_err(|_| "fsd log identity")?.pid,
+        2,
+        3,
+        b"started",
+    );
     let mut record = [0u8; 256];
     // The record, not the ELF's build-time argv, controls a kernel-started
     // file server. Only the named local VM modes pass a failure flag.
@@ -1330,15 +2204,31 @@ fn spawn_file_server(
         FsdFixture::ExitOnNotice => EXIT_FLAG,
         FsdFixture::HangOnNotice => HANG_FLAG,
     };
-    let mut encoded = [0u8; 4 + EXIT_FLAG.len()];
-    let args = if flag.is_empty() {
-        &[0, 0][..]
+    // No current backend establishes an end-to-end fence. This argument
+    // reports none; every fsd boot applies the durable guard regardless.
+    let fence: &[u8] = if served() {
+        b"--storage-fence=none"
     } else {
-        encoded[..2].copy_from_slice(&1u16.to_le_bytes());
-        encoded[2..4].copy_from_slice(&(flag.len() as u16).to_le_bytes());
-        encoded[4..4 + flag.len()].copy_from_slice(flag);
-        &encoded[..4 + flag.len()]
+        b""
     };
+    let mut encoded = [0u8; 128];
+    let mut length = 2;
+    let mut argc = 0u16;
+    let mut logger = LineBuffer::new();
+    if LOGD_PRESENT {
+        let _ = write!(logger, "--logger-channel={FSD_CHANNELS}");
+    }
+    for arg in [flag, fence, logger.as_bytes()] {
+        if arg.is_empty() {
+            continue;
+        }
+        encoded[length..length + 2].copy_from_slice(&(arg.len() as u16).to_le_bytes());
+        encoded[length + 2..length + 2 + arg.len()].copy_from_slice(arg);
+        length += 2 + arg.len();
+        argc += 1;
+    }
+    encoded[..2].copy_from_slice(&argc.to_le_bytes());
+    let args = &encoded[..length];
     let length =
         startup_record(&mut record, &roles[..role_count], args).ok_or("fsd startup record")?;
     startup_writer
@@ -1524,6 +2414,46 @@ enum Party {
     Reader,
 }
 
+fn external_outcome_line(
+    console: Console,
+    party: Party,
+    child_pid: u64,
+    outcome: Outcome,
+) -> Result<(), &'static str> {
+    let status = match outcome {
+        Outcome::Exited(status) => status as i64,
+        Outcome::Faulted { vector, .. } => -(vector as i64) - 1000,
+        Outcome::Killed => -1,
+    };
+    match party {
+        Party::Plain => {
+            let mut line = LineBuffer::new();
+            let _ = writeln!(
+                line,
+                "EXTERNAL WORKLOAD OUTCOME pid={child_pid} status={status}"
+            );
+            external_line(console, &line)?;
+        }
+        Party::Worker(generation) => {
+            let mut line = LineBuffer::new();
+            let _ = writeln!(
+                line,
+                "DURABLE WORKER OUTCOME generation={generation} pid={child_pid} status={status}"
+            );
+            external_line(console, &line)?;
+        }
+        Party::Reader => {
+            let mut line = LineBuffer::new();
+            let _ = writeln!(
+                line,
+                "DURABLE READER OUTCOME pid={child_pid} status={status}"
+            );
+            external_line(console, &line)?;
+        }
+    }
+    Ok(())
+}
+
 /// Runs one workload child to completion, feeding it `input`, and returns
 /// its outcome.
 fn run_external_with(
@@ -1534,6 +2464,13 @@ fn run_external_with(
     input_bytes: &[u8],
     party: Party,
 ) -> Result<Outcome, &'static str> {
+    if served()
+        && local_console::enabled()
+        && matches!(party, Party::Worker(_))
+        && (live || !input_bytes.is_empty())
+    {
+        return Err("local console requires exclusive live physical input and empty fixture input");
+    }
     let input = Pipe::create().map_err(|_| "external input pipe")?;
     let input_reader = duplicate(input.raw(), RIGHT_READ).map_err(|_| "external input reader")?;
     let input_writer =
@@ -1558,8 +2495,29 @@ fn run_external_with(
     let recorded = brokered
         || (matches!(party, Party::Worker(_))
             && (worker_nic() != 0 || fsd_boot() || selected == program::EXTERNAL_WORKLOAD));
+    let mut terminal = if served() && local_console::enabled() && matches!(party, Party::Worker(_))
+    {
+        Some(local_console::Terminal::new()?)
+    } else {
+        None
+    };
+    let local_writer = terminal.as_ref().map_or(0, |terminal| terminal.writer());
+    let (stderr_reader, stderr_writer) = if recorded && fsd_boot() {
+        split_pipe()?
+    } else {
+        (0, output_writer)
+    };
+    let mut stderr_guard = CapturedStderr(stderr_reader);
     let child = if recorded {
-        spawn_worker_brokered(console, selected, input_reader, extra, output_writer)?
+        spawn_worker_brokered(
+            console,
+            selected,
+            input_reader,
+            extra,
+            output_writer,
+            stderr_writer,
+            local_writer,
+        )?
     } else {
         let mut copies = [SpawnHandleCopy::new(0, 0); 4];
         copies[0] = SpawnHandleCopy::new(input_reader, RIGHT_READ);
@@ -1568,17 +2526,30 @@ fn run_external_with(
         spawn_many_copy(selected, &copies[..2 + extra.len()])
             .map_err(|_| "external workload spawn")?
     };
+    if let Some(terminal) = terminal.as_mut() {
+        terminal.spawned();
+    }
     if served() && matches!(party, Party::Worker(_)) {
         unsafe { SERVED_WORKER_HANDLE = child.raw() };
     }
     close(input_reader).map_err(|_| "external parent input reader")?;
     close(output_writer).map_err(|_| "external parent output writer")?;
+    if stderr_writer != 0 && stderr_writer != output_writer {
+        close(stderr_writer).map_err(|_| "external stderr writer close")?;
+    }
     let child_pid = info(Some(child))
         .map_err(|_| "external child identity")?
         .pid;
+    if fsd_boot() {
+        service_record(console, child_pid, 1, 3, b"started");
+    }
+    if LOGD_PRESENT && fsd_boot() && matches!(party, Party::Worker(_)) {
+        // This function has not read worker stdout/stderr yet. A logger refusal
+        // is terminal only for logd; boot and the worker continue normally.
+        logd_bootstrap(console);
+    }
     if matches!(party, Party::Plain | Party::Worker(1))
-        && console.write_once(b"EXTERNAL OUTPUT BEGIN encoding=hex\n")
-            != Ok(b"EXTERNAL OUTPUT BEGIN encoding=hex\n".len())
+        && console_lines::frame(console, b"EXTERNAL OUTPUT BEGIN encoding=hex\n").is_err()
     {
         external_abort(child, input_writer, true, output_reader);
         return Err("external output begin");
@@ -1620,23 +2591,114 @@ fn run_external_with(
     let mut reaped_worker: Option<Outcome> = None;
     let mut worker_end_tick: Option<u64> = None;
     let mut input_offset = 0usize;
-    let mut output_offset = unsafe { EXTERNAL_OUTPUT_OFFSET };
-    let mut digest = unsafe { EXTERNAL_OUTPUT_DIGEST };
+    let mut worker_output =
+        worker_console::Output::new(console, unsafe { EXTERNAL_OUTPUT_OFFSET }, unsafe {
+            EXTERNAL_OUTPUT_DIGEST
+        });
     let mut writer_open = true;
     let mut output_eof = false;
+    let mut input_error = None;
+    let mut input_closed_tick: Option<u64> = None;
     if live {
         match receive_live_input(console, input_writer, deadline) {
             Ok(received) => {
                 input_offset = received;
                 writer_open = false;
             }
-            Err(error) => {
+            Err(LiveInputError::ReaderClosed) => {
+                if close(input_writer.raw()).is_err() {
+                    external_abort(child, input_writer, false, output_reader);
+                    return Err("external live input close");
+                }
+                writer_open = false;
+                input_error = Some("external live pipe write");
+                input_closed_tick = Some(time());
+            }
+            Err(LiveInputError::Failed(error)) => {
                 external_abort(child, input_writer, true, output_reader);
                 return Err(error);
             }
         }
     }
-    while !output_eof {
+    let mut stderr_open = stderr_reader != 0;
+    while !output_eof || stderr_open {
+        // Readiness observed in the preceding pass must be followed by an
+        // actual drain of FSD's already-published startup records.
+        let fsd_idle = drain_fsd_logs(console);
+        if let Some(terminal) = terminal.as_mut()
+            && external_worker_startup(
+                console,
+                terminal,
+                &mut worker_output,
+                input_writer,
+                fsd_idle,
+            )
+            .is_err()
+        {
+            external_abort(child, input_writer, writer_open, output_reader);
+            return Err("external startup publication");
+        }
+        if LOGD_PRESENT && fsd_boot() {
+            logd_step(console);
+        }
+        if stderr_open {
+            let mut bytes = [0u8; 256];
+            match Pipe::from_raw(stderr_reader).read_timeout(&mut bytes, 1) {
+                Ok(0) => {
+                    if worker_output.finish_stream(1).is_err() {
+                        external_abort(child, input_writer, writer_open, output_reader);
+                        return Err("external stderr frame");
+                    }
+                    stderr_guard.close();
+                    stderr_open = false;
+                }
+                Ok(n) => {
+                    if fsd_boot() {
+                        service_record(console, child_pid, 1, 2, &bytes[..n]);
+                    }
+                    // Preserve serial framing and readiness observation for
+                    // sshd's existing stderr diagnostics.
+                    if external_worker_chunk(
+                        console,
+                        terminal.as_mut(),
+                        &mut worker_output,
+                        1,
+                        &bytes[..n],
+                    )
+                    .is_err()
+                    {
+                        external_abort(child, input_writer, writer_open, output_reader);
+                        return Err("external stderr frame");
+                    }
+                    if served() {
+                        observe_served_ready(&bytes[..n]);
+                    }
+                }
+                Err(Error::Timeout) => {}
+                Err(_) => {
+                    if worker_output.read_error_stream(1).is_err() {
+                        external_abort(child, input_writer, writer_open, output_reader);
+                        return Err("external stderr frame");
+                    }
+                    stderr_guard.close();
+                    stderr_open = false;
+                }
+            }
+        }
+        // A closed input reader does not close its independent output pipe.
+        // Retain the worker while draining it. Served workers have no general
+        // deadline, so reuse their existing failed-output bound for this case.
+        if served()
+            && input_closed_tick.is_some_and(|closed| {
+                time() >= closed.saturating_add(SERVED_POST_WORKER_OUTPUT_TICKS)
+            })
+        {
+            let ended = external_abort_outcome(child, input_writer, writer_open, output_reader);
+            if let Some(outcome) = reaped_worker.or(ended) {
+                external_outcome_line(console, party, child_pid, outcome)?;
+            }
+            return Err("served worker output held after input closure");
+        }
         if served()
             && worker_end_tick.is_some_and(|ended| {
                 time() >= ended.saturating_add(SERVED_POST_WORKER_OUTPUT_TICKS)
@@ -1649,7 +2711,12 @@ fn run_external_with(
             broker::service(console);
         }
         if time() >= deadline {
-            external_abort(child, input_writer, writer_open, output_reader);
+            let ended = external_abort_outcome(child, input_writer, writer_open, output_reader);
+            if input_error.is_some()
+                && let Some(outcome) = reaped_worker.or(ended)
+            {
+                external_outcome_line(console, party, child_pid, outcome)?;
+            }
             return Err("external workload deadline");
         }
         if reaps_orphans && reaped_worker.is_none() && time() >= next_orphan_reap {
@@ -1679,7 +2746,7 @@ fn run_external_with(
                 return Err(error);
             }
         }
-        if !live && input_offset < input_bytes.len() {
+        if !live && writer_open && input_offset < input_bytes.len() {
             let end = (input_offset + 256).min(input_bytes.len());
             match input_writer.write_timeout(&input_bytes[input_offset..end], 2) {
                 Ok(0) => {
@@ -1688,12 +2755,21 @@ fn run_external_with(
                 }
                 Ok(written) => input_offset += written,
                 Err(Error::Timeout) => {}
+                Err(Error::BrokenPipe) => {
+                    if close(input_writer.raw()).is_err() {
+                        external_abort(child, input_writer, false, output_reader);
+                        return Err("external input eof");
+                    }
+                    writer_open = false;
+                    input_error = Some("external input write");
+                    input_closed_tick = Some(time());
+                }
                 Err(_) => {
                     external_abort(child, input_writer, writer_open, output_reader);
                     return Err("external input write");
                 }
             }
-        } else if !live && writer_open {
+        } else if !live && writer_open && terminal.is_none() {
             if close(input_writer.raw()).is_err() {
                 external_abort(child, input_writer, false, output_reader);
                 return Err("external input eof");
@@ -1703,19 +2779,32 @@ fn run_external_with(
 
         let mut output = [0u8; 96];
         match output_reader.read_timeout(&mut output, 2) {
-            Ok(0) => output_eof = true,
-            Ok(count) => {
-                if external_chunk(console, output_offset, &output[..count]).is_err() {
+            Ok(0) => {
+                if worker_output.finish_stream(0).is_err() {
                     external_abort(child, input_writer, writer_open, output_reader);
                     return Err("external output frame");
                 }
-                if served() {
+                output_eof = true;
+            }
+            Ok(count) => {
+                if fsd_boot() {
+                    service_record(console, child_pid, 1, 1, &output[..count]);
+                }
+                if external_worker_chunk(
+                    console,
+                    terminal.as_mut(),
+                    &mut worker_output,
+                    0,
+                    &output[..count],
+                )
+                .is_err()
+                {
+                    external_abort(child, input_writer, writer_open, output_reader);
+                    return Err("external output frame");
+                }
+                if served() && input_error.is_none() {
                     observe_served_ready(&output[..count]);
                 }
-                for byte in &output[..count] {
-                    digest = (digest ^ *byte as u32).wrapping_mul(0x0100_0193);
-                }
-                output_offset += count;
             }
             Err(Error::Timeout) => {}
             Err(_) => {
@@ -1724,9 +2813,31 @@ fn run_external_with(
             }
         }
     }
-    if writer_open || (!live && input_offset != input_bytes.len()) {
-        external_abort(child, input_writer, writer_open, output_reader);
-        return Err("external input incomplete");
+    if (writer_open && terminal.is_none()) || (!live && input_offset != input_bytes.len()) {
+        input_error.get_or_insert("external input incomplete");
+    }
+    if writer_open && terminal.is_none() && reaped_worker.is_none() {
+        // Output EOF with incomplete input still refuses the stream. End the
+        // worker before closing this writer: otherwise EOF could make a
+        // refused enrollment stream look complete to a live reader.
+        let _ = kill(child);
+        match wait_timeout(Some(child), 500) {
+            Ok(outcome) => {
+                if served() {
+                    unsafe { SERVED_WORKER_HANDLE = 0 };
+                    note_served_worker(outcome);
+                }
+                reaped_worker = Some(outcome);
+            }
+            Err(_) => {
+                external_abort(child, input_writer, true, output_reader);
+                return Err("external workload outcome");
+            }
+        }
+    }
+    if writer_open && close(input_writer.raw()).is_err() {
+        external_abort(child, input_writer, false, output_reader);
+        return Err("external input eof");
     }
     let outcome = match reaped_worker {
         Some(outcome) => outcome,
@@ -1750,50 +2861,36 @@ fn run_external_with(
         broker::close_worker(console);
     }
     close(output_reader.raw()).map_err(|_| "external output close")?;
+    worker_output.finish()?;
+    let (output_offset, digest) = worker_output.position();
     unsafe {
         EXTERNAL_OUTPUT_OFFSET = output_offset;
         EXTERNAL_OUTPUT_DIGEST = digest;
     }
-    let status = match outcome {
-        Outcome::Exited(status) => status as i64,
-        Outcome::Faulted { vector, .. } => -(vector as i64) - 1000,
-        Outcome::Killed => -1,
-    };
-    match party {
-        Party::Plain => {}
-        Party::Worker(generation) => {
-            let mut line = LineBuffer::new();
-            let _ = writeln!(
-                line,
-                "DURABLE WORKER OUTCOME generation={generation} pid={child_pid} status={status}"
-            );
-            external_line(console, &line)?;
-        }
-        Party::Reader => {
-            let mut line = LineBuffer::new();
-            let _ = writeln!(
-                line,
-                "DURABLE READER OUTCOME pid={child_pid} status={status}"
-            );
-            external_line(console, &line)?;
-        }
+    if fsd_boot() {
+        let mut lifecycle = LineBuffer::new();
+        let _ = write!(lifecycle, "ended status={}", outcome_status(outcome));
+        service_record(console, child_pid, 1, 3, lifecycle.as_bytes());
     }
-    if outcome != Outcome::Exited(0) {
-        return Ok(outcome);
-    }
-    // One end record per captured stream: a durable reader continues the
-    // worker's stream and ends it.
-    if matches!(party, Party::Worker(_)) && EXTERNAL_READER_PRESENT {
+    external_outcome_line(console, party, child_pid, outcome)?;
+    // Preserve continuation: a nonzero worker can be replaced, or followed
+    // by a durable reader. Served recovery can also continue its stream.
+    // An ordinary input refusal returns Err, preventing those continuations.
+    if let Some(error) = input_error {
+        if served() {
+            return Err(error);
+        }
+    } else if outcome != Outcome::Exited(0)
+        || (matches!(party, Party::Worker(_)) && EXTERNAL_READER_PRESENT)
+    {
         return Ok(outcome);
     }
 
-    let mut end = LineBuffer::new();
-    let _ = writeln!(
-        end,
-        "EXTERNAL OUTPUT END bytes={output_offset} digest={digest:08x}"
-    );
-    external_line(console, &end)?;
-    Ok(outcome)
+    external_output_end(console, terminal.is_some(), output_offset, digest)?;
+    match input_error {
+        Some(error) => Err(error),
+        None => Ok(outcome),
+    }
 }
 
 /// The NIC handle a `net` durable boot's worker receives; zero otherwise.
@@ -1811,18 +2908,69 @@ fn reap_adopted_orphans(
     console: Console,
     worker_pid: u64,
 ) -> Result<Option<Outcome>, &'static str> {
+    if LOGD_PRESENT && unsafe { LOGD_CHILD } != 0 && unsafe { LOGD_PID } == 0 {
+        let already_quarantined = unsafe { (*core::ptr::addr_of!(LOGD_UNKNOWN_REAP)).quarantined };
+        let disposition = unsafe {
+            (*core::ptr::addr_of_mut!(LOGD_UNKNOWN_REAP)).poll(|| {
+                wait_timeout(Some(Child::from_raw(LOGD_CHILD)), 1)
+                    .map(|_| ())
+                    .map_err(Error::code)
+            })
+        };
+        match disposition {
+            logd_policy::Reap::Confirmed => {
+                service_record(console,getpid(),3,3,b"Retained logger child reaped by exact handle. PID unavailable; replacement remains stopped.");
+                unsafe {
+                    LOGD_CHILD = 0;
+                }
+            }
+            logd_policy::Reap::Pending => return Ok(None),
+            logd_policy::Reap::Quarantined if !already_quarantined => {
+                service_record(
+                    console,
+                    getpid(),
+                    3,
+                    3,
+                    logd_policy::QUARANTINED_NOTICE.as_bytes(),
+                );
+                unsafe {
+                    (*core::ptr::addr_of_mut!(LOGD_POLICY)).stop();
+                }
+            }
+            logd_policy::Reap::Quarantined => {}
+        }
+    }
     let mut server_ended = false;
     loop {
         match wait_any_timeout(1) {
+            Ok(result) if LOGD_PRESENT && result.pid == unsafe { LOGD_PID } => {
+                logd_release_streams(console);
+                // Successful wait_any closed this exact known Child identity.
+                unsafe {
+                    LOGD_CHILD = 0;
+                    LOGD_PID = 0;
+                }
+                logd_ended(console, result.pid, outcome_status(result.outcome));
+            }
             Ok(result) if result.pid == worker_pid => return Ok(Some(result.outcome)),
             Ok(result) if fsd_boot() && result.pid == unsafe { FSD_SERVER_PID } => {
                 unsafe { FSD_SERVER_OUTCOME = Some(outcome_status(result.outcome)) };
+                service_outcome(console, result.pid, 2, outcome_status(result.outcome));
                 unsafe { FSD_SERVER_HANDLE = 0 };
                 server_ended = true;
             }
             Ok(result) => {
                 let mut line = LineBuffer::new();
-                let _ = writeln!(line, "INIT ORPHAN REAPED pid={}", result.pid);
+                if unsafe { (*core::ptr::addr_of!(LOGD_UNKNOWN_REAP)).quarantined } {
+                    let _ = writeln!(
+                        line,
+                        "INIT UNCLASSIFIED ADOPTED pid={} outcome={} (may be unidentified logger; original custody remains unconfirmed)",
+                        result.pid,
+                        outcome_status(result.outcome)
+                    );
+                } else {
+                    let _ = writeln!(line, "INIT ORPHAN REAPED pid={}", result.pid);
+                }
                 external_line(console, &line)?;
             }
             Err(Error::Timeout) if server_ended => {
@@ -1859,10 +3007,12 @@ fn spawn_worker_brokered(
     input_reader: u64,
     extra: &[SpawnHandleCopy],
     output_writer: u64,
+    stderr_writer: u64,
+    local_writer: u64,
 ) -> Result<Child, &'static str> {
     use absd_user::broker::{
         ROLE_BLOCK, ROLE_FS_REPLY, ROLE_FS_REQUEST, ROLE_LIVENESS, ROLE_MACHINE, ROLE_NIC,
-        ROLE_STDIN, ROLE_STEP, startup_record,
+        ROLE_STDERR, ROLE_STDIN, ROLE_STDOUT, ROLE_STEP, startup_record,
     };
     // An `fsd` worker gets the step cell and channels, never the block.
     let fsd = fsd_boot();
@@ -1881,8 +3031,14 @@ fn spawn_worker_brokered(
         Pipe::from_raw(duplicate(startup.raw(), RIGHT_WRITE).map_err(|_| "broker startup writer")?);
     close(startup.raw()).map_err(|_| "broker startup split")?;
     const CAPACITY: usize = broker::CHANNEL_HANDLES + 2 * FSD_CHANNELS;
-    let mut copies = [SpawnHandleCopy::new(0, 0); 8 + CAPACITY];
-    let mut roles = [(0u8, 0u8); 6 + CAPACITY];
+    // One more slot only in the opt-in PCM build (its playback grant).
+    const PCM_SLOT: usize = if cfg!(feature = "native-pcm-experiment") {
+        1
+    } else {
+        0
+    };
+    let mut copies = [SpawnHandleCopy::new(0, 0); 13 + PCM_SLOT + CAPACITY];
+    let mut roles = [(0u8, 0u8); 11 + PCM_SLOT + CAPACITY];
     copies[0] = SpawnHandleCopy::new(startup_reader, RIGHT_READ);
     copies[1] = SpawnHandleCopy::new(input_reader, RIGHT_READ);
     roles[0] = (ROLE_STDIN, 1);
@@ -1947,6 +3103,75 @@ fn spawn_worker_brokered(
         count += 1;
         role_count += 1;
     }
+    if local_writer != 0 {
+        copies[count] = SpawnHandleCopy::new(local_writer, RIGHT_WRITE);
+        roles[role_count] = (absd_user::broker::ROLE_LOCAL_TERMINAL, count as u8);
+        count += 1;
+        role_count += 1;
+    }
+    // Private #96: headless worker, or separately opted-in experimental sshd.
+    // The ssh-demo image must pin the one-session delegation build of sshd.
+    let pcm_selected = cfg!(feature = "native-pcm-experiment")
+        && match option_env!("ABSD_PCM_PLAYBACK") {
+            Some("1") => !served(),
+            Some("ssh-demo") => served(),
+            _ => false,
+        };
+    let playback = if pcm_selected && selected == program::EXTERNAL_WORKLOAD {
+        let raw = unsafe { absd_user::syscall3(0x7fe0, 0, 0, 0) };
+        if raw >= 0 { raw as u64 } else { 0 }
+    } else {
+        0
+    };
+    if playback != 0 {
+        copies[count] = SpawnHandleCopy::new(playback, RIGHT_READ | RIGHT_WRITE);
+        roles[role_count] = (0xf0, count as u8);
+        count += 1;
+        role_count += 1;
+    }
+    // Read-only observations are ordinary operator functionality. Mint only
+    // for the served worker, then discard init's temporary handle after the
+    // spawn attempt; each worker generation receives its own explicit copy.
+    let diagnostics = if fsd && served() {
+        absd_user::kernel_log::mint_diagnostics(console.raw())
+            .map_err(|_| "served diagnostics mint")?
+    } else {
+        0
+    };
+    if diagnostics != 0 {
+        copies[count] = SpawnHandleCopy::new(diagnostics, RIGHT_READ);
+        roles[role_count] = (absd_user::broker::ROLE_DIAGNOSTICS, count as u8);
+        count += 1;
+        role_count += 1;
+    }
+    // Only this served external worker owns software civil-clock updates.
+    // Init drops the temporary mint after the spawn attempt; session children
+    // never receive this role through the runtime's ordinary inheritance.
+    let clock_owner = if served() && fsd && selected == program::EXTERNAL_WORKLOAD {
+        match absd_user::civil_clock::mint(console.raw()) {
+            Ok(handle) => handle,
+            Err(_) => {
+                if diagnostics != 0 {
+                    let _ = close(diagnostics);
+                }
+                return Err("served clock-owner mint");
+            }
+        }
+    } else {
+        0
+    };
+    if clock_owner != 0 {
+        copies[count] = SpawnHandleCopy::new(clock_owner, RIGHT_WRITE);
+        roles[role_count] = (absd_user::broker::ROLE_CLOCK_OWNER, count as u8);
+        count += 1;
+        role_count += 1;
+    }
+    for (handle, role) in [(output_writer, ROLE_STDOUT), (stderr_writer, ROLE_STDERR)] {
+        copies[count] = SpawnHandleCopy::new(handle, RIGHT_WRITE);
+        roles[role_count] = (role, count as u8);
+        count += 1;
+        role_count += 1;
+    }
     copies[count] = SpawnHandleCopy::console(output_writer, RIGHT_WRITE);
     count += 1;
     // Only broker mode withholds the spawn right (docs/BROKER.md). A NIC
@@ -1969,6 +3194,15 @@ fn spawn_worker_brokered(
     } else {
         spawn_many_copy(selected | flags, &copies[..count])
     };
+    if clock_owner != 0 {
+        close(clock_owner).map_err(|_| "served clock-owner parent close")?;
+    }
+    if diagnostics != 0 {
+        close(diagnostics).map_err(|_| "served diagnostics parent close")?;
+    }
+    if playback != 0 {
+        close(playback).map_err(|_| "experimental PCM parent close")?;
+    }
     close(startup_reader).map_err(|_| "broker startup reader close")?;
     channel.close();
     if fsd {
@@ -3162,19 +4396,21 @@ fn verify_multi_handle_spawn(console: Console) -> Result<(), &'static str> {
         return Err("multi first transition");
     }
 
-    // Sixty-four ordinary destinations plus the child's default console
-    // exceed its 64-slot table. Insertion gets most of the way through,
-    // then must roll back every child handle, object reference, frame, slot,
-    // and PID before returning this failure.
-    let exhaust = [SpawnHandleCopy::new(cell.raw(), RIGHT_READ); MAX_SPAWN_HANDLES];
-    match spawn_many_copy(program::MULTI_HANDLE, &exhaust) {
-        Err(Error::TooManyHandles) => {}
-        _ => return Err("multi destination capacity"),
+    // The wire vector stays at 64 while destination occupancy is 128. A full
+    // legal copy vector now fits alongside the child's default Console.
+    let maximum = [SpawnHandleCopy::new(cell.raw(), RIGHT_READ); MAX_SPAWN_HANDLES];
+    // A full destination vector does not change a catalog program's entry ABI.
+    match spawn_many_copy(program::EXIT7, &maximum) {
+        Err(Error::Invalid) => {}
+        _ => return Err("multi legacy vector entry"),
     }
+    let capacity =
+        spawn_many_copy(program::MULTI_HANDLE, &maximum).map_err(|_| "multi full transfer")?;
+    expect_exit(capacity, 0, "multi full transfer outcome")?;
     let second =
         spawn_many_copy(program::MULTI_HANDLE, &good).map_err(|_| "spawn multi after rollback")?;
-    if info(Some(second)).map_err(|_| "info multi second")?.pid != first_pid + 1 {
-        return Err("multi rollback consumed pid");
+    if info(Some(second)).map_err(|_| "info multi second")?.pid != first_pid + 2 {
+        return Err("multi failed request consumed pid");
     }
     expect_exit(second, 0, "multi second outcome")?;
     if cell.read() != Ok((2, 43)) {
@@ -3627,7 +4863,7 @@ fn verify_adoption_handle_pressure() -> Result<(), &'static str> {
         .pid;
     yield_now();
 
-    let mut held = [0u64; MAX_SPAWN_HANDLES];
+    let mut held = [0u64; absd_abi::syscall::MAX_PROCESS_HANDLES];
     let mut count = 0;
     loop {
         match duplicate(control.raw(), RIGHT_READ) {
@@ -3644,7 +4880,9 @@ fn verify_adoption_handle_pressure() -> Result<(), &'static str> {
     }
     // Console, the machine handle, control, and the orphaner's process
     // handle occupy four slots.
-    if count != MAX_SPAWN_HANDLES - 4 || Cell::create(1) != Err(Error::TooManyHandles) {
+    if count != absd_abi::syscall::MAX_PROCESS_HANDLES - 4
+        || Cell::create(1) != Err(Error::TooManyHandles)
+    {
         return Err("adoption pressure initial boundary");
     }
 
@@ -4731,12 +5969,11 @@ fn expect_supervised_exit(child: Child) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Fills init's own handle table without creating distinct objects. The ABI's
-/// spawn-transfer bound deliberately equals one complete handle table, so it
-/// is also the userspace-visible bound for this pressure test.
+/// Fills init's own handle table without creating distinct objects. Process
+/// occupancy is separate from the unchanged 64-entry spawn-transfer vector.
 fn verify_handle_capacity(console: Console) -> Result<(), &'static str> {
     let anchor = Cell::create(0x4841_4e44_4c45).map_err(|_| "handle capacity anchor")?;
-    let mut held = [0u64; MAX_SPAWN_HANDLES];
+    let mut held = [0u64; absd_abi::syscall::MAX_PROCESS_HANDLES];
     let mut count = 0;
     loop {
         match duplicate(anchor.raw(), RIGHT_READ) {
@@ -4754,7 +5991,9 @@ fn verify_handle_capacity(console: Console) -> Result<(), &'static str> {
     // Console, the machine handle, and the anchor occupy three slots; every
     // remaining slot must have received one duplicate, with no existing
     // entry overwritten.
-    if count != MAX_SPAWN_HANDLES - 3 || anchor.read() != Ok((0, 0x4841_4e44_4c45)) {
+    if count != absd_abi::syscall::MAX_PROCESS_HANDLES - 3
+        || anchor.read() != Ok((0, 0x4841_4e44_4c45))
+    {
         return Err("handle capacity size");
     }
     for &handle in &held[..count] {
@@ -4803,7 +6042,7 @@ fn verify_handle_capacity(console: Console) -> Result<(), &'static str> {
 /// slot immediately reusable. No kernel-private capacity is copied here.
 fn verify_object_capacity(console: Console) -> Result<(), &'static str> {
     for cycle in 0..OBJECT_CAPACITY_CYCLES as u64 {
-        let mut held = [Cell::from_raw(0); MAX_SPAWN_HANDLES];
+        let mut held = [Cell::from_raw(0); absd_abi::syscall::MAX_PROCESS_HANDLES];
         let mut count = 0;
         loop {
             match Cell::create(cycle) {
@@ -4837,21 +6076,21 @@ fn verify_object_capacity(console: Console) -> Result<(), &'static str> {
     }
 
     for _ in 0..OBJECT_CAPACITY_CYCLES {
-        let mut held = [Pipe::from_raw(0); MAX_SPAWN_HANDLES];
+        let mut held = [Pipe::from_raw(0); absd_abi::syscall::MAX_PROCESS_HANDLES];
         let mut count = 0;
-        loop {
+        let exhausted = loop {
             match Pipe::create() {
                 Ok(pipe) => {
                     held[count] = pipe;
                     count += 1;
                 }
-                Err(Error::NoMemory) => break,
+                Err(error @ (Error::NoMemory | Error::TooManyHandles)) => break error,
                 Err(_) => return Err("pipe object capacity fill"),
             }
             if count == held.len() {
                 return Err("pipe object capacity unbounded");
             }
-        }
+        };
         if count == 0 {
             return Err("pipe object capacity zero");
         }
@@ -4866,7 +6105,7 @@ fn verify_object_capacity(console: Console) -> Result<(), &'static str> {
         {
             return Err("pipe object capacity replacement");
         }
-        if Pipe::create() != Err(Error::NoMemory) {
+        if Pipe::create() != Err(exhausted) {
             return Err("pipe object capacity refill boundary");
         }
         close(replacement.raw()).map_err(|_| "pipe object capacity close replacement")?;

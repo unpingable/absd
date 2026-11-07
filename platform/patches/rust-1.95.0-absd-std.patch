@@ -2288,9 +2288,9 @@ index 0000000..e964198
 --- /dev/null
 +++ b/library/std/src/sys/time/absd.rs
 @@ -0,0 +1,64 @@
-+//! ABSD: the kernel's PIT tick counter (about 1 kHz since boot) is the
-+//! monotonic clock. The wall clock is the kernel's CMOS RTC reading: whole
-+//! seconds since the Unix epoch, the RTC declared to hold UTC, uncorrected.
++//! ABSD: delivered PIT ticks form the monotonic clock. SystemTime uses
++//! boot-local software civil time. Without a usable civil value, only
++//! infallible SystemTime uses an epoch-plus-monotonic bootstrap coordinate.
 +
 +use crate::time::Duration;
 +
@@ -2330,12 +2330,12 @@ index 0000000..e964198
 +
 +    pub const MIN: SystemTime = SystemTime(Duration::ZERO);
 +
-+    /// The RTC's reading, to the second (sub-second part zero). A refused
-+    /// reading panics: no time is ever substituted.
++    /// Software civil seconds; an unavailable reading uses a bootstrap
++    /// epoch-plus-monotonic coordinate, rather than terminating the program.
 +    pub fn now() -> SystemTime {
 +        let seconds = unsafe { __absd_std_wall_clock_seconds() };
 +        if seconds < 0 {
-+            panic!("ABSD wall clock unavailable (kernel refused: {seconds})")
++            return SystemTime(Instant::now().0);
 +        }
 +        SystemTime(Duration::from_secs(seconds as u64))
 +    }

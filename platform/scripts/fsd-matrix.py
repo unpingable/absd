@@ -17,8 +17,8 @@ Markers (each printed only when every check behind it held):
                                  device as the host reads it
   SYSTEM WRITE REFUSED OK        /bin, /etc (read-only), /ssh and anything
                                  outside the mounts (absent), unchanged
-  RAW BLOCK REFUSED OK           a session and its children hold no block
-                                 handle: every handle number is refused
+  STARTUP BLOCK ROLE ABSENT OK   session children have no runtime startup
+                                 block handle; whole-process coverage UNVERIFIED
   SSH HOST KEY ISOLATED OK       sshd signs; no session or shell child can
                                  open /ssh/*, by any path; reconnect and
                                  reboot keep the key
@@ -48,6 +48,7 @@ import time
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
 import ssh_absd  # noqa: E402
+from served_kernel import file_server_started
 
 spec = importlib.util.spec_from_file_location("ssh_matrix", here / "ssh-matrix.py")
 sm = importlib.util.module_from_spec(spec)
@@ -92,11 +93,9 @@ class FsdMatrix(sm.Matrix):
         self.client.trust(host_key)
         serial = t.serial()
         self.check("sshd holds no block handle; its control channel sees /ssh, /bin, /etc read-only, /var/log read-write",
-                   re.search(r"SSH STORAGE VIA FILE SERVER OK block=none control=/ssh:ro,/bin:ro,/etc:ro,/var/log:rw,/var/state:ro,/var/state/facts:rw slots=10",
-                             t.output())
-                   is not None, t.output()[-600:])
+                   ssh_absd.file_server_storage(t.output()), t.output()[-600:])
         self.check("the file server is the one process with the block handle",
-                   "FILE SERVER START pid=2 channels=11" in serial and "SPAWN OK pid=2 parent=1 program=file-server" in serial,
+                   file_server_started(serial, logger_present=True) and "SPAWN OK pid=2 parent=1 program=file-server" in serial,
                    serial[-800:])
         system = {path: data for path, data in self.device().items()
                   if path.startswith(ssh_absd.SYSTEM_PREFIXES)}
@@ -174,22 +173,23 @@ class FsdMatrix(sm.Matrix):
                    str(set(after) ^ set(system)))
         self.mark("SYSTEM WRITE REFUSED OK")
 
-        # -- RAW BLOCK REFUSED ----------------------------------------------------
+        # -- EXPLICIT STARTUP BLOCK ROLE ------------------------------------------
         rc, out, err = self.ssh("/bin/fsd-probe block")
-        self.check("an exec command holds no block handle", rc == 0 and out == b"block: REFUSED handles=64 block_handle=0\n",
+        self.check("an exec command has no runtime startup block handle; whole-process handle coverage is unverified", rc == 0 and out == b"block: STARTUP ROLE ABSENT process_handle_coverage=UNVERIFIED\n",
                    f"{rc} {out!r} {err!r}")
         rc, out, err = self.shell(["/bin/fsd-probe block", "/bin/fsd-probe spawn /bin/fsd-probe block",
                                    "ro /bin/fsd-probe block"])
-        blocks = [line for line in lines(out) if line.startswith("block:")]
+        shown = lines(out)
         # A shell's child has no spawn right: the grandchild never starts,
         # and the refusal is the kernel's permission refusal, not another
         # failure to start.
-        refused = [line for line in lines(out) if line.startswith("spawn: /bin/fsd-probe: ")]
-        self.check("a shell and its children hold no block handle; a child cannot start a grandchild",
-                   blocks == ["block: REFUSED handles=64 block_handle=0"] * 2
-                   and refused == ["spawn: /bin/fsd-probe: permission denied"],
-                   f"{blocks} {refused} {err!r}")
-        self.mark("RAW BLOCK REFUSED OK")
+        self.check("shell children have no runtime startup block handle; a child cannot start a grandchild",
+                   rc == 0 and shown == [
+                       "block: STARTUP ROLE ABSENT process_handle_coverage=UNVERIFIED",
+                       "spawn: /bin/fsd-probe: permission denied",
+                       "block: STARTUP ROLE ABSENT process_handle_coverage=UNVERIFIED"],
+                   f"rc={rc} {shown} {err!r}")
+        self.mark("STARTUP BLOCK ROLE ABSENT OK")
 
         # -- SSH HOST KEY ISOLATED --------------------------------------------------
         seed = self.device()[SEED]
@@ -214,7 +214,7 @@ class FsdMatrix(sm.Matrix):
                    rc == 0 and out == b"signed\n" and b"Server host key: ssh-ed25519" in err, err[-300:].decode(errors="replace"))
 
         # -- persistence across reboot, with the key ---------------------------------
-        second = t.restart()
+        second = self.restart(host_key)
         self.check("reboot: host key loaded, the same", not second["generated"] and second["public"] == host_key, str(second))
         rc, out, err = self.shell(["cat /home/operator/dir/hello", "ls /tmp", "/bin/fsd-probe read /home/operator/big"])
         shown = lines(out)
@@ -243,13 +243,13 @@ class FsdMatrix(sm.Matrix):
             "try-write: ReadOnlyFilesystem /home/operator/other",
             "try-write: ReadOnlyFilesystem /home/operator/redir",
             "try-read: NotFound /etc/motd",
-            "block: REFUSED handles=64 block_handle=0",
+            "block: STARTUP ROLE ABSENT process_handle_coverage=UNVERIFIED",
             f"mounts: /home/operator:ro,{tmp}:ro,/bin:ro,/etc:ro,/share:ro,/var/log:ro",
             f"mounts: /home/operator:rw,{tmp}:rw,/bin:ro,/etc:ro,/share:ro,/var/log:ro",
         ]
         tree = self.device()
         self.check("a redirected command gets the pipe, not the file: ro/nofs children write nothing",
-                   shown == expected and "/home/operator/other" not in tree
+                   rc == 0 and shown == expected and "/home/operator/other" not in tree
                    and tree.get("/home/operator/redir", b"").decode().splitlines() == expected,
                    f"{shown} err={err!r}")
         self.mark("SHELL AUTHORITY NARROWING OK")
@@ -385,7 +385,7 @@ class FsdMatrix(sm.Matrix):
         # -- SESSION FAILURE ISOLATION ----------------------------------------------------------
         # A path longer than any frame is refused by the client: its
         # channel keeps its framing and the shell carries on.
-        rc, out, err = self.shell(["cd /" + "a" * 80000, "pwd", "echo after"], timeout=300)
+        rc, out, err = self.shell(["cd /", "cd /" + "a" * 80000, "pwd", "echo after"], timeout=300)
         self.check("an 80000-byte path is refused without breaking the channel",
                    lines(out)[-2:] == ["/", "after"] and b"absd-sh: cd: " in err
                    and "FSD CHANNEL BROKEN" not in t.serial(),

@@ -9,11 +9,16 @@ use absd_kernel::process::{AddressSpace, PageTableSlot};
 pub const PAGE_TABLE_ENTRIES: usize = 512;
 pub const ADDRESS_MASK: u64 = 0x0000_ffff_ffff_f000;
 const USER_PML4_INDEX: usize = ((USER_REGION_BASE >> 39) & 0x1ff) as usize;
+// This ARM64 mapper keeps one directory; the #115 builder envelope is x86-only.
+const _: () = assert!(absd_kernel::layout::USER_DIRECTORIES == 1);
 
 /// The global frame allocator is serialized by the big kernel lock once the
 /// kernel-only AP is admitted. The AP may touch it only in a bounded fixture
 /// while holding that lock; no driver or ordinary AP scheduler path does.
-static mut FRAMES: FrameAllocator = FrameAllocator::with_base(0x40000000);
+/// The one tracked physical window starts here on every ARM64 platform so
+/// far (QEMU virt's RAM base; inside the RK3568's first bank).
+pub const FRAME_BASE: u64 = 0x4000_0000;
+static mut FRAMES: FrameAllocator = FrameAllocator::with_base(FRAME_BASE);
 
 /// # Safety
 ///

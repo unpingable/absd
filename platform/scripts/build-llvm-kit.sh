@@ -42,6 +42,8 @@ max_load=${ABSD_LLVM_MAX_LOAD:-8}
 die() { echo "build-llvm-kit: $*" >&2; exit 1; }
 [ "$jobs" -le 4 ] 2>/dev/null || die "ABSD_LLVM_JOBS=$jobs: at most 4"
 [ -n "$out" ] && [ "$out" != / ] || die "ABSD_LLVM_BUILD is empty or /"
+# The shared kit must be this checkout's, built cleanly (scripts/c_kit_source.py).
+python3 -I "$root/scripts/c_kit_source.py" kit "$root" "$kit"
 version=$(grep -v '^#' "$root/cxx/PIN" | awk -F'\t' 'NF == 6 { print $2 }')
 staged=$up/llvm-project/src/llvm-project-$version.src
 src=$out/src

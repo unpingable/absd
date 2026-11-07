@@ -13,9 +13,21 @@ version = "0.1.0"
 edition = "2024"
 autobins = false
 
+[features]
+# Only the dedicated clone-construction file server enables this mode.
+regenerate-host-key = []
+# Private #96 experiment, off by default: sshd may pass its boot playback
+# grant to one direct `/bin/doomgeneric` child (runtime/src/playback_grant.rs).
+native-pcm-delegate = ["absd-runtime/native-pcm-delegate"]
+
 [[bin]]
 name = "sshd"
 path = "src/main.rs"
+
+# Stdio SFTP worker; no listener, spawn right or session control.
+[[bin]]
+name = "absd-sftp"
+path = "src/sftp_main.rs"
 
 # Session-side helper for the SSH matrix (/bin/sshtest on ABSD).
 [[bin]]
@@ -28,7 +40,7 @@ path = "src/sshtest.rs"
 name = "absd-fsd"
 path = "src/fsd_main.rs"
 
-# The worker of the dedicated enrollment image (slice A,
+# The worker of the dedicated enrollment image (coordination record #31 slice A,
 # ABSD only): writes /ssh/authorized_keys once and nothing else.
 [[bin]]
 name = "absd-enroll"

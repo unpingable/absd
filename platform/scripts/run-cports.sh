@@ -8,7 +8,7 @@
 # own log) are copied into docs/c-ecosystem-20261010/posix/receipts/ and the
 # summary line is printed from the markers.
 # Environment: ABSD_KERNEL_RUN (required; a disposable kernel clone, never
-# the protected kernel source); ABSD_SKIP_BUILD=1 reuses the adapter archive, the
+# archived-occurrence); ABSD_SKIP_BUILD=1 reuses the adapter archive, the
 # staged sources and the products; ABSD_CPORTS_ONLY=<prefix> is passed to the
 # matrix as --only (a partial run copies no receipt, nor does a run with
 # ABSD_SKIP_BUILD=1, whose build receipts would predate its matrix log); ABSD_CPORTS_PLATFORM
@@ -24,6 +24,7 @@
 # receipt's source= names exactly what ran. Any other run prints dirty=.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/inputs.sh"
 camp=$(dirname "$root")
 out=${ABSD_CPORTS_BUILD:-$camp/cports-build}
 up=${ABSD_CPORTS_UPSTREAM:-$camp/upstream}
@@ -33,10 +34,7 @@ boot_seconds=${ABSD_CPORTS_BOOT_SECONDS:-3600}
     { echo "run-cports: ABSD_CPORTS_BOOT_SECONDS must be a positive integer" >&2; exit 1; }
 kernel=${ABSD_KERNEL_RUN:?set ABSD_KERNEL_RUN to a disposable kernel clone}
 [ -d "$kernel" ] || { echo "run-cports: ABSD_KERNEL_RUN $kernel is not a directory" >&2; exit 1; }
-forbidden=/data/git/absd-kernel
-[ -d "$forbidden" ] && forbidden=$(CDPATH= cd -- "$forbidden" && pwd -P)
-[ "$(CDPATH= cd -- "$kernel" && pwd -P)" != "$forbidden" ] ||
-    { echo "run-cports: ABSD_KERNEL_RUN must not be /data/git/absd-kernel" >&2; exit 1; }
+absd_not_kernel_source "$kernel"
 platform=${ABSD_CPORTS_PLATFORM:-$camp/c-kit}
 
 # The whole pipeline's output is also written to $out/run-cports.log: the
@@ -61,6 +59,9 @@ if [ -z "${ABSD_RUN_CPORTS_CHILD:-}" ]; then
 fi
 
 echo "RUN-CPORTS start $(date -u +%Y-%m-%dT%H:%M:%SZ) source=$(git -C "$root" rev-parse HEAD) dirty=$([ -n "$(git -C "$root" status --porcelain)" ] && echo yes || echo no) niceness=$(nice) load=$(cut -d' ' -f1 /proc/loadavg) kernel=$(git -C "$kernel" rev-parse HEAD 2>/dev/null || echo unknown) skip_build=${ABSD_SKIP_BUILD:-0}"
+# Also under ABSD_SKIP_BUILD=1: the kit the matrix's products came from must
+# still be this checkout's (scripts/c_kit_source.py).
+python3 -I "$root/scripts/c_kit_source.py" kit "$root" "${ABSD_CKIT_BUILD:-$camp/ckit-build}/kit"
 host=$(sh "$root/scripts/check-posix-host.sh")
 echo "$host"
 host_tests=$(printf '%s\n' "$host" | sed -n 's/^ABSD POSIX HOST TESTS OK tests=\([0-9]*\)$/\1/p')

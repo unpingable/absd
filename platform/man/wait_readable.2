@@ -1,0 +1,78 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd November 6, 2026
+.Dt WAIT_READABLE 2
+.Os ABSD
+.Sh NAME
+.Nm wait_readable
+.Nd wait for readable Pipe or Console handles
+.Sh SYNOPSIS
+.In absd/syscall.h
+.Ft int64_t
+.Fn absd_wait_readable "const uint64_t *handles" "uint64_t count" "uint64_t ticks"
+.Sh DESCRIPTION
+The kernel copies one through eleven full handle values from readable user
+memory and returns a positional readiness mask.
+Bit zero corresponds to the first handle; duplicate handles have separate bits.
+Every member must name a current Pipe or Console and hold READ rights.
+The entire set is validated before any readiness is returned.
+.Pp
+A Pipe is ready when it contains bytes or has no writers, including empty EOF.
+A Console is ready when input is buffered.
+Readiness consumes no bytes and does not promise that a subsequent read will
+succeed or avoid blocking: another reader may consume the input first.
+.Pp
+Zero ticks waits indefinitely.
+.Dv ABSD_WAIT_READABLE_POLL
+.Pq UINT64_MAX
+polls immediately and returns zero if no member is ready.
+Other values expire at the checked deadline
+.Va now + ticks + 1
+in delivered timer ticks and return error \-110.
+The first serialized completion wins; readiness does not take precedence
+over a simultaneous timeout.
+This is not a wall-clock deadline.
+.Pp
+All completions revalidate the original full handle and object generations.
+A closed or revoked member refuses the whole set even if another is ready.
+Stopping or retiring a task cancels its wait state and cannot revive it.
+There is no persistent subscription, callback, or write-readiness interface.
+.Sh RETURN VALUES
+Returns a nonnegative positional mask or a negative kernel error.
+The C wrapper returns the raw signed result.
+Rust bindings
+.Fn absd_user::wait_readable
+and
+.Fn absd_runtime::wait_readable
+accept a slice of u64 handles and return a Result containing the mask or error.
+.Sh ERRORS
+.Bl -tag -width "-110"
+.It \-1
+A member lacks READ rights.
+.It \-9
+A member is invalid, stale, or not a Pipe or Console.
+.It \-14
+The handle array is not readable user memory.
+.It \-22
+Count is zero or greater than eleven, or the finite deadline overflows.
+.It \-38
+The kernel does not implement this call.
+.It \-110
+The finite wait expired.
+.El
+.Sh ABI
+This is syscall 0x7fa8, additive to kernel ABI generation 1.
+On x86-64, use int 0x80 with RAX holding the number, RDI the array address,
+RSI the count, RDX the ticks, and RAX receiving the signed result.
+On AArch64, use svc 0 with x8 holding the number, x0 the array address,
+x1 the count, x2 the ticks, and x0 receiving the signed result.
+.Pp
+.Dv ABSD_WAIT_READABLE_MAX
+is eleven.
+The wrappers always issue the call, including an empty set, so an older
+ABI 1 kernel consistently returns \-38.
+Existing ABI 1 programs retain their previous calls.
+FSD serving startup refuses an unsupported kernel with
+.Ql FSD FAILED kernel lacks wait_readable
+and exits 3 before writable startup; it does not fall back to polling.
+.Sh SEE ALSO
+.Xr handles 7

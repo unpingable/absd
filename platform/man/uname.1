@@ -1,0 +1,38 @@
+.Dd November 3, 2026
+.Dt UNAME 1
+.Os ABSD
+.Sh NAME
+.Nm uname
+.Nd print system and compiled release identity
+.Sh SYNOPSIS
+.Nm
+.Op Fl a | Fl r | Fl s
+.Sh DESCRIPTION
+With no arguments or
+.Fl s ,
+print
+.Ql ABSD .
+.Fl r
+prints this program's compiled release id.
+.Fl a
+prints system name, compiled release id, architecture, Rust target
+.Ql x86_64-unknown-absd ,
+and this process's kernel PID.
+ABSD has no host name to report.
+Only the first argument is examined; trailing arguments are ignored.
+.Pp
+Commands in the selected release normally share that release's id.
+For the release currently served by the file server itself, use
+.Xr release 1 .
+No authority or configuration changes result.
+.Sh EXIT STATUS
+0 for a recognized first argument or none; 2 for an unknown first
+argument, diagnosed on standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+uname -a
+uname -r
+.Ed
+.Sh SEE ALSO
+.Xr release 1 ,
+.Xr process 7

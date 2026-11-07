@@ -11,6 +11,8 @@ mod fdt;
 mod runtime;
 #[path = "../../sched.rs"]
 mod sched;
+#[path = "../../stack_growth_audit.rs"]
+mod stack_growth_audit;
 #[path = "../../syscalls.rs"]
 mod syscalls;
 mod virtio;
@@ -30,7 +32,18 @@ use up_only::*;
 core::arch::global_asm!(include_str!("boot.S"), cpu_entry_top=const cpu::ENTRY_TOP, cpu_transition_top=const cpu::TRANSITION_TOP, cpu_local_bytes=const cpu::LOCAL_BYTES);
 
 static mut BOOT_ROOT: u64 = 0;
-static mut UART: u64 = 0x09000000;
+/// The console before the device tree is read (the first line and any
+/// pre-parse panic): QEMU virt's PL011, or the RK3568's UART2 (DesignWare
+/// APB 16550) with the `arm64-console-dwapb-rk3568` feature. The tree then
+/// confirms it, or names the one enabled UART, or refuses.
+#[cfg(feature = "arm64-console-dwapb-rk3568")]
+const EARLY_UART: (u64, fdt::Uart) = (0xfe66_0000, fdt::Uart::DwApb);
+#[cfg(not(feature = "arm64-console-dwapb-rk3568"))]
+const EARLY_UART: (u64, fdt::Uart) = (0x0900_0000, fdt::Uart::Pl011);
+static mut UART: u64 = EARLY_UART.0;
+static mut UART_KIND: fdt::Uart = EARLY_UART.1;
+/// The 1 GiB blocks mmu() mapped as Device, as a bit per block below 4 GiB.
+static mut DEVICE_BLOCKS: u8 = 0;
 static mut GICD: u64 = 0;
 /// GICv2: the CPU interface. GICv3: the redistributor region, and its size.
 static mut GICC: u64 = 0;
@@ -69,6 +82,7 @@ static mut KERNEL_TABLE: u64 = 0;
 #[allow(non_upper_case_globals)]
 static timer_ticks: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 unsafe extern "C" {
+    static __kernel_start: u8;
     static __kernel_end: u8;
     static entry_stack_top: u8;
     fn arm_enter(frame: *const ExecutionContext, fp: *const FpuState, stack: u64, root: u64) -> !;
@@ -86,15 +100,29 @@ fn write32(address: u64, value: u32) {
         asm!("dsb sy", options(nostack));
     }
 }
-fn out(s: &str) {
-    for b in s.bytes() {
-        unsafe {
-            while read32(UART + 0x18) & (1 << 5) != 0 {
-                core::hint::spin_loop();
+/// One byte to the console. PL011: wait while the FIFO is full (FR.TXFF).
+/// DW-APB 16550: wait until the holding register is empty (LSR.THRE), the
+/// registers being 32 bits wide four bytes apart (`reg-shift = 2`,
+/// `reg-io-width = 4`); baud rate and pins are the firmware's.
+pub fn uart_put(b: u8) {
+    unsafe {
+        match UART_KIND {
+            fdt::Uart::Pl011 => {
+                while read32(UART + 0x18) & (1 << 5) != 0 {
+                    core::hint::spin_loop();
+                }
             }
-            write32(UART, b as u32);
+            fdt::Uart::DwApb => {
+                while read32(UART + 0x14) & (1 << 5) == 0 {
+                    core::hint::spin_loop();
+                }
+            }
         }
+        write32(UART, b as u32);
     }
+}
+fn out(s: &str) {
+    serial::write(s);
 }
 fn number(n: u64) {
     if n >= 10 {
@@ -198,24 +226,95 @@ unsafe fn entry(table: u64, index: usize, value: u64) {
         core::ptr::write_volatile((table as *mut u64).add(index), value);
     }
 }
-unsafe fn mmu() -> u64 {
+/// The kernel's identity map, in 1 GiB blocks below 4 GiB, from the board:
+/// Normal for the block holding the kernel image and the frame allocator's
+/// window, Device for every block holding the UART or the GIC. A device in
+/// the kernel's block is refused: the two attributes cannot share a block at
+/// this granularity. On QEMU virt this yields the two entries the port has
+/// always had (block 0 Device, block 1 Normal).
+unsafe fn mmu(board: &fdt::Board) -> u64 {
     unsafe {
+        let kernel_block = (core::ptr::addr_of!(__kernel_start) as u64) >> 30;
+        assert_eq!(
+            kernel_block,
+            vm::FRAME_BASE >> 30,
+            "kernel outside the frame window's block"
+        );
+        assert!(
+            ((core::ptr::addr_of!(__kernel_end) as u64 - 1) >> 30) == kernel_block,
+            "kernel image crosses a 1 GiB block"
+        );
+        let mut device: u8 = 0;
+        for address in [
+            board.uart,
+            board.gicd,
+            board.gicc,
+            board.gicc + board.gic_region_bytes - 1,
+        ] {
+            let block = address >> 30;
+            assert!(block < 4, "device above 4 GiB unsupported");
+            assert!(
+                block != kernel_block,
+                "device inside the kernel's RAM block"
+            );
+            device |= 1 << block;
+        }
+        DEVICE_BLOCKS = device;
         let frames = vm::frames();
         let root = frames.allocate(FrameOwner::Kernel).unwrap();
         let l1 = frames.allocate(FrameOwner::Kernel).unwrap();
         vm::zero_frame(root);
         vm::zero_frame(l1);
         entry(root.0, 0, l1.0 | 3);
-        entry(l1.0, 0, 1 | (1 << 10) | (1 << 53) | (1 << 54));
-        entry(l1.0, 1, 0x40000000 | 1 | (1 << 10) | (3 << 8) | (1 << 2));
+        for block in 0..4u64 {
+            if block == kernel_block {
+                entry(
+                    l1.0,
+                    block as usize,
+                    (block << 30) | 1 | (1 << 10) | (3 << 8) | (1 << 2),
+                );
+            } else if device & (1 << block) != 0 {
+                entry(
+                    l1.0,
+                    block as usize,
+                    (block << 30) | 1 | (1 << 10) | (1 << 53) | (1 << 54),
+                );
+            }
+        }
+        // The tables were just written with the MMU off (Device accesses,
+        // no cache): clean and invalidate those two frames to the point of
+        // coherency, line by line as CTR_EL0 sizes them, so no stale line
+        // shadows them once caches are on. Everything else written before
+        // this point (statics, allocator tags, the stack) relies on the boot
+        // loader's clean and invalidated caches, as the boot protocol asks.
+        let ctr: u64;
+        asm!("mrs {}, ctr_el0", out(reg) ctr);
+        let line = 4u64 << ((ctr >> 16) & 0xf);
+        for frame in [root.0, l1.0] {
+            let mut address = frame;
+            while address < frame + 4096 {
+                asm!("dc civac, {}", in(reg) address);
+                address += line;
+            }
+        }
+        asm!("dsb sy", "isb");
         enable_root(root.0);
         BOOT_ROOT = root.0;
         l1.0
     }
 }
+/// Every 1 GiB block of `[start, end)` is one mmu() mapped as Device.
+fn device_mapped(start: u64, end: u64) -> bool {
+    let last = end - 1;
+    (last >> 30) < 4
+        && (start >> 30..=last >> 30).all(|block| unsafe { DEVICE_BLOCKS } & (1 << block) != 0)
+}
 unsafe fn enable_root(root: u64) {
     unsafe {
         asm!("msr mair_el1, {}","msr tcr_el1, {}","msr ttbr0_el1, {}","dsb sy","isb",in(reg)0xff00u64,in(reg)(16u64|(1<<8)|(1<<10)|(3<<12)|(1<<23)|(2<<32)),in(reg)root);
+        // Nothing architecturally guarantees empty TLBs or a clean
+        // instruction cache at this point; make them so before enabling.
+        asm!("tlbi vmalle1", "dsb nsh", "ic iallu", "dsb sy", "isb");
         let mut sctlr: u64;
         asm!("mrs {}, sctlr_el1",out(reg)sctlr);
         sctlr |= 1 | (1 << 2) | (1 << 12);
@@ -255,12 +354,12 @@ fn affinity() -> u32 {
 /// Returns the frame for the boot record.
 unsafe fn gic3_cpu() -> u64 {
     unsafe {
-        // The region must lie in the Device block mmu() maps (the low GiB).
+        // The region must lie in blocks mmu() mapped as Device.
         let region_end = GICC
             .checked_add(GICR_BYTES)
             .expect("GICv3 redistributor region");
         assert!(
-            region_end <= 0x4000_0000,
+            device_mapped(GICC, region_end),
             "GICv3 redistributor region outside the device window"
         );
         let mut frame = GICC;
@@ -364,6 +463,125 @@ pub fn gic3_sgi(target: u8, number: u32) {
 pub fn gic_is_v3() -> bool {
     unsafe { GIC_V3 }
 }
+/// A board's first light: the facts a serial log must show before anything
+/// is enabled, read-only (no GIC write, no interrupt, no secondary CPU, no
+/// user space), then stop. The timer line is measured against the UART:
+/// 1500 bytes take about 10 ms at 1 500 000 baud, so a 24 MHz counter should
+/// advance about 240 000 ticks (QEMU's UART is instantaneous; the line still
+/// has to appear).
+#[cfg(feature = "arm64-first-light")]
+fn first_light(
+    board: &fdt::Board,
+    dtb: u64,
+    dtb_bytes: u64,
+    kernel_start: u64,
+    kernel_end: u64,
+) -> ! {
+    unsafe {
+        out("ARM FIRST LIGHT kernel=");
+        serial::hex(kernel_start);
+        out(" end=");
+        serial::hex(kernel_end);
+        out(" dtb=");
+        serial::hex(dtb);
+        out(" dtb_bytes=");
+        serial::hex(dtb_bytes);
+        out("\n");
+        out("ARM FIRMWARE psci_version=");
+        serial::hex(psci(0x8400_0000, 0, 0, 0));
+        out(" cpus=");
+        number(board.cpu_count as u64);
+        out(" cpu_shift=");
+        number(board.cpu_shift as u64);
+        out(" console=");
+        serial::hex(board.uart);
+        out(match board.uart_kind {
+            fdt::Uart::Pl011 => " pl011\n",
+            fdt::Uart::DwApb => " dw-apb\n",
+        });
+        if GIC_V3 {
+            let revision = (read32(GICD + 0xffe8) >> 4) & 0xf;
+            let typer = read32(GICD + 0x4);
+            let region_end = GICC + GICR_BYTES;
+            let mut frame = GICC;
+            let mut redistributors = 0usize;
+            let mut affinities = [0u32; 8];
+            let mut ended_by_last = false;
+            while frame + GICR_FRAME_BYTES <= region_end && redistributors < affinities.len() {
+                let typer = read64(frame + 0x08);
+                affinities[redistributors] = (typer >> 32) as u32;
+                redistributors += 1;
+                if typer & (1 << 4) != 0 {
+                    ended_by_last = true;
+                    break;
+                }
+                frame += if typer & (1 << 1) != 0 {
+                    2 * GICR_FRAME_BYTES
+                } else {
+                    GICR_FRAME_BYTES
+                };
+            }
+            out("ARM GIC distributor pidr2_archrev=");
+            number(revision as u64);
+            out(" typer=");
+            serial::hex(typer as u64);
+            out(" gicd=");
+            serial::hex(GICD);
+            out(" gicr=");
+            serial::hex(GICC);
+            out(" redistributors=");
+            number(redistributors as u64);
+            out("\n");
+            // The walk's own evidence: whether GICR_TYPER.Last ended it (the
+            // count then comes from the hardware, not from the tree's region
+            // size) and each frame's affinity as GICR_TYPER[63:32] encodes it.
+            out("ARM GIC redistributors count=");
+            number(redistributors as u64);
+            out(if ended_by_last {
+                " ended=last"
+            } else {
+                " ended=bound"
+            });
+            out(" affinities=");
+            for (index, affinity) in affinities[..redistributors].iter().enumerate() {
+                if index > 0 {
+                    out(",");
+                }
+                out("0x");
+                serial::hex_digits(*affinity as u64, 8);
+            }
+            out("\n");
+        } else {
+            out("ARM GIC distributor v2 typer=");
+            serial::hex(read32(GICD + 0x4) as u64);
+            out(" gicd=");
+            serial::hex(GICD);
+            out(" gicc=");
+            serial::hex(GICC);
+            out("\n");
+        }
+        let freq: u64;
+        let before: u64;
+        let after: u64;
+        asm!("mrs {}, cntfrq_el0", out(reg) freq);
+        asm!("isb", "mrs {}, cntpct_el0", out(reg) before);
+        out("ARM TIMER MARK ");
+        for _ in 0..1484 {
+            uart_put(b'.');
+        }
+        out("\n");
+        asm!("isb", "mrs {}, cntpct_el0", out(reg) after);
+        out("ARM TIMER cntfrq=");
+        number(freq);
+        out(" ticks_per_1500_bytes=");
+        number(after.wrapping_sub(before));
+        out("\n");
+        out("ARM FIRST LIGHT OK\n");
+        // PSCI SYSTEM_OFF ends a QEMU run; on firmware where it does not
+        // return the board sits here until power-cycled.
+        poweroff()
+    }
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn arm_main(dtb: u64) -> ! {
     unsafe {
@@ -378,11 +596,24 @@ pub extern "C" fn arm_main(dtb: u64) -> ! {
             ARM_ENTRY_EL & 0x100 == 0,
             "EL2 without FEAT_E2H0 (E2H fixed) unsupported"
         );
-        assert!((0x40000000..0x60000000).contains(&dtb));
+        // The tree is read here, before the MMU is on, and never again; its
+        // placement is judged against the banks it reports, below.
+        assert!(dtb != 0 && dtb.is_multiple_of(8), "device tree address");
         let len = u32::from_be(core::ptr::read_unaligned((dtb + 4) as *const u32)) as usize;
         assert!((40..=2 * 1024 * 1024).contains(&len));
-        let board =
-            fdt::parse(core::slice::from_raw_parts(dtb as *const u8, len)).expect("virt DTB");
+        let board = fdt::parse(
+            core::slice::from_raw_parts(dtb as *const u8, len),
+            EARLY_UART,
+        )
+        .expect("device tree");
+        let kernel_start = core::ptr::addr_of!(__kernel_start) as u64;
+        let kernel_end = core::ptr::addr_of!(__kernel_end) as u64;
+        let ram = board
+            .placement((kernel_start, kernel_end), (dtb, dtb + len as u64))
+            .expect("placement");
+        // First light brings up no CPU and takes no request; the full boot
+        // requires one CPU unless SMP qualification was asked for.
+        #[cfg(not(feature = "arm64-first-light"))]
         smp::configure(&board);
         litmus::configure(board.early_publication);
         if board.reset {
@@ -390,6 +621,7 @@ pub extern "C" fn arm_main(dtb: u64) -> ! {
             suite::arm_restart();
         }
         UART = board.uart;
+        UART_KIND = board.uart_kind;
         GICD = board.gicd;
         GICC = board.gicc;
         GICR_BYTES = board.gic_region_bytes;
@@ -402,20 +634,24 @@ pub extern "C" fn arm_main(dtb: u64) -> ! {
         } else {
             " psci=hvc\n"
         });
-        out("ARM RAM REGION base=");
-        serial::hex(board.ram.0);
-        out(" bytes=");
-        serial::hex(board.ram.1);
-        out("\n");
+        for (base, bytes) in &board.banks[..board.bank_count] {
+            out("ARM RAM REGION base=");
+            serial::hex(*base);
+            out(" bytes=");
+            serial::hex(*bytes);
+            out("\n");
+        }
+        // The frame allocator tracks one window inside the kernel's bank;
+        // ranges outside it are clipped by the allocator itself.
         let frames = vm::frames();
-        frames.add_usable(board.ram.0, board.ram.0 + board.ram.1);
-        assert!(frames.reserve(board.ram.0, core::ptr::addr_of!(__kernel_end) as u64));
+        frames.add_usable(ram.0, ram.0 + ram.1);
+        assert!(frames.reserve(ram.0, kernel_end));
         assert!(frames.reserve(dtb, dtb + board.dtb_bytes as u64));
         assert!(frames.free_frames() > 0);
         out("ARM RAM OK frames=");
         number(frames.free_frames() as u64);
         out("\n");
-        let l1 = mmu();
+        let l1 = mmu(&board);
         let mmfr2: u64;
         let alignment_sctlr: u64;
         asm!("mrs {}, id_aa64mmfr2_el1", out(reg) mmfr2);
@@ -431,6 +667,38 @@ pub extern "C" fn arm_main(dtb: u64) -> ! {
         asm!("brk #16");
         assert!(!CONTROLLED);
         out("ARM EXCEPTION OK\n");
+        after_exception_check(&board, dtb, len as u64, kernel_start, kernel_end, l1)
+    }
+}
+
+/// What follows the exception check: the first-light image prints its
+/// diagnostics and stops; the ordinary kernel brings the machine up.
+#[cfg(feature = "arm64-first-light")]
+unsafe fn after_exception_check(
+    board: &fdt::Board,
+    dtb: u64,
+    dtb_bytes: u64,
+    kernel_start: u64,
+    kernel_end: u64,
+    _l1: u64,
+) -> ! {
+    first_light(board, dtb, dtb_bytes, kernel_start, kernel_end)
+}
+#[cfg(not(feature = "arm64-first-light"))]
+unsafe fn after_exception_check(
+    board: &fdt::Board,
+    _dtb: u64,
+    _dtb_bytes: u64,
+    _kernel_start: u64,
+    _kernel_end: u64,
+    l1: u64,
+) -> ! {
+    unsafe { finish_boot(board, l1) }
+}
+/// GIC, timer, devices, CPUs, scheduler: the boot as it has always been.
+#[cfg(not(feature = "arm64-first-light"))]
+unsafe fn finish_boot(board: &fdt::Board, l1: u64) -> ! {
+    unsafe {
         if GIC_V3 {
             // The distributor must be the architecture revision the tree
             // claims (GICD_PIDR2.ArchRev); then affinity routing before
@@ -614,3 +882,10 @@ pub fn machine_reset() -> ! {
     }
     panic!("PSCI reset returned")
 }
+
+// `map`/`unmap` bounds shared with the x86_64 kernel (src/heap_window.rs).
+#[path = "../../heap_window.rs"]
+mod heap_window;
+// The #115 builder class heap is x86_64 only.
+#[cfg(feature = "builder-class-heap")]
+compile_error!("builder-class-heap is x86_64 only");

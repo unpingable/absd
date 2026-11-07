@@ -1,0 +1,55 @@
+ABSD KERNEL BOOT
+boot protocol: multiboot2
+multiboot info: 0x0000000000bf0e50
+multiboot bytes: 0x0000000000000a50
+FRAMEBUFFER PROBE !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+FRAMEBUFFER CONSOLE OK width=1024 height=768 pitch=4096 bpp=32 rgb=16:8,8:8,0:8 columns=128 rows=59 scale=1 probe_row=4 cells=112 address=0x00000000fd000000
+IDT BREAKPOINT OK
+FRAMES TRACKED usable=65407 limit=268435456 clipped=0 bound=68719476736 table=builtin direct_map_pages=0
+usable memory regions: 0x0000000000000002
+free frames: 63915
+allocated frame 0: 0x0000000000633000
+allocated frame 1: 0x0000000000634000
+FRAME OWNER CHECK OK
+paging probe pml4 index: 0x0000000000000100
+paging entry frame: 0x0000000000633000
+PAGE MAP OK
+TIMER OK ticks=5
+TIMER CALIBRATION tsc_per_tick=2399643 min=2399550 max=2399737 samples=5 ticks=100 tsc_hz=2400008410 virtualized=yes cpuid15=absent cpuid16=absent invariant=no
+HEAP OK
+BLOCK DEVICE OK sectors=131072
+BLOCK BACKEND ata access=read-write
+STORAGE FENCE fence=none reason=not_declared
+NIC CONTROLLER pci=00:03.0 vendor=8086 device=100e mac=52:54:00:12:34:56
+NETWORK LINK OK rx_descriptors=32 tx_descriptors=16 buffer_bytes=2048
+SPAWN OK pid=1 parent=0 program=init
+SPAWN EXHAUSTION frames_per_process=63
+SPAWN EXHAUSTION OK
+SPAWN OK pid=1 parent=0 program=init
+PROCESS MODEL OK
+USER INIT STARTED
+SPAWN OK pid=2 parent=1 program=file-server
+USER PREEMPT pid=1 -> pid=2
+USER PREEMPT pid=1 -> pid=2
+USER PREEMPT pid=2 -> pid=1
+FILE SERVER START pid=2 channels=11
+USER PREEMPT pid=1 -> pid=2
+USER PREEMPT pid=2 -> pid=1
+SPAWN OK pid=3 parent=1 program=external-workload
+USER PREEMPT pid=1 -> pid=2
+USER PREEMPT pid=2 -> pid=3
+EXTERNAL OUTPUT BEGIN encoding=hex
+USER PREEMPT pid=1 -> pid=2
+DURABLE WORKER GENERATION generation=1 pid=3
+FSD FAILED read-only mount: UnsupportedFormat
+USER EXIT pid=2 status=3
+USER EXIT pid=3 status=104
+EXTERNAL OUTPUT CHUNK offset=0000000000000000 data=4653442050524f544f434f4c205245465553454420726561736f6e3d6e6f5f736572766572207374617475733d2d350a
+DURABLE WORKER OUTCOME generation=1 pid=3 status=104
+SERVED RECOVERY REFUSED generation_not_ready
+init: FAILED at served worker fault
+USER EXIT pid=1 status=99
+SERVED FRAME ACCOUNTING records=0 total=0 used=0 idle=0 status=ok
+DURABLE status=99 frames=0 processes=0 cells=0 pipes=0 block_reads=2 block_writes=0 block_flushes=0 block_errors=0 block_waits=1 block_irqs=2 ticks=530
+NIC STATS rx_frames=0 rx_refused=0 rx_missed=0 tx_frames=0 tx_refused=0 tx_errors=0 flags=1
+DURABLE WORKLOAD FAILED

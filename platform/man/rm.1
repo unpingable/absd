@@ -1,0 +1,75 @@
+.Dd November 5, 2026
+.Dt RM 1
+.Os ABSD
+.Sh NAME
+.Nm rm
+.Nd remove files or directory trees
+.Sh SYNOPSIS
+.Nm
+.Op Fl r
+.Ar path ...
+.Nm
+.Fl f
+.Op Fl r
+.Op Ar path ...
+.Sh DESCRIPTION
+Remove each file, or with
+.Fl r ,
+a directory and its descendants.
+Without
+.Fl r ,
+directory operands are refused.
+With
+.Fl f ,
+missing paths are ignored and no operands is successful.
+Other errors and the refusals below are still reported.
+Without
+.Fl f ,
+missing paths are errors.
+There is no interactive confirmation.
+The short flags may be combined as
+.Fl rf
+or
+.Fl fr .
+Options precede operands; a later option word is a path.
+.Ql --
+ends option processing; use it or a
+.Ql ./
+prefix for a name beginning with a dash.
+Unknown leading options return status 2.
+.Pp
+Final path components
+.Ql .
+and
+.Ql ..
+are refused.
+A session mount point is refused before removal.
+For recursive removal, a directory containing a session mount is also
+refused before traversal; inability to establish this condition is a
+refusal, not permission to proceed.
+.Pp
+Only this process's writable filesystem view is usable.
+Success is silent; failures go to standard error and later operands are
+attempted.
+Recursive removal may partially succeed; there is no transaction or undo
+for the entire tree.
+See
+.Xr sync 1
+for durability of accepted changes.
+.Sh EXIT STATUS
+0 when all removals succeeded or missing paths were ignored with
+.Fl f ;
+1 for another failed or refused path;
+2 for missing operands without
+.Fl f
+or an unknown leading option.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+rm /home/operator/notes/old
+rm -r /home/operator/notes-copy
+rm -rf /home/operator/temporary-tree
+.Ed
+.Sh SEE ALSO
+.Xr mkdir 1 ,
+.Xr sync 1 ,
+.Xr filesystem 7

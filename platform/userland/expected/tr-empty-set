@@ -1,0 +1,4 @@
+status 1
+--- stdout
+--- stderr
+/bin/tr: cannot map to an empty set.

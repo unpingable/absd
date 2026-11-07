@@ -1,6 +1,6 @@
 # The VM operator deployment (afterboot(8), scripts/operator_image.py): a
 # boot ISO (GRUB, the kernel, `net fsd served`) plus a separate, writable
-# 64 MiB ABSD filesystem disk and MANIFEST, as U1-b ran them. Built by
+# 128 MiB ABSD filesystem disk and MANIFEST, as U1-b ran them. Built by
 # `media.py operator-image` from an already-built platform tree and a
 # disposable kernel checkout of the frozen pair.
 kind = "operator"

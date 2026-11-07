@@ -47,6 +47,7 @@ path was added since the spike base.
 | `nic_receive` 34 | one frame | the device's descriptor length, at most `NIC_FRAME_MAX`; range checked first | intended (device data) |
 | `frame_stats` 35 | free/allocated/limit/page size | allocator counters, explicit encoding | intended, documented as a whole-machine count visible to anyone; no rights (architecture audit finding B3: ambient observation, cross-session side channel, not gated) |
 | `pipe_info` 36 | available, space, readers, writers | pipe slot | intended: counts for a shared object the caller holds |
+| `wait_readable` 0x7fa8 | positional readiness mask, or negative error | current READ-authorized Pipe/Console handles; all members validated | intended; at most 11 bits, no copyout, no data consumed |
 | `resource_census` 41 | processes, handles, pipes, cells, frames | whole-kernel counts, explicit encoding | intended, documented as whole-kernel; no rights (audit finding B3, as for `frame_stats`; accepted, docs/architecture-audit-20261002/B3-DECISION.md) |
 | `abi_version` 42 | RAX constant | compiled in | intended |
 

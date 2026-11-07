@@ -53,6 +53,15 @@ impl Family {
         let at = self.header().checked_sub(2)?;
         Some(u16::from_be_bytes(body.get(at..at + 2)?.try_into().ok()?) as usize)
     }
+    /// Complete successful RECEIVE body, after version/family validation.
+    pub fn received_length(self, body: &[u8]) -> Option<usize> {
+        let length = self.length(body)?;
+        let maximum = match self {
+            Self::Ipv4 => d::MAX_DATAGRAM,
+            Self::Ipv6 => v6::MAX_DATAGRAM,
+        };
+        (body.len() == self.header() + length && length <= maximum).then_some(length)
+    }
     pub fn peer_text(self, body: &[u8]) -> Option<(String, u32, u16)> {
         match self {
             Self::Ipv4 => Some((
@@ -101,6 +110,29 @@ mod tests {
         );
         for end in 0..26 {
             assert!(Family::Ipv6.peer_text(&header[..end]).is_none());
+        }
+    }
+    #[test]
+    fn parent_receive_body_enforces_family_bound_and_exact_framing() {
+        for family in [Family::Ipv4, Family::Ipv6] {
+            for length in [0usize, 1200, 1232, 1233, 1472, 1473] {
+                let mut body = vec![0; family.header() + length];
+                body[0] = family.version();
+                body[1] = d::RECEIVE;
+                body[3] = family.wire_family();
+                let at = family.header() - 2;
+                body[at..at + 2].copy_from_slice(&(length as u16).to_be_bytes());
+                let accepted = length <= if family == Family::Ipv6 { 1232 } else { 1472 };
+                assert_eq!(family.received_length(&body), accepted.then_some(length));
+                body.push(0);
+                assert_eq!(family.received_length(&body), None);
+                body.pop();
+                body.pop();
+                assert_eq!(family.received_length(&body), None);
+            }
+            for length in 0..family.header() {
+                assert_eq!(family.received_length(&vec![0; length]), None);
+            }
         }
     }
 }

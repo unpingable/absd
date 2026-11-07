@@ -1,5 +1,26 @@
 # ABSD experimental Rust `std` target
 
+## Platform 14 recovery limit (2026-10-18)
+
+**Writable crash-resume is unsupported in this line.** An unclean shutdown
+leaves the disk fenced against writable file-server restart and ordinary host
+updates. There is no automatic fence clearing. A checked clean shutdown permits
+a writable restart. The host filesystem reader can extract data read-only;
+this is distinct from permission to resume writes or a qualified restore.
+
+“Crash = replace the machine” describes the current limitation, not a qualified
+replacement-and-restore procedure. P14f can be accepted only with these limits;
+it does not satisfy the original writable crash-recovery guarantee. The
+original recovery test failure remains evidence. The bounded read-only tests
+and their limits are described in [Writable entry](docs/WRITABLE-ENTRY.md).
+Platform 15 adds the one supported way back to writable service on the same
+image: the explicit, recorded operator act `release.py recover`
+(coordination record #63; WRITABLE-ENTRY.md "Operator-authorized resume",
+OPERATOR-RUNBOOK.md 9a), bound to one committed state of one file, consumed
+once by the next serving boot, with its limits disclosed there. Nothing is
+automatic.
+
+
 ## What this is now (2026-10-10)
 
 This repository is the ABSD platform: the `x86_64-unknown-absd` Rust `std`
@@ -834,6 +855,16 @@ It prints `NQ NATIVE PROGRAM OK` only when all of that holds. Not
 covered: V2 and V3 provenance (continuity and origin intents), and a
 source-id mismatch, which Nightshift checks, not `nq`.
 
+The ABSD NQ port remains read-only. While civil time is unknown or stale,
+`diagnostics qualify`, `inspect`, `export`, and the compiled profile/protocol
+catalog reads remain available; other commands refuse instead of emitting or
+persisting a bootstrap date. This command-entry check does not qualify future
+writable or long-running NQ operations. The CannotEvaluate age checks in the carried live and historical
+visibility projections treat negative civil ages as outside the reliance
+window, alongside ages exceeding the bound; stored evidence and historical
+verdict records are unchanged. Broader writable NQ support needs a fallible
+clock seam at its transaction boundaries, not a startup-only validity check.
+
 ## The Nightshift pipeline with real owner processes
 
 The kernel's init now brokers spawning (kernel `docs/BROKER.md`): a durable
@@ -982,15 +1013,24 @@ arguments fixed at build time, so `scripts/build-ag-loopctl.sh` builds the
 one source twice, `ag-loopctl-init.elf` and
 `ag-loopctl-record-proposal.elf`.
 
-AG reads `SystemTime::now`. ABSD now has a wall clock: the kernel's
-`wall_clock` syscall (kernel `src/rtc.rs`) reads the CMOS RTC and std's
-`SystemTime::now` returns it. Precision is one second (the sub-second part
-is zero); the RTC has no time zone, so ABSD declares it UTC, which is what
-QEMU's `-rtc base=utc` seeds from the host. A physical machine's RTC may
-hold local time (machines set up by Windows) and drifts uncorrected; ABSD
-cannot tell and never adjusts it. A refused reading makes `now` panic: no
-time is invented. SQLite's own date functions still fail (the VFS has no
-clock); AG does not use them.
+AG's ABSD `now_unix_ms` reads the fallible civil-clock status, refuses unknown
+or stale time before the timestamp-dependent operation, and converts that same
+sample to Unix milliseconds. It does not persist the infallible Rust bootstrap
+coordinate. The Unix branch still uses `SystemTime::now`.
+
+The boot-local software civil clock is shared by `date` and filesystem
+timestamps. It starts from one unverified UTC RTC reading at or after the
+fixed 2026 build floor, or remains unknown when RTC is earlier/unavailable,
+and advances with delivered monotonic ticks; an authenticated operator or explicitly configured
+bounded SNTP provider may step the civil anchor. RTC hardware and monotonic
+deadlines do not change. Source, age, staleness and last failure are visible
+with `date --status`; all sources have unknown UTC uncertainty. Infallible
+`SystemTime::now` uses the Unix epoch plus monotonic time since boot if no civil
+value is available; that coordinate is unsuitable for durable dates or
+cross-boot age comparisons. The fallible runtime clock remains unknown in that
+case. AG's separate SQLite VFS has no clock, so its own date functions still
+fail; AG does not use them. The C SQLite port uses the kit's fallible civil
+clock and refuses its time query when that clock is unavailable.
 
 `record-proposal` must call the runtime profile's pinned observation
 resolver. AG checks the exact path and the digest of the bytes there, then
@@ -1104,42 +1144,52 @@ kernel's spawn log, the kernel reports `DURABLE status=0 frames=0
 processes=0 cells=0 pipes=0`, and the device holds the parent's file and
 nothing a child tried to write.
 
-## absd-sh, the minimal command shell
+## absd-sh, the native command shell
 
-`absd-sh` (`src/bin/absd_sh.rs`; logic in `sh/src/lib.rs`, host-tested;
-platform in `src/sh_host.rs`) is the session shell for the SSH server:
-line-based; it knows nothing of terminals (on a PTY session sshd does the
-echo and line editing). No existing shell fits (the Rust line editors and
-shells need termios, fork, or libc), so it is written here and kept small.
-A line is a list of pipelines joined by `;`, `&&` (the next runs if the
-status is 0), and `||` (if not), run left to right; `exit`, ^C, and the
-session's end stop the list. A pipeline is commands joined by `|`, each
-with optional `< file`, `> file`, `>> file`, `2> file`, `2>> file`. Words
-split on whitespace with `"..."` grouping (`\"` and `\\` escape inside
-quotes; a quoted `|`, `<`, `>`, `;`, `&` is ordinary text). Builtins:
-`cd [dir]`, `pwd`, `echo [-n]`, `exit [n]`, `status` (the last status),
-`help` (the grammar on one screen); `pwd`, `echo`, `status`, `help` may
-head a pipeline
-(the shell writes their output into the next command's input) or take
-`>`/`>>`/`2>`, `cd` and `exit` take neither. In a shell sshd started
-for an interactive session, `ps`, `shutdown`, and `reboot` are builtins
-that ask sshd on the session control channel (below, "Session control");
-any other shell answers `no session control channel`. Anything else runs as a
-filesystem executable through `std::process::Command`: the word as a path
-when it contains `/`, else `/bin/<name>` (one fixed directory, no PATH).
-The child gets the shell's working directory; a stream not piped or
-redirected is the shell's own. A missing command reports `not found`
-(127), a refused one `cannot run` (126), a non-zero exit of the last
-command `exit status N`; a pipeline's status is its last command's. Syntax
-errors (an empty command, `>` with no file, a stream redirected twice,
-output both to a file and a pipe, `2>&1`, an empty list element, any
-single `&` outside quotes) are status 2 and start nothing.
-Without arguments it prompts `absd$ ` before every line and exits with the
-last status at end of input; `absd-sh -c LINE` runs one line. No globbing,
-variables, descriptor duplication, job control, scripting, or signals; ^C
-in an SSH session ends the running line (status 130) through the session
-control channel. Children inherit stdin, but lines the shell has already buffered are not
-visible to them.
+`absd-sh` (`src/bin/absd_sh.rs`, `sh/src/lib.rs`, `sh/src/language.rs`;
+platform executor `src/sh_host.rs`) interprets ordinary shell files and
+interactive commands. It uses the pinned upstream conch-parser grammar,
+with single/double quoting, escaping, variables and exported environments,
+positional arguments and status, filename patterns, command substitution,
+conditionals, loops, functions and a bounded arithmetic subset. The
+[absd-sh manual](man/absd-sh.1) is the canonical syntax, limitations and
+operator recipe; it includes a working sbase `ed` editing example.
+
+Use `/bin/sh FILE [ARG...]`, `sh -c COMMAND [NAME [ARG...]]`, or `sh -s`.
+SSH login shells start in writable `/home/operator`; SSH command requests
+retain `/` as their initial directory, including command requests interpreted
+by the shell. Use an explicit `cd` for scripted editing or other relative writes.
+Interactive commands continue unfinished syntax at a `> ` prompt. Explicit
+script paths support exact `#!/bin/sh` and `#!/bin/absd-sh` shebangs.
+Scripts, functions and substitutions execute inside the original shell with
+isolated variable/argument/cwd contexts where appropriate: they do not
+spawn a child interpreter that would lack the spawn right. Native commands
+remain direct children with explicit process handles, no spawn right, and
+the existing session interruption/cleanup supervision. Captured native
+stdout uses the existing interleaved pipe drainer and is limited to 1 MiB;
+overflow fails expansion before running the outer command.
+
+The shell supports source-ordered output aliases for literal descriptors
+1 and 2 using existing native endpoints; this does not add a kernel
+POSIX descriptor table. The runtime still supplies neither fork nor
+background jobs, Unix job control or raw terminal mode. Native consuming
+commands accept `<<WORD` and `<<-WORD` heredocs through the existing input
+feeder. Delimiter quoting preserves literal text; unquoted bodies expand
+parameters, commands and arithmetic without field splitting, globbing or
+tilde expansion. Source and expanded body each have a 1 MiB limit. Missing
+delimiters continue interactively and fail before execution at script EOF.
+Unsupported
+syntax and runtime forms are diagnosed; the manual lists the supported
+subset and bounds. Bare executable names still search the fixed `/bin`
+directory. Plain `ps` inside the shell lists the session. `ps -A` invokes the
+installed kernel process census; see [ps(1)](man/ps.1). [interfaces(1)](man/interfaces.1)
+reports current read-only device observations on UP/BSP, with unknown fields
+explicit; on an AP it reports unsupported without device access.
+[dmesg(1)](man/dmesg.1) reads bounded boot-scoped kernel records with independent
+cursors; it does not provide persistent service history. These observations use
+an inherited read-only diagnostic grant, not process-control or device authority.
+`ro` and `nofs` retain native command filesystem narrowing. Shell state has no live-replacement export schema;
+restart/termination is the current boundary, not state transfer.
 
 **Pipes.** A pipe is a kernel object with separately granted read and
 write ends. For `a | b` the runtime makes the pipe when it starts `a` with
@@ -1158,9 +1208,16 @@ POSIX descriptors or SIGPIPE. (A future Unix personality can number
 native handles as descriptors entirely above the kernel; there is no
 kernel descriptor table.)
 
-**Redirection and authority.** The shell opens every target itself, with
-its own filesystem authority, before anything starts, and never gives a
-child a file: ABSD files are the `absd-fs` library's objects inside the
+**Redirection and authority.** Output aliases snapshot their current
+destination: `> file 2>&1` combines both streams, while `2>&1 > file`
+keeps stderr at the original stdout destination. Shared pipe-backed output
+uses one child writer endpoint so stream-write order is retained. The exact
+expanded redirection word `/dev/null` is shell-provided discard or input
+EOF; there is no device or filesystem entry, and an ordinary program
+opening that name still fails. The shell omits its extra native exit-status
+line when stderr is redirected; numeric status remains observable.
+The shell opens every file target itself, with its own filesystem
+authority, before anything starts, and never gives a child a file: ABSD files are the `absd-fs` library's objects inside the
 process that mounted them, not kernel handles. For `< f` the child's stdin
 is a pipe the shell fills from `f`; for `> f`, `>> f`, `2> f` the child's
 stream is a pipe the shell copies into `f` (`src/sh_host.rs`, the copier
@@ -1205,6 +1262,13 @@ refused session redirections tried to write; then it prints `SHELL PIPE
 OK`, `SHELL BROKEN PIPE OK`, `SHELL REDIRECT OK executor=writer-hosted`
 (`>` works where the shell holds write authority; sessions refuse it), and
 `SHELL AUTHORITY NARROWING OK`. `check-all.sh` runs the shell's host tests.
+
+The shell workflow tests in `sh/tests/workflows.rs` require an executable
+`/bin/bash` on the test host. Install Bash before running the shell host
+suite. The loop-control comparisons invoke `/bin/bash --noprofile --norc`
+with a cleared environment, `PATH=/usr/bin:/bin` and `LC_ALL=C`, and compare
+stdout and exit status with ABSD's shell. ABSD diagnostic text is checked
+separately.
 
 ## Source portability: unmodified crates.io programs
 
@@ -1293,9 +1357,8 @@ file server's filesystem. The file server creates it when it is absent
 RDRAND (`getrandom`), written to `host_ed25519_seed.new` create-new,
 synced, and renamed over the seed (`FSD HOST KEY GENERATED|PRESENT`).
 sshd reads it once at start through its control channel, whose mounts are
-`/ssh`, `/bin`, and `/etc` read-only and `/var/log` read-write (`SSH
-STORAGE VIA FILE SERVER OK block=none
-control=/ssh:ro,/bin:ro,/etc:ro,/var/log:rw`), and keeps the key in memory.
+`/ssh`, `/bin`, and `/etc` read-only and `/var/log` read-write with read-only
+journal and collector-health carve-outs, and keeps the key in memory.
 It prints the key's fingerprint and public key in plain text on the console
 (`sshd: host key 256 SHA256:... (ED25519)`, through the file server's
 `NOTICE`, below) and in `/var/log/sshd`. No session binding
@@ -1324,14 +1387,22 @@ own child; a program that cannot be started is reported as a shell would,
 `sshd: <word>: <error>` on stderr and status 127 (not found) or 126. Running
 exec commands directly, rather than through `absd-sh -c`, keeps every exec
 process sshd's own child, so a client that disconnects mid-command gets it
-killed and reclaimed at once, and gives it no spawn right. The exception is
-a command using the shell's syntax (`|`, `<`, `>`, `;`, `&`, or `"`): it
+killed and reclaimed at once, and gives it no spawn right. Only a bare
+name or exactly `/bin/<name>` runs this way: sshd reads a program image
+with its own filesystem authority, which holds `/bin` but none of the
+session's mounts, so any other program path (an uploaded
+`/home/operator/prog`) runs as `absd-sh -c COMMAND`, where the session's
+authority reads it (#119); that also keeps sshd's own mounts (`/ssh`)
+from being read for a session. The other exception is
+a command using shell syntax (operators, single/double quotes, escapes,
+expansions, filename patterns, assignments, script builtins or newlines): it
 runs as
 `absd-sh -c COMMAND` with a shell's authority (the spawn right and spares),
-so `ssh host 'cat > FILE' < local` works; that is the file transfer path
+so `ssh host 'cat > FILE' < local` works; that is an exec file transfer path
 (below). Such a shell gets the session control channel like an
 interactive one, so a disconnect ends its commands the same way (End,
-below). Subsystems (so `sftp` and OpenSSH 9's `scp`), forwarding, agent
+below). The non-PTY `sftp` subsystem starts `/bin/absd-sftp` through the
+same direct-child binding and cleanup. Other subsystems, forwarding, agent
 and X11 requests are refused.
 
 A session child gets exactly: its three pipes (stdin, stdout, stderr), one
@@ -1388,28 +1459,32 @@ the child's pipes; the kernel has no terminal object and none was added
 child is started as without a PTY, except that its stdout and stderr are
 one pipe (below). Input is edited a line at a time and echoed:
 CR or LF ends a line (the child reads `text\n`), DEL or BS erases one
-character (a whole UTF-8 sequence), ^U the line, escape sequences
-(arrow, function, and Alt keys: `ESC [ ... final`, `ESC O x`, `ESC x`)
-are dropped whole without echo, other control
+character (a whole UTF-8 sequence), ^U the line, and ^W the previous word.
+Left/right, Home/End and Delete edit the line; unrecognized escape sequences
+are dropped whole without echo. Up/down recall up to 32 prompt lines for
+this session only, never login tokens or application input. Other control
 characters are kept and echoed as `^X`, and a line holds at most 4095
 bytes. ^D on an empty line closes the child's stdin: a pipe has no one-shot
 end of file, so this ends input for the whole session (^D while `cat` runs
 under the shell ends `cat` and then the shell). ^C discards the line being
-typed; if the session is an `exec` command, which is sshd's own child,
-sshd also ends it (the kernel's parent-on-child kill) and the channel
-closes without an exit status. In a shell session the running command is
+typed; if the session is a direct `exec` command (a bare name or
+`/bin/<name>`), which is sshd's own child, sshd also ends it (the kernel's
+parent-on-child kill) and the channel closes without an exit status. An
+`exec` of any other program path runs under the shell (above) and is
+handled like a shell session: the shell ends the command and exits 130. In a shell session the running command is
 the shell's child, not sshd's: sshd tells the shell (below), and the shell
 ends it. Output: LF becomes CR LF. On a terminal
 stdout and stderr are one screen, so a PTY session's child gets one pipe
 for both (`absd_runtime::process::merge_output_for_children`: its stderr
 slot is a second copy of its stdout writer) and sshd sends it as ordinary
 channel data, in the order written; the shell's children inherit it. The
-control characters are fixed: the terminal modes, `TERM`, and the window
-size sent with `pty-req` are not read, and `window-change` is declined by
-sunset (OpenSSH wants no reply), because nothing in a session uses them:
-there is no environment for `COLUMNS`/`LINES`, no program that lays out
-to a width, and no ioctl. No process groups, controlling terminal, job
-control, termios, or pty ioctls. The SSH matrix drives stock `/usr/bin/ssh`
+control characters remain fixed; terminal modes are not interpreted.
+The sanitized `TERM` and character dimensions from `pty-req` reach the
+session, and `window-change` updates a read-only metadata Cell shared with
+attached native commands. `terminal-size [--watch]` queries that live
+observation. `COLUMNS`/`LINES` refresh at shell prompts and native command
+startup; unobserved serial dimensions remain unknown. There are no process
+groups, controlling terminal, job control, termios, or pty ioctls. The SSH matrix drives stock `/usr/bin/ssh`
 on a host pseudo-terminal (raw mode, keystrokes, exact screen bytes) and
 prints `PTY ALLOC OK`, `PTY IO OK`, `SSH PTY OK`, and
 `SSH INTERACTIVE SHELL OK`; it also resizes the client's terminal
@@ -1550,6 +1625,31 @@ either in any session's mount list. `scripts/survival-recovery.py`
 exercises the resets, the stop, the clear, and the exit-0 case; the
 contract is the kernel's docs/service-lifecycle-20261008/RECOVERY-BUDGET.md.
 
+Writable entry is checked on every file-server boot, including `net fsd`
+without `served`, and on the same-boot finalizer. Neither
+`storage-fence=external` nor `storage-fence=controller` establishes retirement
+of a backing service's old commands. NVMe disable cannot distinguish a local
+namespace from an NBD-backed one. No current backend supplies a checked
+end-to-end recovery fence, so an unclean predecessor is refused before any
+write or flush. This also prevents the automatic resets described above from
+resuming writable service on an unverified backend; their budget is not a
+fence.
+
+Fresh image construction seeds the private, fixed 512-byte
+`/var/recovery.guard` record. Startup assesses it and the ledger read-only,
+then marks it dirty and flushes before any filesystem mutation. Ledger charge
+precedes directory, host-key and log writes. Failure before ledger creation
+therefore cannot turn the next boot into a first boot. Only init's checked
+same-boot finalizer marks the guard clean, after all filesystem writes have
+been synced. A successful bounded `net fsd` boot is finalized after its worker
+and file server exit successfully and no descendant remains; its completion
+fact is explicitly tagged `action=bounded`, without claiming an SSH shutdown
+request. Missing or malformed guards refuse writable entry, including on old
+images and upgrades. Boot never creates, repairs or resets them. The record,
+construction preconditions, state transitions, limits and upgrade behavior are
+specified in [Writable entry](docs/WRITABLE-ENTRY.md). This change is for
+platform 14 and later; it does not change RC1's frozen image recipe.
+
 Network state is reported, never folded into readiness. sshd prints
 `SSH NET link=up|down|unknown disabled=0|1|unknown rx_missed=N
 link_errors=N` once between `SSH RECOVERY` and `SSH LISTENING`, then once
@@ -1629,7 +1729,7 @@ a mount list and an open-file table, so a channel is a capability:
 
 | channel | holder | mounts |
 |---|---|---|
-| control (0) | sshd | `/ssh`, `/bin`, `/etc` read-only, `/var/log` read-write; binds and releases slots; `NOTICE` |
+| control (0) | sshd | `/ssh`, `/bin`, `/etc` read-only, `/var/log` read-write with journal/health read-only carve-outs; binds and releases slots; bounded `NOTICE` |
 | slot, bound per session | the session's first process | `/home/operator`, `/tmp/session-N` read-write; `/bin`, `/etc`, `/share`, `/var/log` read-only |
 | spare of a session | a command the shell starts | the shell's, or fewer (`ro`, explicit lists) |
 
@@ -1680,7 +1780,8 @@ the image read are at least five times faster, and
 `/bin/fsd-probe` (`src/bin/fsd_probe.rs`) and `mkdir`, `rm`, `mv`, and
 drives stock `/usr/bin/ssh` with strict host key checking; the host reads
 the image back after each claim about the device. It prints `SESSION
-WRITE OK`, `SYSTEM WRITE REFUSED OK`, `RAW BLOCK REFUSED OK`,
+WRITE OK`, `SYSTEM WRITE REFUSED OK`, `STARTUP BLOCK ROLE ABSENT OK`
+(the runtime startup block handle only; whole-process handle coverage is UNVERIFIED),
 `SESSION WRITE PERSISTENCE OK` (reconnect and reboot), `SSH HOST KEY
 ISOLATED OK`, `SHELL AUTHORITY NARROWING OK` (over SSH: a redirected `ro`
 or `nofs` command writes nothing but its pipe), `SSH MULTI SESSION OK`,
@@ -1699,21 +1800,27 @@ slot rebound.
 `check-all.sh` runs it after the SSH matrix, and the dispatcher's host
 tests (`fsd/src/tests.rs`).
 
-`scripts/run-core-fsd-recovery.sh` is the separate core guest recovery
-verdict. It interrupts the VM with the real `absd-fsd` serving after an
-acknowledged write with its handle still open, a synced write, and a rename
-replacement. Each case cold boots the same image. The host's independent
-filesystem reader checks the complete previous or candidate content for the
-open write and the committed result for the other two cases; the new guest
-file server must serve the recovered file. These are three representative
-interruption boundaries, not an exhaustive sector-write or power-loss sweep.
-The AG SQLite `run-fs-matrix.sh` remains the extended verdict.
-Formalization consideration for this recovery claim: the bounded proposition
-is whole previous or candidate bytes after the open unsynced write, and the
-exact committed bytes and namespace after sync or rename, assuming ordered
-guest device writes and one FSD instance. The local VM interruption and
-host oracle are practical tests for these three histories; they do not
-establish physical power-loss durability or every sector transition.
+`scripts/run-core-fsd-recovery.sh` checks three representative core
+file-server interruption boundaries: an acknowledged write with its handle
+still open, a synced write, and a rename replacement. Each case starts from
+its own fresh image, interrupts its exact QEMU process, then cold boots that
+same interrupted image. The host's independent filesystem reader requires
+whole previous or candidate content for the open write and the exact committed
+bytes and namespace for sync and rename. With no checked storage fence, the
+new guest must refuse writable entry before readiness, issue zero writes or
+flushes, and leave the entire image unchanged. It does not serve recovered
+files. The earlier writable-recovery expectation is retired for platform 14;
+it conflicts with the writable-entry contract above. The AG SQLite
+`run-fs-matrix.sh` remains the extended filesystem verdict.
+
+Formalization consideration: under the existing ordered guest-device-write
+assumption, the host oracle checks those three histories. The shared strict
+cold-refusal oracle checks no readiness/reset, exact failed-boot status,
+named refusal, zero writes/flushes/errors and an unchanged image hash. Bounded
+host controls and local VM cases test this scope; they do not establish a
+device fence, writable recovery, physical power-loss durability or every
+sector transition. Separate clean images give the later cases construction
+authority; no interrupted image is reseeded, repaired or made writable.
 
 **Release identity and binding** (the design is `docs/RELEASE.md`
 sections 2 to 4; the record and the compiled identity are the
@@ -1743,8 +1850,10 @@ binding may name it (like `/ssh`). Everything else is site state.
 **Who is serving** (`op::VERSION`, 23). Any channel, bound or not, may ask;
 the reply payload is `u32 fsd_protocol`, `u32 fs_format`, `u16 length`, and
 the release id, a constant of the server's build. Every process with a
-channel asks on its own channel before `main` and waits at most 5000
-ticks (about 5 s; a server that cannot parse the frame never answers,
+channel asks on its own channel before `main` and waits at most 60000
+ticks (about 60 s: the client starts together with the file server, so
+the wait covers the server's own startup, whose storage writes the host
+sets the pace of; a server that cannot parse the frame never answers,
 and one older than the op answers `-95`); unless the protocol is its own
 it prints one of `FSD PROTOCOL REFUSED server=<n> required=<m>`,
 `... reason=no_answer`, `... reason=refused status=<code>`,
@@ -1803,8 +1912,11 @@ really provide. Two kinds are installed:
   identically.
 - C programs from sbase 0.1 (MIT) built with the C kit, the base
   userland ([userland/README.md](userland/README.md)): `printf`, `test`,
-  `grep`, `sort`, `sed`, `od`, `cmp`, `ed` (the line editor), and `find`,
-  each with a page of its own (printf(1) ... find(1), and sbase(7), which
+  `grep`, `sort`, `sed`, `od`, `cmp`, `ed` (the line editor), `find`,
+  `tr` (character translation, deletion and squeezing), `dirname`
+  (the directory component of a path string), `tee` (stream capture), and
+  `sleep` (whole-second delays),
+  each with a page of its own (printf(1) ... dirname(1), and sbase(7), which
   carries sbase's licence). Each is a bounded port: what ABSD does not
   provide is refused by name with a status (`find -exec`, `sed -i`, `ed`'s
   `!cmd`, `test -nt`, ...), and the page lists it. None shares a name with
@@ -1877,10 +1989,13 @@ What each native command means here:
 - `ls -l` adds kind (`d` or `-`), the read-only flag (`ro` or `--`), links,
   size, and modification time (`YYYY-MM-DD HH:MM`, UTC, or `-` when
   unknown). No owner or mode exists. `cp` does not preserve mtime.
-- `date [-u] [+%s]` prints the kernel's RTC reading (`wall_clock`): UTC,
-  whole seconds, never set or corrected; `uptime` prints the boot tick
-  counter as days and time plus the raw ticks, and the kernel's boot
-  identity (`boot_id`). Neither can set anything.
+- `date [-u] [+%s] [--status]` reads software civil UTC in whole seconds;
+  status names the source, sample age, staleness, generation and last attempt.
+  Authenticated shell `clock status`, `clock set UNIX_SECONDS` and `clock sync`
+  ask the existing time owner for a bounded operation. Only that owner holds
+  clock write authority. Synchronization is disabled unless `/etc/time.conf`
+  selects a peer; its results remain unauthenticated estimates. `uptime` reads
+  the separate boot tick counter and identity; civil corrections change neither.
 - `sysinfo` prints five lines, each a live answer at the moment it was
   asked and none from a log: the release (the file server's `VERSION`),
   this boot and its age (`boot_id`, the tick counter), the kernel's frame
@@ -1890,9 +2005,9 @@ What each native command means here:
   (`resource_census`, 41: process slots in use, handles, pipes, cells,
   across the system and counting `sysinfo` itself), and the filesystem's
   space as `df` reports it. A source that refuses is said so in place
-  and the status is 1. Nothing names another session or process: no
-  system-wide process list exists, and there is no per-process resource
-  accounting to show.
+  and the status is 1. This command does not list other processes; use
+  `ps -A` for the boot-scoped kernel process view. No per-process resource
+  accounting is claimed.
 - `release` prints `release=<id> kernel_abi=<n> fsd_protocol=<n>
   fs_format=<n> app_abi=<n>`: the release id, protocol, and format from
   the file server's `VERSION` answer, the two ABI generations this
@@ -1910,21 +2025,21 @@ blocked by the session, not by the filesystem:
   it delivers whole lines on CR or LF, echoes and edits them itself,
   turns ^C into a control-channel event and ^D into end of input for the
   whole session. There is no raw, cbreak, or no-echo mode in any form.
-- Nothing tells a program the terminal's type or size: `pty-req` is
-  accepted without reading its modes, TERM, or dimensions, and
-  `window-change` is declined (ssh/src/conn.rs). A program cannot tell
+- The operator usability integration now passes sanitized TERM and live
+  SSH dimensions to commands (see terminal-size(1)); it still does not
+  implement raw input or termios. A program cannot tell
   keyboard input from piped data (`IsTerminal` is always false); the
   kernel has no terminal object and no right for one (its handle rights
   are write, wait, read, kill).
-- The C editors need a C runtime ABSD does not have (termios, signals,
-  curses or termcap, fork for `!`); Rust terminal crates stop at rustix
+- The C editors need terminal interfaces ABSD does not provide (termios,
+  signals, curses or termcap, fork for `!`); Rust terminal crates stop at rustix
   (`docs/COMPATIBILITY-LEDGER.md`).
 - Output is not the obstacle: only LF becomes CR LF, and escape sequences
   pass through, so a screen could be drawn; it could not be read from.
 
 A screen editor therefore needs a raw pass-through mode in sshd's
-session and a way to learn the window size: a session-protocol and
-authority design, not a user-tools change. An `ed`-class line editor
+session; size observation is now available without granting input-control
+authority. Raw input remains a separate session-protocol design. An `ed`-class line editor
 needs none of that (commands on standard input, output on standard
 output, `ed FILE < script` works) and could be a native program over
 `std::fs` with the atomic write path the file server already gives
@@ -1979,11 +2094,12 @@ frame arithmetic. It prints `COMMAND OUTPUT OK`, `COMMAND WRITES OK`,
 
 ## Manual pages
 
-The operator's manual is real `mdoc(7)` source in `man/NAME.S`: intro(1),
-absd-sh(1), date(1), man(1), ps(1), release(1), rg(1), sysinfo(1), uptime(1),
-ata(4), e1000(4), nvme(4),
-network.conf(5), sshd.conf(5), filesystem(7), handles(7), process(7),
-afterboot(8), reboot(8), and shutdown(8). ABSD has no roff: `scripts/render-man.sh`
+The operator's manual is canonical `mdoc(7)` source in `man/NAME.S`.
+Every default `/bin` command and the optional `https-document` has a section
+1 or 8 page; intro(1), porting(7), filesystem(7), handles(7), process(7)
+and afterboot(8) explain the surrounding interfaces. Use `man -k WORD` for
+the installed index rather than a second hand-maintained command inventory.
+ABSD has no roff: `scripts/render-man.sh`
 (run by `prepare-and-build.sh`) lints each page with `groff -mdoc -ww -z`
 (any warning fails), renders it on the build host with
 `groff -mdoc -Tascii -P-cbou -rHY=0 -dAD=l` (plain printable ASCII: no
@@ -2006,10 +2122,28 @@ page with `man: no entry for NAME in the manual` and status 1, and a
 process that cannot see `/share/man` (under `nofs`) says so instead of
 reporting every page missing.
 
-Pages describe only what the qualified `net fsd` boot does, and label what
-is not provided yet. Per-command pages exist for absd-sh, date, man, ps,
-release, rg, sysinfo and uptime; the other commands and sshd(8) are not
-written.
+Pages distinguish source-supported behavior, exercised command-matrix forms
+and runtime limitations. New examples are source-checked unless a page cites
+existing execution evidence; rendering alone does not qualify command behavior.
+
+Coverage is enforced by `scripts/check-manual.py`, deriving names from the
+same `operator_image.command_names()` helper used to assemble `/bin`:
+
+```sh
+python3 -B -I scripts/check-manual.py --source-only
+python3 -B -I scripts/check-manual.py --source-only --https-document
+scripts/render-man.sh
+python3 -B -I scripts/check-manual.py --rendered manpages --https-document
+python3 -B -I scripts/test_manual.py
+```
+
+Rendering checks all shipped and optional sources before output replacement,
+then checks rendered pages and nonempty whatis entries. `check-all.sh` runs
+the host refusal controls. The actual `system_files()` assembly repeats the
+check against every returned `/bin` entry, including additions outside the
+pre-build declaration, before any image writer receives those files. Duplicate
+names/paths or absent source, rendered page or index entries refuse the build.
+This is a coverage invariant; mdoc lint and source/prose review remain distinct.
 
 The command matrix drives it over SSH: on the PTY `man intro`,
 `man 7 handles`, and four more pages print exactly the host-rendered
@@ -2027,10 +2161,15 @@ One deployment is the operator's: `scripts/build-operator-image.sh`
 it; afterboot(8) is its guide. The test matrices keep building their own
 images; this one carries no test helper.
 
+If a kernel ISO make step fails, the build reports the last 64 KiB of its
+combined stdout and stderr through the run logger and in the failure text.
+This tail is bounded in memory; successful make output stays quiet. Importer
+preparation failures also identify the boot and step before image mutation.
+
 - `OUT/absd-operator.iso`: the kernel at the pinned commit
   (`ABSD_KERNEL_RUN`), init, `absd-fsd`, and `sshd` as a `net fsd served`
   durable boot.
-- `OUT/absd-operator.img`, 64 MiB: `/bin` (every native command, `absd-sh`,
+- `OUT/absd-operator.img`, 128 MiB (room to stage a successor release of the same composition; `scripts/operator_image.py` `IMAGE_BYTES`): `/bin` (every native command, `absd-sh`,
   the eight ports: seven from uutils and ripgrep), `/share/man`, `/etc/network.conf` and
   `/etc/sshd.conf` (`operator/etc/`, or the files of `--etc DIR`), and
   `/ssh/authorized_keys` (`--authorized-keys`, ssh-ed25519 lines only). It
@@ -2047,11 +2186,29 @@ images; this one carries no test helper.
   everything else. It is the only way `/etc` changes: sessions see it
   read-only, so no session can lock the operator out.
 
-`boot-operator.sh OUT [PORT]` runs QEMU in the foreground (RDRAND CPU, the
-ISO, the disk on IDE, e1000 on user networking with 127.0.0.1:PORT
-forwarded to the address and port the image's `/etc` files name, which the
-host reads from the image), the serial console in `OUT/console.log`, and
-exits 0 when the machine halts; a reboot boots the same image again.
+`boot-operator.sh OUT [PORT]` runs QEMU (RDRAND CPU, the ISO, the disk on
+IDE, e1000 on user networking with 127.0.0.1:PORT forwarded to the address
+and port the image's `/etc` files name, which the host reads from the
+image), the serial console in `OUT/console.log`, and exits 0 when the
+machine halts; a reboot boots the same image again. It is also the launcher
+of the recovery protocol: it holds `OUT/recovery/lock` for the run, rotates
+the previous console to `OUT/console-<time>.log`, runs the precheck
+(`scripts/storage_fence_resume.py`, the decision table of
+WRITABLE-ENTRY.md) and refuses with status 7 when it refuses, starts QEMU
+in the background, records the launch for a pending authorization, and
+classifies the records when QEMU exits.
+
+**Writable recovery after an unclean stop.** A served machine that stopped
+uncleanly is refused on its next boot (`RECOVERY WRITABLE REFUSED
+reason=storage_fence previous=failed fence=none`, status 7, zero writes).
+`python3 -I scripts/release.py recover --target OUT --attest-sole-instance
+--accept-committed-state --reason TEXT` writes one authorization record for
+exactly the committed state the host reader saw; the next `boot-operator.sh`
+consumes it and serves; `recover --wait-ready --id ID` waits for that boot's
+readiness; `recover --status` and `--revoke` read and withdraw. The runbook's
+section 9a is the procedure; `scripts/run-storage-fence-resume.sh` is its
+qualification matrix (`scripts/storage-fence-resume-matrix.py`,
+`scripts/test_storage_fence_resume.py` for the host side).
 
 **Configuration** (`ssh/src/etc.rs`, host-tested). sshd reads
 `/etc/network.conf` (`address`, `netmask`, optional `gateway`) and
@@ -2067,47 +2224,46 @@ fails (QEMU status 7). No default ever replaces a value the operator wrote.
 At every start sshd prints what it uses and where it came from. There is no
 general configuration framework: two files, one reader, one process.
 
-**Console lines from sshd.** sshd has no console (init relays its stderr
-as hex-framed `EXTERNAL OUTPUT CHUNK` records, the qualification format),
-so the few lines an operator must read before any session exists (the
-configuration in use or refused, the host key fingerprint and public key)
-go through the file server: `NOTICE` (op 34, control channel only, at most
-400 bytes, non-printable bytes shown as `?`) makes `absd-fsd`, which has
-init's console, print the line as is.
+**Console lines and logs.** Init captures separate managed-service stdout and
+stderr pipes, attributes them to the supervised service/PID, and appends them
+to the bounded kernel ring. A separately supervised `absd-logd` collects that ring with its own independent
+cursor and persists bounded current/previous-boot history through an exclusive
+private FSD channel with bounded transport. FSD and operator sessions continue
+during collector death, bounded backoff and restart. Ordinary application
+logging uses stdout/stderr; no ABSD-specific application protocol is needed.
+Selected pre-session notices still use the bounded `NOTICE` control request.
 
-**Logs.** Each process that logs writes its own file under `/var/log`
-through the ordinary filesystem; there is no log daemon. `absd-fsd` writes
-`/var/log/fsd` into its own filesystem (its start with the boot identity,
-host key, ready, bindings and releases, broken channels, stop; per-command
-`FSD DERIVE` stays on the console, so a command's start never writes the
-disk); sshd writes `/var/log/sshd` through its control channel (every line
-it logs; `ssh/src/oplog.rs`), queued in memory (at most 16 KiB, then lines
-are dropped and counted) and written once per pass of its loop, the file
-kept open so the file server's idle commit covers it. Lines are
-`YYYY-MM-DDTHH:MM:SSZ PROGRAM: TEXT` (the RTC's UTC second, `-` if the kernel
-refuses a reading; at most 512 bytes; printable ASCII). Bound
-(`fsd/src/log.rs`, host-tested): a log that would pass 64 KiB is renamed to
-`NAME.0` (replacing the previous) and restarted, so each keeps at most
-128 KiB, the newest lines; a write the filesystem refuses (full) drops the
-line, and the next line written first says `log: N lines dropped`. Clients
-add lines before they authenticate (the connection, the user name, a
-refused key), so a run of connections can rotate older lines out. Every
-line also still goes where it went before (the console). Sessions get
-`/var/log` read-only. Init's lines and everything before the file server
-starts are console-only (init holds no channel and starts first).
+**Logs.** `logs -u sshd`, `logs -b -1 --export`, and `logs -u fsd -f` inspect retained
+history; `logs --volatile` reads the independent ring when storage is unavailable.
+The existing `/var/log/fsd` and `/var/log/sshd` text views keep their two-file
+64 KiB rotation policy; the collector maintains sshd's projection instead of
+making sshd synchronously write through FSD. Sessions get log-read authority,
+and neither writable log mounts nor destructive retention commands.
+[logs(1)](man/logs.1) is the canonical retention, escaping, filtering, failure,
+and shutdown durability policy. These are diagnostic records, not an
+authorization ledger or a promise about abrupt power loss.
 
-**File transfer.** One path, over stock OpenSSH's exec: `ssh host 'cat >
+**File transfer.** OpenSSH `sftp` and default modern `scp` use the bounded
+`absd-sftp` v3 worker, installed in the stock image. It starts in
+`/home/operator`, with the same restricted filesystem authority as a direct
+session command. See `man/absd-sftp.8` for supported requests, size limits,
+metadata/APPEND refusals, and partial-upload behavior. Host key pinning and
+the actual client-visible SSH endpoint are the same as for login.
+
+The exec transport remains: `ssh host 'cat >
 FILE' < local` (the shell's redirection copier writes the file through the
 session's own channel; committed when `cat` ends) and `ssh host cat FILE >
 local` (sshd's own child, bytes through the session's stdout pipe). Both
-are byte-exact for binary data without a PTY. No `scp`/`sftp`: sunset
-passes a subsystem request, but serving SFTP would be a new server, and
-OpenSSH 9's `scp` speaks SFTP.
+are byte-exact for binary data without a PTY. Legacy `scp -O` is not served;
+ordinary modern scp uses the SFTP subsystem.
 
-**Time.** `date` and `uptime` (above, "Commands under /bin"). The
-filesystem records a modification time per object since format 2
-(docs/FILESYSTEM.md). `stat` shows whole-second UTC or `unknown`; `ls -l`
-shows UTC to the minute or `-`. `cp` does not preserve it.
+**Time.** `date`, `clock` and `uptime` are described above and in
+[date(1)](man/date.1), [clock(1)](man/clock.1) and [time.conf(5)](man/time.conf.5).
+The filesystem invalidates its civil-time cache when a correction changes
+the generation; deliberate backward corrections can make mtimes decrease.
+`stat` shows whole-second UTC or `unknown`; `ls -l` shows UTC to the minute
+or `-`. `cp` does not preserve mtime. All corrections last only this boot,
+do not write the RTC and do not change the existing TLS time policy.
 
 `scripts/run-operator-matrix.sh` (`scripts/operator-matrix.py`) builds the
 image with the documented script and non-default `/etc` files (address
@@ -2129,9 +2285,14 @@ the host's clock window; the boot identity changes on reboot), `LOGS OK`
 the command set and manual, halts with status 0), and
 `ETC CONFIG MALFORMED REFUSED OK` (a malformed `sshd.conf` and
 `network.conf`, each put in place with `--reconfigure`, stop the boot with
-the file, line, and reason in plain text; replacing the file recovers).
+the file, line, and reason in plain text; reconfiguring that failed image
+refuses without changing it or its manifest. Correcting a separate clean
+pre-boot copy serves successfully; this is clean offline configuration repair,
+not writable recovery of the failed image).
 
 ## C application kit
+
+The staged prebuilt cross-development workflow is [docs/HOST-SDK.md](docs/HOST-SDK.md); its licence/publication disposition is stated there.
 
 The C kit lets a C program run on ABSD as a static ELF over the native
 runtime, with Picolibc for the C library. The sources are in the tree:
@@ -2162,6 +2323,14 @@ boots the ELF as its one user program, stdin from a file, output compared
 with the Linux build's) and shell (installed as `/bin/<program>` and run as
 absd-sh's child in an SSH exec session, compared with the Linux build,
 startup-record vectors and resources checked; `scripts/c-kit-matrix.py`).
+
+The host checks in `scripts/check-all.sh` run `scripts/c-kit-matrix-selftest.py`
+without C-port build artifacts or a guest. It uses a temporary campaign fixture
+for the real Cports constructor and checks session accounting with quiescence
+enabled, alongside the census ordering, confirmation and key retirement tests.
+Run it directly with `python3 -B -I scripts/c-kit-matrix-selftest.py`;
+`--campaign <dir>` reads an existing campaign's `cports-build` and `upstream`
+instead, and `--work <empty-dir>` preserves results while retiring owned keys.
 
 `scripts/run-c-kit.sh` (in `check-all.sh`) qualifies it and prints, in
 order: `ABSD C KIT REPRODUCIBLE OK builds=2 libabs=<sha> programs=<n>` (two

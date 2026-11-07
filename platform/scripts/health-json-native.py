@@ -3,6 +3,11 @@
 
 Uses its existing boot/fault/normal-end checks. Only the files installed and
 the observation callback change; none of its transition predicates change.
+Under the storage fence (owner 2026-10-19, coordination record #63) those checks
+refuse the generation after a served recovery reset, so only the ready boots
+(the fault loop's first boot and the fresh and clean-restart boots of the
+follow-on cases) are observed; AUTOMATIC WRITABLE RECOVERY UNSUPPORTED (the
+operator act of coordination record #63 is the only writable recovery) is inherited.
 """
 import importlib.util
 import json

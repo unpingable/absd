@@ -27,6 +27,8 @@ run_groff() {
 version=$(run_groff --version | sed -n 1p)
 test "$version" = "GNU groff version 1.23.0" || fail "unexpected groff: $version"
 
+python3 -B -I "$root/scripts/check-manual.py" --source-only --https-document
+
 rm -rf "${out:?}"
 mkdir -p "$out"
 index=$out/whatis.unsorted
@@ -62,3 +64,5 @@ done
 LC_ALL=C sort "$index" >"$out/whatis"
 rm -f "$index"
 printf '%s\n' "ABSD MAN RENDERED pages=$count names=$names"
+
+python3 -B -I "$root/scripts/check-manual.py" --rendered "$out" --https-document

@@ -285,6 +285,19 @@ pub struct Stats {
     /// those dropped because the queue was full.
     pub raw_frames: u64,
     pub raw_dropped: u64,
+    /// IPv4 UDP datagrams dequeued by `datagram_receive` because their
+    /// source endpoint differs from the owner-issued grant. Saturates at
+    /// u64::MAX. Stack-local across endpoint close/rebind; zero on open.
+    /// Does not count malformed frames, queue overflow or other losses.
+    pub udp_grant_dropped: u64,
+    /// Checksum-validated IPv4 TCP frames actually discarded by the reserved
+    /// server-port filter for a different peer tuple. A narrower subset of
+    /// ingress drops; malformed/faulted/other-port drops are not counted.
+    /// Saturates and survives close/rebind/fence; zero on a new Stack.
+    pub tcp_server_peer_dropped: u64,
+    /// Latest counted observation, including after the counter saturates.
+    /// Inert local history, not peer authentication or replacement state.
+    pub last_tcp_server_peer_refusal: Option<stream::server::PeerRefusal>,
     pub accepted: u64,
     pub connected: u64,
     /// Connections released after a close or abort.
@@ -306,6 +319,7 @@ struct Port<L: Link> {
     raw: VecDeque<Vec<u8>>,
     stats: Stats,
     feedback: icmp::Feedback,
+    tcp_mtu: stream::mtu::Feedback,
     ipv6_feedback: ipv6::feedback::Feedback,
     ipv6_config: Option<ipv6::Config>,
     ipv6_route: Option<ipv6::routing::State>,
@@ -314,9 +328,80 @@ struct Port<L: Link> {
     ipv6_peers: [Option<[u8; 16]>; ipv6::MAX_ENDPOINTS],
     ipv6_tcp_peers: [Option<ipv6::stream::Flow>; ipv6::stream::MAX_ENDPOINTS],
     server_rules: [Option<stream::server::Filter>; stream::MAX_ENDPOINTS],
+    ipv6_server_rules: [Option<ipv6::stream::server::Filter>; ipv6::stream::MAX_ENDPOINTS],
 }
 
 impl<L: Link> Port<L> {
+    fn ipv6_peer_addresses(
+        &self,
+    ) -> [Option<[u8; 16]>; ipv6::MAX_ENDPOINTS + ipv6::stream::MAX_ENDPOINTS + 2] {
+        let mut peers = [None; ipv6::MAX_ENDPOINTS + ipv6::stream::MAX_ENDPOINTS + 2];
+        peers[..ipv6::MAX_ENDPOINTS].copy_from_slice(&self.ipv6_peers);
+        if let Some(route) = &self.ipv6_route {
+            for peer in &mut peers[..ipv6::MAX_ENDPOINTS] {
+                if *peer == Some(route.route.peer.ip) {
+                    *peer = Some(route.route.router);
+                }
+            }
+        }
+        for (slot, flow) in self.ipv6_tcp_peers.iter().enumerate() {
+            peers[ipv6::MAX_ENDPOINTS + slot] = flow
+                .filter(|_| ipv6::stream::server::live_rule(&self.ipv6_server_rules[slot]))
+                .map(|flow| {
+                    self.ipv6_route
+                        .as_ref()
+                        .filter(|route| route.route.peer == flow.peer)
+                        .map_or(flow.peer.ip, |route| route.route.router)
+                });
+        }
+        peers[ipv6::MAX_ENDPOINTS + ipv6::stream::MAX_ENDPOINTS] = self
+            .ipv6_echo
+            .as_ref()
+            .and_then(|echo| echo.borrow().peer());
+        peers[ipv6::MAX_ENDPOINTS + ipv6::stream::MAX_ENDPOINTS + 1] = self
+            .ipv6_responder
+            .as_ref()
+            .and_then(|responder| responder.borrow().peer());
+        peers
+    }
+    // Recheck only pure TCP/ND authority on a cached frame. Echo/responder
+    // admission has its own effects and must not be evaluated a second time.
+    fn ipv6_cached_ingress(&self, frame: &[u8]) -> bool {
+        if frame.len() >= 54 && frame[12..14] == [0x86, 0xdd] && frame[20] == 6 {
+            return ipv6::stream::ingress(frame, self.ipv6_config, &self.ipv6_tcp_peers)
+                && ipv6::stream::server::ingress(frame, &self.ipv6_server_rules);
+        }
+        if frame.len() >= 55
+            && frame[12..14] == [0x86, 0xdd]
+            && frame[20] == 58
+            && matches!(frame[54], 135 | 136)
+        {
+            let peers = self.ipv6_peer_addresses();
+            return if let Some(route) = &self.ipv6_route {
+                ipv6::ingress_router(
+                    frame,
+                    self.ipv6_config,
+                    &peers,
+                    route
+                        .active(&self.ipv6_tcp_peers)
+                        .then_some(route.route.router),
+                )
+            } else {
+                ipv6::ingress(frame, self.ipv6_config, &peers)
+            };
+        }
+        true
+    }
+    fn record_server_peer_refusal(&mut self, length: usize) {
+        if let Some(observation) =
+            stream::server::peer_refusal(&self.rx[..length], &self.server_rules)
+        {
+            self.stats.tcp_server_peer_dropped =
+                self.stats.tcp_server_peer_dropped.saturating_add(1);
+            self.stats.last_tcp_server_peer_refusal = Some(observation);
+        }
+    }
+
     fn link_error(&mut self, code: i64) {
         self.stats.link_errors += 1;
         self.stats.last_error = code;
@@ -335,6 +420,13 @@ impl<L: Link> Port<L> {
         // are taken per call so a flood cannot hold the caller here.
         for _ in 0..RAW_QUEUE {
             let received = self.link.receive(&mut self.rx, timeout);
+            if self.ipv6_server_rules.iter().any(Option::is_some) {
+                ipv6::stream::server::observe(
+                    &mut self.ipv6_server_rules,
+                    self.link.now_ms(),
+                    self.link.read(),
+                );
+            }
             if self.server_rules.iter().any(Option::is_some) {
                 stream::server::observe(&mut self.server_rules, self.link.now_ms());
                 stream::server::observe_link(&mut self.server_rules, self.link.read());
@@ -348,6 +440,7 @@ impl<L: Link> Port<L> {
                         continue;
                     }
                     if !stream::server::ingress(&self.rx[..length], &self.server_rules) {
+                        self.record_server_peer_refusal(length);
                         timeout = 0;
                         continue;
                     }
@@ -364,36 +457,13 @@ impl<L: Link> Port<L> {
                         timeout = 0;
                         continue;
                     }
-                    let mut peers = [None; ipv6::MAX_ENDPOINTS + ipv6::stream::MAX_ENDPOINTS + 2];
-                    peers[..ipv6::MAX_ENDPOINTS].copy_from_slice(&self.ipv6_peers);
-                    if let Some(route) = &self.ipv6_route {
-                        for peer in &mut peers[..ipv6::MAX_ENDPOINTS] {
-                            if *peer == Some(route.route.peer.ip) {
-                                *peer = Some(route.route.router);
-                            }
-                        }
-                    }
-                    for (slot, flow) in self.ipv6_tcp_peers.iter().enumerate() {
-                        peers[ipv6::MAX_ENDPOINTS + slot] = flow.map(|flow| {
-                            self.ipv6_route
-                                .as_ref()
-                                .filter(|route| route.route.peer == flow.peer)
-                                .map_or(flow.peer.ip, |route| route.route.router)
-                        });
-                    }
-                    peers[ipv6::MAX_ENDPOINTS + ipv6::stream::MAX_ENDPOINTS] = self
-                        .ipv6_echo
-                        .as_ref()
-                        .and_then(|echo| echo.borrow().peer());
-                    peers[ipv6::MAX_ENDPOINTS + ipv6::stream::MAX_ENDPOINTS + 1] = self
-                        .ipv6_responder
-                        .as_ref()
-                        .and_then(|responder| responder.borrow().peer());
+                    let peers = self.ipv6_peer_addresses();
                     let frame = &self.rx[..length];
                     self.ipv6_feedback.received(frame, self.link.now_ms());
                     let tcp_v6 = length >= 54 && frame[12..14] == [0x86, 0xdd] && frame[20] == 6;
                     let admitted = if tcp_v6 {
                         ipv6::stream::ingress(frame, self.ipv6_config, &self.ipv6_tcp_peers)
+                            && ipv6::stream::server::ingress(frame, &self.ipv6_server_rules)
                     } else {
                         let ordinary = if let Some(route) = &self.ipv6_route {
                             ipv6::ingress_router(
@@ -429,6 +499,10 @@ impl<L: Link> Port<L> {
                         self.feedback
                             .received(&self.rx[..length], self.link.now_ms());
                     }
+                    if self.tcp_mtu.active() {
+                        self.tcp_mtu
+                            .received(&self.rx[..length], self.link.now_ms());
+                    }
                     self.rx_length = Some(length);
                     return Ok(true);
                 }
@@ -436,6 +510,7 @@ impl<L: Link> Port<L> {
                 Err(code) => {
                     self.ipv6_feedback.lost();
                     stream::server::observe_error(&mut self.server_rules, code);
+                    ipv6::stream::server::observe_error(&mut self.ipv6_server_rules, code);
                     self.link_error(code);
                     return Err(code);
                 }
@@ -485,8 +560,10 @@ struct TxToken<'a, L: Link> {
     buffer: &'a mut [u8; FRAME_MAX],
     stats: &'a mut Stats,
     feedback: &'a mut icmp::Feedback,
+    tcp_mtu: &'a mut stream::mtu::Feedback,
     ipv6_feedback: &'a mut ipv6::feedback::Feedback,
     server_rules: &'a mut [Option<stream::server::Filter>; stream::MAX_ENDPOINTS],
+    ipv6_server_rules: &'a mut [Option<ipv6::stream::server::Filter>; ipv6::stream::MAX_ENDPOINTS],
 }
 
 impl<L: Link> phy::TxToken for TxToken<'_, L> {
@@ -511,9 +588,31 @@ impl<L: Link> phy::TxToken for TxToken<'_, L> {
                 return result;
             }
         }
+        if self.ipv6_server_rules.iter().any(Option::is_some) {
+            ipv6::stream::server::observe(
+                self.ipv6_server_rules,
+                self.link.now_ms(),
+                self.link.read(),
+            );
+        }
+        if !ipv6::stream::server::egress(&self.buffer[..length], self.ipv6_server_rules) {
+            return result;
+        }
+        if self.tcp_mtu.active()
+            && !self
+                .tcp_mtu
+                .egress(&self.buffer[..length], self.link.now_ms())
+        {
+            return result;
+        }
         let sent = self.link.send(&self.buffer[..length]);
         if let Err(code) = sent {
             stream::server::observe_error(self.server_rules, code);
+            ipv6::stream::server::observe_error(self.ipv6_server_rules, code);
+        }
+        if sent.is_ok() && self.tcp_mtu.active() {
+            self.tcp_mtu
+                .submitted(&self.buffer[..length], self.link.now_ms());
         }
         if sent.is_ok() && self.feedback.active() {
             self.feedback
@@ -526,6 +625,13 @@ impl<L: Link> phy::TxToken for TxToken<'_, L> {
             self.ipv6_feedback.lost();
         }
         count_send(self.stats, sent);
+        if self.ipv6_server_rules.iter().any(Option::is_some) {
+            ipv6::stream::server::observe(
+                self.ipv6_server_rules,
+                self.link.now_ms(),
+                self.link.read(),
+            );
+        }
         if self.server_rules.iter().any(Option::is_some) {
             stream::server::observe(self.server_rules, self.link.now_ms());
             stream::server::observe_link(self.server_rules, self.link.read());
@@ -549,11 +655,22 @@ impl<L: Link> phy::Device for Port<L> {
             return None;
         }
         let length = self.rx_length.take()?;
+        if self.ipv6_server_rules.iter().any(Option::is_some) {
+            ipv6::stream::server::observe(
+                &mut self.ipv6_server_rules,
+                self.link.now_ms(),
+                self.link.read(),
+            );
+        }
+        if !self.ipv6_cached_ingress(&self.rx[..length]) {
+            return None;
+        }
         if self.server_rules.iter().any(Option::is_some) {
             stream::server::observe(&mut self.server_rules, self.link.now_ms());
             stream::server::observe_link(&mut self.server_rules, self.link.read());
         }
         if !stream::server::ingress(&self.rx[..length], &self.server_rules) {
+            self.record_server_peer_refusal(length);
             return None;
         }
         Some((
@@ -566,7 +683,9 @@ impl<L: Link> phy::Device for Port<L> {
                 buffer: &mut self.tx,
                 stats: &mut self.stats,
                 server_rules: &mut self.server_rules,
+                ipv6_server_rules: &mut self.ipv6_server_rules,
                 feedback: &mut self.feedback,
+                tcp_mtu: &mut self.tcp_mtu,
                 ipv6_feedback: &mut self.ipv6_feedback,
             },
         ))
@@ -579,8 +698,10 @@ impl<L: Link> phy::Device for Port<L> {
             buffer: &mut self.tx,
             stats: &mut self.stats,
             feedback: &mut self.feedback,
+            tcp_mtu: &mut self.tcp_mtu,
             ipv6_feedback: &mut self.ipv6_feedback,
             server_rules: &mut self.server_rules,
+            ipv6_server_rules: &mut self.ipv6_server_rules,
         })
     }
 
@@ -690,6 +811,7 @@ impl<L: Link> Stack<L> {
             stats: Stats::default(),
             server_rules: [None; stream::MAX_ENDPOINTS],
             feedback: icmp::Feedback::new(mac),
+            tcp_mtu: stream::mtu::Feedback::new(mac),
             ipv6_feedback: ipv6::feedback::Feedback::new(mac),
             ipv6_config: None,
             ipv6_route: None,
@@ -697,6 +819,7 @@ impl<L: Link> Stack<L> {
             ipv6_responder: None,
             ipv6_peers: [None; ipv6::MAX_ENDPOINTS],
             ipv6_tcp_peers: [None; ipv6::stream::MAX_ENDPOINTS],
+            ipv6_server_rules: [None; ipv6::stream::MAX_ENDPOINTS],
         };
         let mut iface_config = IfaceConfig::new(HardwareAddress::Ethernet(EthernetAddress(mac)));
         iface_config.random_seed = seed(mac, now);
@@ -801,12 +924,8 @@ impl<L: Link> Stack<L> {
         let server_link_errors = self.port.stats.link_errors;
         self.ipv6_maintain();
         self.ipv6_stream_maintain(false);
-        if (self.datagrams.active() || self.streams.active())
-            && self.read_link().is_none_or(|r| !r.link_up || r.disabled)
-        {
-            self.datagram_fence();
-            self.stream_fence();
-            self.ipv6_fence();
+        if self.datagrams.active() || self.streams.active() {
+            let _ = self.datagram_live();
         }
         if self.streams.active() {
             self.stream_maintain(false);
@@ -818,16 +937,13 @@ impl<L: Link> Stack<L> {
         self.ipv6_stream_maintain(true);
         if self.port.stats.link_errors != server_link_errors {
             self.stream_server_fence();
+            self.ipv6_stream_server_fence();
         }
         if self.streams.active() {
             self.stream_maintain(true);
         }
-        if (self.datagrams.active() || self.streams.active())
-            && self.read_link().is_none_or(|r| !r.link_up || r.disabled)
-        {
-            self.datagram_fence();
-            self.stream_fence();
-            self.ipv6_fence();
+        if self.datagrams.active() || self.streams.active() {
+            let _ = self.datagram_live();
         }
         self.ipv6_maintain();
         changed

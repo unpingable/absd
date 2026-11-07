@@ -82,9 +82,11 @@ dependencies = [
 name = "health-observation-host-tests"
 version = "0.1.0"
 dependencies = [
+ "absd-fs",
  "absd-fsd",
  "absd-release",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

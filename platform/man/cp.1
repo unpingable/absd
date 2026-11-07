@@ -1,0 +1,60 @@
+.Dd November 3, 2026
+.Dt CP 1
+.Os ABSD
+.Sh NAME
+.Nm cp
+.Nd copy file bytes and directory trees
+.Sh SYNOPSIS
+.Nm
+.Op Fl r
+.Ar source ... destination
+.Sh DESCRIPTION
+Copy one source to a destination path, or one or more sources into an
+existing destination directory under their own names.
+Multiple sources require a destination directory.
+An existing destination file is truncated and replaced.
+.Fl r
+copies a directory and all its descendants, visiting sorted names;
+without it, directory sources are refused.
+Existing destination directories may be merged with the copied tree.
+.Pp
+This copies bytes, not source identity, read-only flag or modification time.
+There are no owner, group or mode bits to preserve.
+There is no
+.Fl a ,
+.Fl p
+or interactive overwrite option.
+Options precede operands; a later option word is a path.
+.Ql --
+ends option processing; use it or a
+.Ql ./
+prefix for a name beginning with a dash.
+Unknown leading options return status 2.
+.Pp
+The source must be readable and the destination writable through this
+process's view; copying does not grant authority.
+Source and destination referring to the same filesystem object are refused
+before truncation.
+A directory cannot be copied into itself.
+.Pp
+Failures are diagnosed on standard error; remaining sources and tree
+entries are still attempted.
+If copying bytes fails, a newly created destination is removed if possible.
+An already existing destination has lost its old bytes; it, or a new file
+that could not be removed, is reported as left incomplete.
+The operation has no transaction across files and no rollback of the tree.
+Close commits through the file server; use
+.Xr sync 1
+for an explicit barrier on accepted writes.
+.Sh EXIT STATUS
+0 when every copy succeeded; 1 for a failed or refused copy; 2 for
+missing operands or an unknown leading option.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+cp /etc/network.conf /home/operator/network.conf
+cp -r /home/operator/notes /home/operator/notes-copy
+.Ed
+.Sh SEE ALSO
+.Xr mv 1 ,
+.Xr sync 1 ,
+.Xr filesystem 7

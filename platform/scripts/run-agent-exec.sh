@@ -6,10 +6,9 @@
 # must already be built (scripts/prepare-and-build.sh, scripts/build-ssh.sh,
 # scripts/render-man.sh); mkdir is required (cases C3a and C4).
 # Environment: ABSD_KERNEL_RUN (required; a disposable kernel copy, never
-# the protected kernel source or a kernel source checkout); ABSD_QEMU (default
-# qemu-system-x86_64); ABSD_AGENT_EXEC_CANDIDATE=2 also runs the rows marked
-# `# requires candidate 2` (C12: needs /bin/tcc and the tcc fixture image,
-# which this script does not provide); ABSD_AGENT_EXEC_BASELINE=after-first
+# archived-occurrence or a kernel source checkout); ABSD_QEMU (default
+# qemu-system-x86_64); ABSD_AGENT_EXEC_CANDIDATE=N also runs the rows marked
+# `# requires candidate N` (the case file has none); ABSD_AGENT_EXEC_BASELINE=after-first
 # compares capacity with the first call's after-line instead of the boot's
 # first quiescent line; ABSD_AGENT_EXEC_WORK (default
 # <platform>/.agent-exec-work); ABSD_AGENT_JOBS="FILE..." also runs those
@@ -23,6 +22,7 @@
 # this lane at a time).
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/inputs.sh"
 kernel=${ABSD_KERNEL_RUN:?set ABSD_KERNEL_RUN to a disposable kernel copy}
 qemu=${ABSD_QEMU:-qemu-system-x86_64}
 work=${ABSD_AGENT_EXEC_WORK:-$root/.agent-exec-work}
@@ -46,11 +46,6 @@ if [ -e "$work" ] && { [ -L "$work" ] || ! [ -d "$work" ]; }; then
     echo "run-agent-exec: $work exists and is not a plain directory" >&2; exit 1
 fi
 [ -d "$kernel" ] || { echo "run-agent-exec: ABSD_KERNEL_RUN $kernel is not a directory" >&2; exit 1; }
-forbidden=/data/git/absd-kernel
-[ -d "$forbidden" ] && forbidden=$(CDPATH= cd -- "$forbidden" && pwd -P)
-[ "$(CDPATH= cd -- "$kernel" && pwd -P)" != "$forbidden" ] ||
-    { echo "run-agent-exec: ABSD_KERNEL_RUN must not be /data/git/absd-kernel" >&2; exit 1; }
-. "$root/scripts/inputs.sh"
 absd_not_kernel_source "$kernel"
 test -f "$kernel/Makefile"
 

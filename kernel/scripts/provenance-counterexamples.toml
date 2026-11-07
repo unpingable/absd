@@ -1,0 +1,290 @@
+# Counterexamples to the licence gate: every reproduction an independent
+# review used to make the gate accept what it should not (slice-licgate,
+# review rounds 1-3, 2026-10-29). Each is retained as a test; `file`
+# and `test` name it. Rounds 1 and 2 cases are refused or, where their
+# obligation is now report-only, detected and listed; round 3 cases are
+# KNOWN-UNVERIFIED (below) (`file` relative to scripts/; a platform-only file is
+# absent from the kernel repository). A research record: add, never remove.
+
+[[case]]
+id = "r1-01"
+round = 1
+description = "a header-only member table (zero rows) passed the gate"
+file = "test_provenance.py"
+test = "test_a_member_table_must_match_its_sealed_receipt"
+
+[[case]]
+id = "r1-02"
+round = 1
+description = "58 dependency-log entries for glibc limits.h, never preprocessed, were read as consumed LGPL source"
+file = "test_picolibc_provenance.py"
+test = "test_a_probe_and_a_consumed_header_are_told_apart"
+
+[[case]]
+id = "r1-03"
+round = 1
+description = "the Unifont 15.1.01 exception accepted a licence change of font 15.1.02"
+file = "test_provenance.py"
+test = "test_a_licence_change_needs_review_unless_an_identity_bound_decision_covers_it"
+
+[[case]]
+id = "r1-04"
+round = 1
+description = "an unversioned policy.decisions entry accepted a change for every version"
+file = "test_provenance.py"
+test = "test_unversioned_decisions_fail"
+
+[[case]]
+id = "r1-05"
+round = 1
+description = "one authorised path in a multi-path provenance.toml rule extended an exception to the whole rule"
+file = "test_provenance.py"
+test = "test_a_path_exception_covers_each_named_path_only"
+
+[[case]]
+id = "r1-06"
+round = 1
+description = "a REUSE annotation grouping the font notice with unrelated source extended OFL-1.1 to both"
+file = "test_provenance.py"
+test = "test_a_path_exception_covers_each_named_path_only"
+
+[[case]]
+id = "r1-07"
+round = 1
+description = "a licence tag after a //! doc-comment leader (Artistic-2.0) was not seen"
+file = "test_provenance.py"
+test = "test_licence_tags_in_every_comment_form_and_file"
+
+[[case]]
+id = "r1-08"
+round = 1
+description = "a REUSE.toml annotation with a quoted key escaped the line-based tag matcher"
+file = "test_provenance.py"
+test = "test_reuse_annotations_are_judged_from_the_parsed_file"
+
+[[case]]
+id = "r1-09"
+round = 1
+description = "licence texts and named tables were skipped before tag inspection"
+file = "test_provenance.py"
+test = "test_licence_tags_in_every_comment_form_and_file"
+
+[[case]]
+id = "r1-10"
+round = 1
+description = "an unrecorded MIT OR GPL-3.0-only member-table row passed"
+file = "test_provenance.py"
+test = "test_member_table_elections_and_pending_terms"
+
+[[case]]
+id = "r1-11"
+round = 1
+description = "MIT! was accepted as MIT: the tokenizer dropped unsupported characters"
+file = "test_provenance.py"
+test = "test_expressions"
+
+[[case]]
+id = "r1-12"
+round = 1
+description = "a whole source file (src/arm64_fdt_tests.rs) was exempted from wording checks"
+file = "test_provenance.py"
+test = "test_a_source_file_exemption_names_its_reviewed_lines"
+
+[[case]]
+id = "r1-13"
+round = 1
+description = "two ring patches were labelled with the package-wide Apache-2.0 AND ISC instead of their files' ISC (a data correction, reviewed by hand)"
+file = ""
+test = ""
+
+[[case]]
+id = "r1-14"
+round = 1
+description = "a missing or incomplete shared-tool pin set produced only a note, and a file-and-pin update in one repository passed"
+file = "test_provenance.py"
+test = "test_shared_tools_need_their_full_pin_set_and_a_matching_peer"
+
+[[case]]
+id = "r1-15"
+round = 1
+description = "a binary's closure was narrowed by searching its source text for dependency names"
+file = "test_provenance.py"
+test = "test_a_dependency_no_binary_source_names_is_still_in_the_closure"
+
+[[case]]
+id = "r1-16"
+round = 1
+description = "listed = false units vanished from a distributed artifact"
+file = "test_provenance.py"
+test = "test_unlisted_units_cannot_be_distributed"
+
+[[case]]
+id = "r1-17"
+round = 1
+description = "ABSD_HTTPS_DOCUMENT selected a variant whose closure the gate never resolved"
+file = "test_provenance.py"
+test = "test_an_uncovered_variant_is_refused_while_selected"
+
+[[case]]
+id = "r1-18"
+round = 1
+description = "a cross-repository component was an opaque first-party entry with no audit"
+file = "test_provenance.py"
+test = "test_a_cross_repository_component_needs_a_matching_paired_audit"
+
+[[case]]
+id = "r1-19"
+round = 1
+description = "repository reporting listed counts and exceptions but not allowed entries"
+file = "test_provenance.py"
+test = "test_inventory_reporting_lists_allowed_entries_and_full_writes_them"
+
+[[case]]
+id = "r1-20"
+round = 1
+description = "a source release's check returned before the licence gate ran"
+file = "test_provenance.py"
+test = "test_source_release_check_runs_the_gate"
+
+[[case]]
+id = "r1-21"
+round = 1
+description = "ABSD_CARGO_REGISTRY replaced the default registry search list"
+file = "test_provenance.py"
+test = "test_registry_variable_adds_to_the_default_search_list"
+
+[[case]]
+id = "r1-22"
+round = 1
+description = "crate licences were read from directories trusted by name, with no checksum verification"
+file = "test_provenance.py"
+test = "test_closure_crates_are_verified_against_their_lock_checksum"
+
+[[case]]
+id = "r2-01"
+round = 2
+description = "(MIT GPL-3.0-only was allowed: the parser stepped over the token after ( without requiring )"
+file = "test_provenance.py"
+test = "test_expressions"
+
+[[case]]
+id = "r2-02"
+round = 2
+description = "the recorded strtod command with -P emitted no line markers and fenv.h was classified as a probe"
+file = "test_picolibc_provenance.py"
+test = "test_marker_suppressing_options_are_refused"
+
+[[case]]
+id = "r2-03"
+round = 2
+description = "a #line directive's logical file name was taken as evidence that a physical file was consumed"
+file = "test_picolibc_provenance.py"
+test = "test_a_line_directive_name_does_not_authenticate_a_file"
+
+[[case]]
+id = "r2-04"
+round = 2
+description = "deleting every /libc.a(...) line from grep.map kept the section check passing and the member count fell from 50 to 0"
+file = "test_picolibc_provenance.py"
+test = "test_membership_comes_from_the_link_not_a_recorded_map"
+
+[[case]]
+id = "r2-05"
+round = 2
+description = "an emptied notice body for libc/include/sys/features.h, its marker kept and its digest re-sealed, passed"
+file = "test_provenance.py"
+test = "test_a_linked_member_without_its_verified_notice_fails"
+
+[[case]]
+id = "r2-06"
+round = 2
+description = "a member table without `notice` disabled every notice check for accepted terms"
+file = "test_provenance.py"
+test = "test_conditional_acceptance_requires_its_notice_inputs"
+
+[[case]]
+id = "r2-07"
+round = 2
+description = "a paired-audit record naming commit ffff...ffff (forty f) passed, with the kernel peer supplied"
+file = "test_provenance.py"
+test = "test_a_cross_repository_component_needs_a_matching_paired_audit"
+
+[[case]]
+id = "r2-08"
+round = 2
+description = "the platform checkout given as its own peer gave UNCHANGED and no paired failure"
+file = "test_provenance.py"
+test = "test_a_peer_must_be_another_repository_at_the_recorded_revision"
+
+[[case]]
+id = "r2-09"
+round = 2
+description = "zeroing bitflags 1.3.2's checksum in ssh/Cargo.lock added no failure: another lock's row supplied the identity"
+file = "test_provenance.py"
+test = "test_every_lock_identity_of_a_crate_is_verified"
+
+[[case]]
+id = "r2-10"
+round = 2
+description = "verifying sunset with the right checksum and then a wrong one returned success twice: cached by name and version"
+file = "test_provenance.py"
+test = "test_crate_verification_is_cached_by_full_identity"
+
+# Round 3 (final review): KNOWN-UNVERIFIED. The gate was narrowed instead
+# of repaired (owner stopping rule): each obligation below is report-only,
+# and its test asserts that every run lists it UNVERIFIED, not that the
+# reproduction is refused.
+
+[[case]]
+id = "r3-01"
+round = 3
+status = "KNOWN-UNVERIFIED"
+obligation = "O2"
+description = "a second bitflags 1.3.2 stanza with another source and a zero checksum inside ssh/Cargo.lock was overwritten by name and version before verification"
+file = "test_provenance.py"
+test = "test_r3_intra_lock_source_overwrite_is_reported_unverified"
+
+[[case]]
+id = "r3-02"
+round = 3
+status = "KNOWN-UNVERIFIED"
+obligation = "C"
+description = "fenv.h removed from strtod's dependency list (still consumed by preprocessing) dropped its rows; the table resealed and passed"
+file = "test_provenance.py"
+test = "test_r3_collector_omission_is_reported_unverified"
+
+[[case]]
+id = "r3-03"
+round = 3
+status = "KNOWN-UNVERIFIED"
+obligation = "O3"
+description = "the Unifont exception accepted a changed font hash while the old accepted hash remained elsewhere in the source description"
+file = "test_provenance.py"
+test = "test_r3_exception_hash_elsewhere_in_the_source_is_reported_unverified"
+
+[[case]]
+id = "r3-04"
+round = 3
+status = "KNOWN-UNVERIFIED"
+obligation = "O4"
+description = "acknowledgement fields and their notice lines removed together and resealed, the owner decision kept, passed"
+file = "test_provenance.py"
+test = "test_r3_acknowledgement_removal_is_reported_unverified"
+
+[[case]]
+id = "r3-05"
+round = 3
+status = "KNOWN-UNVERIFIED"
+obligation = "O5"
+description = "the nested peer run skipped composition and passed an included cross-repository component without a paired record"
+file = "test_provenance.py"
+test = "test_r3_nested_peer_composition_is_reported_unverified"
+
+[[case]]
+id = "r3-06"
+round = 3
+status = "KNOWN-UNVERIFIED"
+obligation = "all report-only"
+description = "every obligation mode set to report, on passing inputs, printed a plain PASS with no UNVERIFIED entry"
+file = "test_provenance.py"
+test = "test_report_only_obligations_are_listed_unverified_on_passing_inputs"

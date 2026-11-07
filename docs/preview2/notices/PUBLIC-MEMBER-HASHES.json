@@ -1,0 +1,576 @@
+{
+  "schema_version": 1,
+  "time": "2026-11-06T21:56:49.271945+00:00",
+  "scope": "Read-only member hashing from the exact libc archive consumed by the completed 18-port ELF relink collector; no new relink or build",
+  "actual_collector_receipt_sha256": "c47c41718d06b58aa0991cb063709e65e690c1462a58396c119534f7fba78373",
+  "libc_a_sha256": "7924073af8c975a4d623917070cbe098276632f0e332accfd82e11cdb7975f20",
+  "member_count": 112,
+  "members": [
+    {
+      "name": "libc_ctype_ctype_.c.o",
+      "bytes": 2840,
+      "sha256": "b4e3aed3819f807127098ab7ae20cbbb651392057aad5191da5c99398f27be46"
+    },
+    {
+      "name": "libc_ctype_isalnum.c.o",
+      "bytes": 3272,
+      "sha256": "bda9e46135121f598da53e14f651d08deedd6f1877db3134fe061a33c0dd3b86"
+    },
+    {
+      "name": "libc_ctype_isalpha.c.o",
+      "bytes": 2968,
+      "sha256": "f06f13ab49fa38830ce57dfbb063d5295a0d22e7c850b7fa26a4c4892810e37b"
+    },
+    {
+      "name": "libc_ctype_isblank.c.o",
+      "bytes": 2816,
+      "sha256": "a536c4a3f53fbd674ad69b5d2a5431548309b23c2c15e37400ae45d67d80bb59"
+    },
+    {
+      "name": "libc_ctype_iscntrl.c.o",
+      "bytes": 2816,
+      "sha256": "a2b3d248e83bb9a95a1a419a5eaf19785cbf87d04b5721b885d817c24f5b3e85"
+    },
+    {
+      "name": "libc_ctype_isdigit.c.o",
+      "bytes": 2968,
+      "sha256": "534f65f04658e3ef8ba904a4b9046ee377bd584efee7356d28da6164def3911f"
+    },
+    {
+      "name": "libc_ctype_isgraph.c.o",
+      "bytes": 2968,
+      "sha256": "35f7dc53bae13025d1821718a8e578ccdaf799d25ca1252e36b4bce3bbaeb1f9"
+    },
+    {
+      "name": "libc_ctype_islower.c.o",
+      "bytes": 2968,
+      "sha256": "45cd3816d5c45fd063de54aa9a0ccde55036d093666ea923f922c0be499a5d66"
+    },
+    {
+      "name": "libc_ctype_isprint.c.o",
+      "bytes": 2968,
+      "sha256": "6074e8581ae7c5cfab337960c8b4a2497d86125c70cc69af1801b6e9e2fa770f"
+    },
+    {
+      "name": "libc_ctype_ispunct.c.o",
+      "bytes": 3152,
+      "sha256": "e84b9003e30bf4347082945ceeeeb26808b3d21442a8600f04e15ab9fe1f4a31"
+    },
+    {
+      "name": "libc_ctype_isspace.c.o",
+      "bytes": 2984,
+      "sha256": "f3f823182107b0f2f38e320f4d3a0263105df9b76c6248a5d7dc706887b44607"
+    },
+    {
+      "name": "libc_ctype_isupper.c.o",
+      "bytes": 2968,
+      "sha256": "976c04d68f4915bcbccef2dad060812dec3996385896b46905eb3f6cca7d9e2a"
+    },
+    {
+      "name": "libc_ctype_isxdigit.c.o",
+      "bytes": 3272,
+      "sha256": "0568eb0664ed4afd2d7003c02c71a3be7d24a2456a4e39467ef510514aad7e27"
+    },
+    {
+      "name": "libc_ctype_tolower.c.o",
+      "bytes": 3224,
+      "sha256": "9edbfd9ede5762b0e5859bb17c1887c16ba2808427d65760efa9e504ef8a8adf"
+    },
+    {
+      "name": "libc_ctype_toupper.c.o",
+      "bytes": 3216,
+      "sha256": "511dd43dacf18dff9438c2d7712cf5f81474c8bf86025ac69a36a23aeb681421"
+    },
+    {
+      "name": "libc_errno_errno.c.o",
+      "bytes": 2336,
+      "sha256": "4b1661c2dc2eabce0900365e0728ddbadb28c51f98f6d88f3a4df74647cc0aad"
+    },
+    {
+      "name": "libc_misc_fini.c.o",
+      "bytes": 3320,
+      "sha256": "ad9f4379b8e9da5a976618e377fb6e35dd763e202af4e6e32f937b3baffbca1e"
+    },
+    {
+      "name": "libc_misc_init.c.o",
+      "bytes": 3320,
+      "sha256": "69467ccd0f754fc1a7035401ad4fcee0b3b9f7b2881056ab238ecf54f9d4622f"
+    },
+    {
+      "name": "libc_posix_basename.c.o",
+      "bytes": 3744,
+      "sha256": "e071253b31b3682a01b9ab3a58cea6bf114d6c2e7ea616561c4f3ed30c179373"
+    },
+    {
+      "name": "libc_posix_dirname.c.o",
+      "bytes": 3872,
+      "sha256": "8e6138c8de5d287b8e7b6ed33e683fb6f3eab478b4f413230a566300797145aa"
+    },
+    {
+      "name": "libc_posix_fgetgrent_r.c.o",
+      "bytes": 7632,
+      "sha256": "d5f0b90fc623076122c6a196ecd970e78b491bb9820da0153d58473cb8b51e30"
+    },
+    {
+      "name": "libc_posix_fgetpwent_r.c.o",
+      "bytes": 8208,
+      "sha256": "9e6f562dba83836661f0b63fd969200127f96df7b2cac330a4a69416e1135aba"
+    },
+    {
+      "name": "libc_posix_fnmatch.c.o",
+      "bytes": 11936,
+      "sha256": "10b81b94632210064836f11994859ded6644d2ffbfd7cd866a1f7bc0be7cd8a0"
+    },
+    {
+      "name": "libc_posix_getgrgid.c.o",
+      "bytes": 4232,
+      "sha256": "d6626d11b0ffeb1ebbf8aaadc22afb1ebbea3cab3e1031fb7d78c96bce5e73e7"
+    },
+    {
+      "name": "libc_posix_getgrgid_r.c.o",
+      "bytes": 6336,
+      "sha256": "6f9c0eba4b3075f103fe6f7561490c32ed0abcf8eaa1953f8a7b129b2be8adc7"
+    },
+    {
+      "name": "libc_posix_getgrnam.c.o",
+      "bytes": 4256,
+      "sha256": "10f3fed118fc0017f2de13a397ae18bcb4c0a2fe0992ec292c071e61e07a6e66"
+    },
+    {
+      "name": "libc_posix_getgrnam_r.c.o",
+      "bytes": 6480,
+      "sha256": "0f8dc23c4798dc3840374bf241e1fca6ae383d21ab180be15fb5820dfc6271f7"
+    },
+    {
+      "name": "libc_posix_getpwnam.c.o",
+      "bytes": 4424,
+      "sha256": "59b32111988467fc8319345ccf9a0113f02f0e5153793ce2e644458bfd5b1933"
+    },
+    {
+      "name": "libc_posix_getpwnam_r.c.o",
+      "bytes": 6648,
+      "sha256": "602dc9824b57408bbaa4264906089ace54f6db8c716e453feeacc3568be2d5ba"
+    },
+    {
+      "name": "libc_posix_getpwuid.c.o",
+      "bytes": 4408,
+      "sha256": "b3df7840f19d17869b4aa75a19eb413324d10d6308db8c1823f4d6b135072f6b"
+    },
+    {
+      "name": "libc_posix_getpwuid_r.c.o",
+      "bytes": 6512,
+      "sha256": "6a9925fb6695bacf955c8490664919abeee4b2339527fcb68d2807457fee495d"
+    },
+    {
+      "name": "libc_posix_grdata.c.o",
+      "bytes": 3376,
+      "sha256": "774e3980854567c843e600349d052cd8fb60bbbe804817b688903825bf4ce393"
+    },
+    {
+      "name": "libc_posix_pwdata.c.o",
+      "bytes": 3552,
+      "sha256": "a966240f3d68ea5aa8a39ceb3e6908f18b6c87dcc1b012493d78a011a6e5635d"
+    },
+    {
+      "name": "libc_posix_regcomp.c.o",
+      "bytes": 69912,
+      "sha256": "2489e3cf1d2791a6a977495412beb6d9d9247193b9ac9c8fbcf12efe5433011a"
+    },
+    {
+      "name": "libc_posix_regerror.c.o",
+      "bytes": 10320,
+      "sha256": "5ff146aa644c7a798b22708afb41f90b98943d8b1d33e8f706e0356af1e78c85"
+    },
+    {
+      "name": "libc_posix_regexec.c.o",
+      "bytes": 57280,
+      "sha256": "8531535268d588627d43b25de1c4d8bd66414a54251d3f4ce30ff079337fa84c"
+    },
+    {
+      "name": "libc_posix_regfree.c.o",
+      "bytes": 6424,
+      "sha256": "25c0ca6be18d297ccdf864b0f63974cf739edc63cfcfce95435e82fa94d98d31"
+    },
+    {
+      "name": "libc_search_bsearch.c.o",
+      "bytes": 4136,
+      "sha256": "339ceb14af948e158cb16005af1e24455073af188857c3c19ae7cfe1f99764ec"
+    },
+    {
+      "name": "libc_search_qsort.c.o",
+      "bytes": 12736,
+      "sha256": "00a8619bb284804d83665f53a40eb233e2b5b5fbea88673b41c565e700fba600"
+    },
+    {
+      "name": "libc_stdio_atod_ryu.c.o",
+      "bytes": 9240,
+      "sha256": "89e100e7db5a50c36e02a6b062922b0d766aaa0068dfc1df351801e0b90ab3c2"
+    },
+    {
+      "name": "libc_stdio_bufio.c.o",
+      "bytes": 13552,
+      "sha256": "1ee448dbf89012986880e237e62b51f296e4ec14cbb0042d636c0791a2e2b429"
+    },
+    {
+      "name": "libc_stdio_bufio_close.c.o",
+      "bytes": 7200,
+      "sha256": "53094c90959715ad331355a74c1f262a02b3e5440de95844f157b35b064fa638"
+    },
+    {
+      "name": "libc_stdio_bufio_close_nf.c.o",
+      "bytes": 4096,
+      "sha256": "fce781a90938a17e4971e2cc07a797664bea5b66b1a19f7d8a09d7cb5e3fc6a4"
+    },
+    {
+      "name": "libc_stdio_dtoa_ryu.c.o",
+      "bytes": 17416,
+      "sha256": "407cdcc0837db2dc8207e95f9bde6a078322705daee9a72779bf9c49f5683502"
+    },
+    {
+      "name": "libc_stdio_dtox_engine.c.o",
+      "bytes": 5416,
+      "sha256": "5fff78c714a6a401eeff876f6e0dbaf3ed71679cb6d2558ccc36ba043f17c3c3"
+    },
+    {
+      "name": "libc_stdio_fclose.c.o",
+      "bytes": 4072,
+      "sha256": "f869d28f967130b03bf8ebffcee8217487bb8d960d1fe58ce39cd2da11ea4ed0"
+    },
+    {
+      "name": "libc_stdio_fdopen.c.o",
+      "bytes": 7952,
+      "sha256": "efdce85d801ac76d51234df6d690fefc038361eb53f9eaf0fb075a1966200d09"
+    },
+    {
+      "name": "libc_stdio_fflush.c.o",
+      "bytes": 4944,
+      "sha256": "04a57fdbffb186e5cb84dccedbc048038e81d4b8791623321ef273e77e23552b"
+    },
+    {
+      "name": "libc_stdio_fgetc.c.o",
+      "bytes": 5336,
+      "sha256": "5461445149ff8cd16b3ded4f9a010f8b80dc014580b41806a01055e3bdaddab5"
+    },
+    {
+      "name": "libc_stdio_fgets.c.o",
+      "bytes": 4648,
+      "sha256": "5d2b023e078eebdf6373ecdf33c695eb446b7eab1fb82943cb5d4f60c472daa8"
+    },
+    {
+      "name": "libc_stdio_fileno.c.o",
+      "bytes": 6232,
+      "sha256": "2a4c6c76558a7882dae9ba6e7b38eb3ae2d3d5e5f5ecdc2c7d71208d31787344"
+    },
+    {
+      "name": "libc_stdio_filestrput.c.o",
+      "bytes": 4576,
+      "sha256": "1ac19dbb86136ee356e91a6b30b1a676ce4769a7e1b41d1d46f382b1b6eac43b"
+    },
+    {
+      "name": "libc_stdio_fmemopen.c.o",
+      "bytes": 10648,
+      "sha256": "6ef2d8dc60b828bd0a6c51dce67f2c33ffbc6cb164cb0ed0fc9cbda644ce540d"
+    },
+    {
+      "name": "libc_stdio_fopen.c.o",
+      "bytes": 4976,
+      "sha256": "a164afa934ffa68eb8c14c86f5204b686d05b66deef3d82cd9417295f266fe9a"
+    },
+    {
+      "name": "libc_stdio_fprintf.c.o",
+      "bytes": 5176,
+      "sha256": "c535aed9907ba0703859c73fd4871d7423c8c705d43b7b9c93ae1d33f17af63b"
+    },
+    {
+      "name": "libc_stdio_fputc.c.o",
+      "bytes": 4208,
+      "sha256": "22edab3a762ecb00d8ab72d2f9bbdd285cfdc5516de66294a1db4b217697503d"
+    },
+    {
+      "name": "libc_stdio_fputs.c.o",
+      "bytes": 4456,
+      "sha256": "19a7ee76240664bb71a96d51bf02bde6fcc35f1137d081e0d2d2100243cee86f"
+    },
+    {
+      "name": "libc_stdio_fread.c.o",
+      "bytes": 5144,
+      "sha256": "5253def1ba19a8bc8a306098ed5e8bda87a63f39965a743a22feed9fd1e8e0e4"
+    },
+    {
+      "name": "libc_stdio_fseek.c.o",
+      "bytes": 5760,
+      "sha256": "9ec8b07e955095baafbbda67da92ace719eeee86e9c61217fe6e942a5132eb20"
+    },
+    {
+      "name": "libc_stdio_fseeko.c.o",
+      "bytes": 5816,
+      "sha256": "93f7375f2443bb8c1c6d9c720f1bd4099185254329ee8fe451d100787f973782"
+    },
+    {
+      "name": "libc_stdio_fwrite.c.o",
+      "bytes": 4984,
+      "sha256": "e3b171f89d953c03769d08cb6fd4740d1f576439b29020466b8185af775bdb38"
+    },
+    {
+      "name": "libc_stdio_getdelim.c.o",
+      "bytes": 5912,
+      "sha256": "a691220fcb597da9f2a05b09bc02e522fe2a31b0ab52f360d4626525a8d8c1c3"
+    },
+    {
+      "name": "libc_stdio_getline.c.o",
+      "bytes": 4824,
+      "sha256": "00804004655ddee142da757219a51bf465ca86a9529d0b98ddd48797dbafd24d"
+    },
+    {
+      "name": "libc_stdio_mktemp.c.o",
+      "bytes": 8640,
+      "sha256": "55d27fbfb91684525fa88e97a372112ef8ec089578e666b195527c1c6fc1f671"
+    },
+    {
+      "name": "libc_stdio_perror.c.o",
+      "bytes": 4128,
+      "sha256": "bda7a35b9675cb5dded40a846e1c80c50bbadd4abc07c86d52e9ddbe93371647"
+    },
+    {
+      "name": "libc_stdio_posixiob_stderr.c.o",
+      "bytes": 7056,
+      "sha256": "ed43ca9ac362c7fc3e59900933b7709429fb8104477ead5e9dba6a61b7de1380"
+    },
+    {
+      "name": "libc_stdio_posixiob_stdin.c.o",
+      "bytes": 7160,
+      "sha256": "c462c51402949a5e1ea96659eff0d3c7c9f498880cd5254ab999c6695246fbe5"
+    },
+    {
+      "name": "libc_stdio_posixiob_stdout.c.o",
+      "bytes": 8088,
+      "sha256": "e7716a6052868eaea3f474c7bf2ce304747f19d5a2770194d4c4eb28a1278917"
+    },
+    {
+      "name": "libc_stdio_printf.c.o",
+      "bytes": 4376,
+      "sha256": "111a77f5fbae5b691c09d39b2c5ea8d45e8a59edf968896eb5d8595ca1c73a0b"
+    },
+    {
+      "name": "libc_stdio_puts.c.o",
+      "bytes": 4720,
+      "sha256": "a0a368bb9b9e3529416c74abbc6bce36b798650f0fbd1cb9e0cf467292a8951b"
+    },
+    {
+      "name": "libc_stdio_remove.c.o",
+      "bytes": 3056,
+      "sha256": "1fbbc473d63263769b6bebea7b8ed5944279cc22d62875a9688a3ff1d184ca0e"
+    },
+    {
+      "name": "libc_stdio_ryu_log10.c.o",
+      "bytes": 3848,
+      "sha256": "06959acfed23edfa94a7ee2c39ba8c973a771518bb40c653fec88b6203c9ed08"
+    },
+    {
+      "name": "libc_stdio_ryu_log2pow5.c.o",
+      "bytes": 4008,
+      "sha256": "6fff53aa53ff40ae4149c33bfce3c4f0d9398016a90c2d0dfec227e63c1c6be8"
+    },
+    {
+      "name": "libc_stdio_ryu_pow5bits.c.o",
+      "bytes": 3312,
+      "sha256": "0be2a5b0fbe318ce8885c797516aaaf804175606e11b6202d885ef391a2307b2"
+    },
+    {
+      "name": "libc_stdio_ryu_table.c.o",
+      "bytes": 9928,
+      "sha256": "3bb9216acbd2c33b6ea35d2179f13302f619ffb8c2eb641b133c4931e77af1a2"
+    },
+    {
+      "name": "libc_stdio_sflags.c.o",
+      "bytes": 3504,
+      "sha256": "a4f71e94437f2790e3955f60eab3d29286f09217cadc873f58add4ed757f447d"
+    },
+    {
+      "name": "libc_stdio_snprintf.c.o",
+      "bytes": 5904,
+      "sha256": "58c727561aa3a5beb347807fedcb470613f6e7da71119d03081d63c6844831c6"
+    },
+    {
+      "name": "libc_stdio_sprintf.c.o",
+      "bytes": 5808,
+      "sha256": "f0a251785d5f3d3b98099069a8bcbf0c85512613964f19448f03083ec58e30a6"
+    },
+    {
+      "name": "libc_stdio_strtod.c.o",
+      "bytes": 12984,
+      "sha256": "3542ef474a0d341d93d4c8ebf36581d393244afc0b3cdf71501f630ca12ece74"
+    },
+    {
+      "name": "libc_stdio_strtol.c.o",
+      "bytes": 5168,
+      "sha256": "da667af162c6a274a3f3a303be19a052754f93167691208c36e483ccfa116a0c"
+    },
+    {
+      "name": "libc_stdio_strtoll.c.o",
+      "bytes": 5184,
+      "sha256": "7d99dde40adf074a2568d724ffe9acd1c46128be8f1d82f7fb289a05aa6c8f01"
+    },
+    {
+      "name": "libc_stdio_strtoul.c.o",
+      "bytes": 4832,
+      "sha256": "8901d08f96141f7a9d65fe823db809ee7053ae5425875f5204bab6a067fc264b"
+    },
+    {
+      "name": "libc_stdio_ungetc.c.o",
+      "bytes": 4504,
+      "sha256": "11968d565b62ff023fe0f057c55b1bac33bd7e151c81489c4eac1b58fbe0fe32"
+    },
+    {
+      "name": "libc_stdio_vfprintf.c.o",
+      "bytes": 25048,
+      "sha256": "157ccf3c7c964b1608fdf567bcc6984fca241829ff86b70adca99f9e81da8c82"
+    },
+    {
+      "name": "libc_stdlib__findenv.c.o",
+      "bytes": 4856,
+      "sha256": "1b2c31e3a1d608c231263fd05d19dc91191999cdb890837af2cef7ea3b9110f2"
+    },
+    {
+      "name": "libc_stdlib_abort.c.o",
+      "bytes": 2960,
+      "sha256": "3c1ed32f8d758a41dcc674e18bdf3dd84fb6e8f330a857ce6e7987b71050ce8b"
+    },
+    {
+      "name": "libc_stdlib_exit.c.o",
+      "bytes": 3272,
+      "sha256": "41fbf4c493117fca538d2fbeb4a53be9ae28b720dbb2da281521829215b7ced5"
+    },
+    {
+      "name": "libc_stdlib_getenv.c.o",
+      "bytes": 3568,
+      "sha256": "3bc1ee2363e1e950ab67d7faa18df0817771100207dad6491f938eef742ac94c"
+    },
+    {
+      "name": "libc_stdlib_random.c.o",
+      "bytes": 3488,
+      "sha256": "9a58bac9b562c0c01483168cb6516da8d33bc7b0a96e1da942c1d878cccbcf22"
+    },
+    {
+      "name": "libc_string_strcasecmp.c.o",
+      "bytes": 3952,
+      "sha256": "f5c54ecd3eaca4e3a2abb316796c99822e7cd9c28abfa36ddd86c7062b1dc9e1"
+    },
+    {
+      "name": "libc_string_strcat.c.o",
+      "bytes": 3176,
+      "sha256": "de56775a3c37bf0418246aaf69951de99a9f778c0107528be62ce8d6e165cca9"
+    },
+    {
+      "name": "libc_string_strchrnul.c.o",
+      "bytes": 3512,
+      "sha256": "78a1db34057feb9c571a1cfe731f91444c05f6474d84d0d5d3462cab290d5981"
+    },
+    {
+      "name": "libc_string_strcpy.c.o",
+      "bytes": 3112,
+      "sha256": "ae84659d607c660466b7cc8d1f11704b2ca546cab47e3c9d1f394076c133745b"
+    },
+    {
+      "name": "libc_string_strcspn.c.o",
+      "bytes": 3552,
+      "sha256": "c0826cd82e50be813c7dccb5e671cf227f7af80d2e6b431142e308eeab5ea8a4"
+    },
+    {
+      "name": "libc_string_strdup.c.o",
+      "bytes": 3856,
+      "sha256": "dbf234dd4b05634293f10c7f0527ddd0107e0af04badf2ddaebc5135767dcbb2"
+    },
+    {
+      "name": "libc_string_strerror.c.o",
+      "bytes": 15784,
+      "sha256": "7a67e671cc5c97a930bbf3edfeb798d32c7a493ffb678b12755a04e9ec4f834b"
+    },
+    {
+      "name": "libc_string_strncasecmp.c.o",
+      "bytes": 4280,
+      "sha256": "57641ffdfdf8ef18a588c4afad9f1c537d1f17ae0e21a576f987f2bb70427407"
+    },
+    {
+      "name": "libc_string_strncmp.c.o",
+      "bytes": 3512,
+      "sha256": "3d060f62b14ed8be079c49b9fbcfa30a7adbbf5492c7441f1c44f581630d86bd"
+    },
+    {
+      "name": "libc_string_strncpy.c.o",
+      "bytes": 3736,
+      "sha256": "5b18d4beefaffc6d5167d8c2aec91aeb3fdd7a0c6ed62270f57abea0647eeeb0"
+    },
+    {
+      "name": "libc_string_strndup.c.o",
+      "bytes": 3936,
+      "sha256": "765a1ef34478540ac7377999b8bbc583fe7c14deecb3b30824a51174e6982ff8"
+    },
+    {
+      "name": "libc_string_strnlen.c.o",
+      "bytes": 3384,
+      "sha256": "ce0ad814b0f4c4ba8d2bf9d91dcb248a5a22243c96d2e1fc49b3056b2a162698"
+    },
+    {
+      "name": "libc_string_strpbrk.c.o",
+      "bytes": 3192,
+      "sha256": "ada4234765a31a7625b944113079d6a99edc147b9f1ae2580b5fef7054bf1207"
+    },
+    {
+      "name": "libc_string_strsep.c.o",
+      "bytes": 3280,
+      "sha256": "b1a59de6ab0da7b55a55cd231723a71cbbcb01553bcdb5723072c70ce36fae8f"
+    },
+    {
+      "name": "libc_string_strstr.c.o",
+      "bytes": 3672,
+      "sha256": "fc4dcd749c7c17a830d4cc98b3a05964dab1e3bb9c5035d1184b6881e8d3e491"
+    },
+    {
+      "name": "libc_string_strtok_r.c.o",
+      "bytes": 4960,
+      "sha256": "8955bde43e99e670aef421fa3d0892972d4b47e1d07eb8a3727ef2d6838ea910"
+    },
+    {
+      "name": "libm_common_s_fpclassify.c.o",
+      "bytes": 4632,
+      "sha256": "5b0e445e5d4898890a8206e3af63c0bd213719f3eb55be37c2e9f23d60ce2fdf"
+    },
+    {
+      "name": "libm_common_s_isnan.c.o",
+      "bytes": 4648,
+      "sha256": "20bc61b54ffef55f77c596050ecefc5b99585877a251c28afae4c493aad93757"
+    },
+    {
+      "name": "memchr.c.o",
+      "bytes": 3648,
+      "sha256": "82c8643f019daf07acbd85d23dad6ab76f8385dcc3cd1df11142dacf03fe2a4a"
+    },
+    {
+      "name": "setjmp.S.o",
+      "bytes": 1976,
+      "sha256": "7aea74b7a7386e0a3439bc13258fcc4ee1bcb7b68aceb44393eb164252654563"
+    },
+    {
+      "name": "strchr.c.o",
+      "bytes": 3440,
+      "sha256": "32c54871b813bf37218e95fc2a455b60d533d599ce568292b4ca7a469343c023"
+    },
+    {
+      "name": "strcmp.c.o",
+      "bytes": 4016,
+      "sha256": "d6407656ecf30bb3cb19fd52ba53ade11aaaf7077f9939eeaa578c441de1620c"
+    },
+    {
+      "name": "strlen.c.o",
+      "bytes": 3416,
+      "sha256": "5fcf9bfdce91d820a9f0bd398bb27661b153f9309c81831ab69641643c98a9bf"
+    }
+  ],
+  "limits": [
+    "Only the 112 consumed/probed members named by the existing collector receipt are covered; not every member in libc.a.",
+    "Original 18 relink results and occurrence-specific map identities remain in their unchanged receipt."
+  ],
+  "owner": "Codex01a1aa59",
+  "retirement": "Public source notice evidence through release review; original archive remains under its existing custody"
+}

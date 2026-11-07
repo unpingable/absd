@@ -24,7 +24,7 @@ def block(source, marker):
 
 def check(source, block_source):
     source = re.sub(r'/\*.*?\*/|//[^\n]*', '', source, flags=re.S)
-    probe, _, _ = block(source, 'pub fn probe(write_serial: Option<&[u8]>) -> Result<Identity, NvmeError> {')
+    probe, _, _ = block(source, 'pub fn probe_set(write_serial: Option<&[u8]>, set: usize) -> Result<Identity, NvmeError> {')
     patterns = [
         ('bus-master off', r'pci::disable_dma\(function\);'),
         ('memory decode', r'pci::enable_memory\(function\);'),
@@ -33,11 +33,11 @@ def check(source, block_source):
         ('new enable timeout binding', r'let ready_limit = limits\.with_media;'),
         ('withdrawal timeout binding', r'found\.ready_limit = ready_limit;'),
         ('propagate settled disable failure', r'found\.disable_before_probe\(limits\)\?;'),
-        ('clear owned queues', r'zero\(page\);'),
+        ('clear owned queues', r'zero\(page\(set, index\)\);'),
         ('admin queue size', r'found\.write32\(REG_AQA, \(size << 16\) \| size\);'),
         ('admin submission address', r'found\.write64\(REG_ASQ, found\.admin\.submission\);'),
         ('admin completion address', r'found\.write64\(REG_ACQ, found\.admin\.completion\);'),
-        ('bus-master on', r'pci::enable_polled_dma\(function\);'),
+        ('bus-master on', r'crate::dma::arm\(function, &dma_policy::NVME\)\.map_err\(dma_refused\)\?;'),
         ('enable controller', r'found\.write32\(REG_CC, CC_QUEUE_ENTRY_SIZES \| CC_ENABLE\);'),
         ('propagate enable failure', r'found\.wait_ready\(true, ready_limit\)\?;'),
     ]
@@ -50,7 +50,7 @@ def check(source, block_source):
         if position <= last:
             raise ValueError(f'{name}: violates required probe ordering')
         last = position
-    if source.count('enable_polled_dma') != 1 or any(
+    if source.count('dma::arm(') != 1 or any(
         token in source for token in ('COMMAND_BUS_MASTER', 'pci::write32')
     ):
         raise ValueError('unreviewed bus-master token outside the one enable site')
@@ -77,7 +77,7 @@ def check(source, block_source):
     if not re.fullmatch(r'\s*self\.wait_ready\(false, limits\.with_media\)\s*', reset[enabled_end + 1:]):
         raise ValueError('disable completion must be propagated before queue reuse')
     initialized, start, end = block(probe, 'let initialized = (|| -> Result<(), NvmeError> {')
-    if 'pci::enable_polled_dma(function);' not in initialized:
+    if 'crate::dma::arm(function, &dma_policy::NVME).map_err(dma_refused)?;' not in initialized:
         raise ValueError('DMA enable must be inside captured initialization')
     suffix = probe[end + 1:]
     error, error_start, error_end = block(suffix, 'if let Err(error) = initialized {')
@@ -90,7 +90,7 @@ def check(source, block_source):
         raise ValueError('unreviewed post-closure panic or command bypasses cleanup')
     if any(re.search(r'CONTROLLER[^;]*=\s*Some\s*\(\s*found\b', part) for part in (probe[:start], initialized, suffix[:error_end + 1])):
         raise ValueError('controller published before initialization error handling completes')
-    cleanup, _, _ = block(source, 'fn abandon_probe(&self, ready_limit: u64) {')
+    cleanup, _, _ = block(source, 'fn abandon_probe(&self, ready_limit: u64) -> bool {')
     if cleanup.count('pci::disable_dma(') != 1:
         raise ValueError('cleanup must clear BME exactly once after stop')
     stop, _, stop_end = block(cleanup, 'let stopped = if status & CSTS_READY != 0 {')
@@ -113,7 +113,7 @@ def check(source, block_source):
     if not re.fullmatch(r'\s*found\.abandon_probe\(found\.ready_limit\);\s*crate::serial::write\("NVME CONTROLLER WITHDRAWN reason=first-read\\n"\);\s*', taken) or withdrawn[taken_end + 1:].strip():
         raise ValueError('taken controller must be contained without a conditional bypass')
     block_source = re.sub(r'/\*.*?\*/|//[^\n]*', '', block_source, flags=re.S)
-    block_probe, _, _ = block(block_source, 'pub fn probe(nvme_write: Option<&[u8]>) -> Result<u64, BlockError> {')
+    block_probe, _, _ = block(block_source, 'pub fn probe(\n    nvme_write: Option<&[u8]>,\n    ahci: AhciOptions,\n    declaration: Declaration,\n    partition: Option<&[u8]>,\n) -> Result<u64, BlockError> {')
     read, _, _ = block(block_probe, 'match nvme::read_sector(0, &mut sector) {')
     failed_read, _, _ = block(read, 'Err(error) => {')
     if block_probe.count('nvme::withdraw_failed_probe();') != 1 or failed_read.count('return') != 1:
@@ -133,7 +133,7 @@ def main():
     block_source = (Path(__file__).resolve().parents[1]/'src/block.rs').read_text()
     sites = check(source, block_source)
     if args.self_test:
-        enable = 'pci::enable_polled_dma(function);'
+        enable = 'crate::dma::arm(function, &dma_policy::NVME).map_err(dma_refused)?;'
         disable = 'pci::disable_dma(function);'
         wait = 'found.disable_before_probe(limits)?;'
         assert source.count(enable) == source.count(disable) == source.count(wait) == 1
@@ -149,11 +149,11 @@ def main():
             'cleanup wait omitted': source.replace('self.wait_ready(false, ready_limit).is_ok()', 'true'),
             'cleanup original error lost': source.replace('return Err(error);', 'return Err(NvmeError::Fatal);'),
             'publication before error handling': source.replace('if let Err(error) = initialized {', 'unsafe { *core::ptr::addr_of_mut!(CONTROLLER) = Some(found); }\nif let Err(error) = initialized {'),
-            'cleanup DMA off before reset': source.replace('fn abandon_probe(&self, ready_limit: u64) {', 'fn abandon_probe(&self, ready_limit: u64) {\npci::disable_dma(self.identity.pci);'),
+            'cleanup DMA off before reset': source.replace('fn abandon_probe(&self, ready_limit: u64) -> bool {', 'fn abandon_probe(&self, ready_limit: u64) -> bool {\npci::disable_dma(self.identity.pci);'),
             'uncaptured unwrap': source.replace('if let Err(error) = initialized {', 'initialized.unwrap();\nif let Err(error) = initialized {'),
             'uncaptured swallowed command': source.replace('if let Err(error) = initialized {', 'let _ = found.identify(IDENTIFY_CONTROLLER, 0);\nif let Err(error) = initialized {'),
             'publication through clone': source.replace(enable, 'unsafe { *core::ptr::addr_of_mut!(CONTROLLER) = Some(found.clone()); }\n'+enable),
-            'alternate DMA call': source.replace(disable, 'enable_polled_dma(function);\n'+disable),
+            'alternate DMA call': source.replace(disable, 'crate::dma::arm(function, &dma_policy::NVME);\n'+disable),
             'raw PCI command write': source.replace(disable, 'pci::write32(function, 4, 4);\n'+disable),
             'raw BME bit': source.replace(disable, 'let _ = COMMAND_BUS_MASTER;\n'+disable),
             'unconditional inherited CC clear': source.replace(wait, 'found.write32(REG_CC, 0);\nfound.wait_ready(false, ready_limit)?;'),

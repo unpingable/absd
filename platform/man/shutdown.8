@@ -1,5 +1,5 @@
 .\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
-.Dd September 27, 2026
+.Dd November 5, 2026
 .Dt SHUTDOWN 8
 .Os ABSD
 .Sh NAME
@@ -155,21 +155,26 @@ There is no delay form
 .Pq Ql shutdown +5
 and no message to the sessions beyond the notice.
 .Pp
-A failure of the SSH server or the file server during service (not a
-requested end) resets the whole machine, at most three times in a row:
-the file server counts the generations that reached service and did not
-end as requested, on disk, before it serves
-.Pq Ql FSD RECOVERY seq=N streak=K ... ,
-and the fourth such failure stops the machine instead
-.Pq Ql SERVED RECOVERY ESCALATED reason=recovery_budget_exhausted ... code=20 ,
-QEMU status 83.
+Essential session-service or file-server failure during service, rather
+than a requested end, triggers init's bounded cleanup. After readiness,
+the advertised durable recovery budget may permit a visible whole-machine
+reset of the selected image. A reset is not in-place service replacement,
+proof of complete process reclamation, or a guarantee that unsynced writes
+survive. The file server records its recovery streak before service
+.Pq Ql FSD RECOVERY seq=N streak=K ... .
 Only a requested
 .Nm
 or
 .Nm reboot
-that init completed as asked clears the count (the file server stopped
-cleanly and every session process ended within the bound); an SSH server
-that merely exits, or an end that escalates, does not.
-After that stop the machine needs the console or a power cycle, and the
-next boot serves once more with the count carried, so an operator can log
-in and reboot it cleanly.
+that init completed as asked clears the count; an SSH server that merely
+exits, or an end that escalates, does not.
+.Pp
+Before readiness, on unknown or exhausted budget, or when reset is refused,
+a local-enabled image holds read-only kernel maintenance;
+see
+.Xr local-console 7 .
+An external operator reboot is required to leave that held state.
+A headless image can stop with the named refusal or budget-exhaustion code.
+A reset or external reboot still uses the selected image; a dirty writable
+filesystem can refuse its next boot and require host-side recovery.
+Do not assume that resetting restores login or writable service.

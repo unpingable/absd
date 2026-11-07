@@ -327,7 +327,7 @@ fn run(start: MultiStart<'_>) -> Result<(), &'static str> {
     until(ac, 10).map_err(|_| "A ready")?;
     let b = actor(false, 0, bc).map_err(|_| "B spawn")?;
     until(bc, 20).map_err(|_| "B initial ready")?;
-    let mut fillers = [None; 16];
+    let mut fillers = [None; absd_abi::syscall::MAX_PROCESS_SLOTS];
     let mut filler_count = 0;
     loop {
         match absd_user::spawn_with(program::SLEEPER, 0, 100000) {
@@ -339,7 +339,10 @@ fn run(start: MultiStart<'_>) -> Result<(), &'static str> {
             _ => return Err("process pressure refusal"),
         }
     }
-    if filler_count == 0 || resource_census().map_err(|_| "full census")?.processes != 16 {
+    if filler_count == 0
+        || resource_census().map_err(|_| "full census")?.processes
+            != absd_abi::syscall::MAX_PROCESS_SLOTS as u64
+    {
         return Err("process pressure occupancy");
     }
     let full = resource_census().map_err(|_| "full before")?;
@@ -349,15 +352,45 @@ fn run(start: MultiStart<'_>) -> Result<(), &'static str> {
     if resource_census().map_err(|_| "full after")? != full {
         return Err("full constructor leaked");
     }
-    cprintln!(start.console,"SLOT PRESSURE OK occupied=16 fillers={} refusal=-11 existing_commitments_preconstructed=true",filler_count).map_err(|_|"slot output")?;
+    cprintln!(start.console,"SLOT PRESSURE OK occupied={} fillers={} refusal=-11 existing_commitments_preconstructed=true",absd_abi::syscall::MAX_PROCESS_SLOTS,filler_count).map_err(|_|"slot output")?;
     set(bc, 200).map_err(|_| "B exhaustion go")?;
     until(bc, 21).map_err(|_| "B exhaustion")?;
-    let bpages = bc.read().map_err(|_| "B report")?.1 >> 16;
+    let breport = bc.read().map_err(|_| "B report")?.1;
+    let bpages = (breport >> 16) & 0xffff_ffff;
+    let competing_admit = (breport >> 48) as u16 as i16 as i64;
+    if competing_admit != if protected { -12 } else { -38 } {
+        // The negative control deliberately takes this path under full slot
+        // and memory pressure. A live supervisor still owns these handles;
+        // do not leave its known children for init's reparenting policy.
+        for child in [Some(b), Some(a)].into_iter().chain(fillers).flatten() {
+            kill(child).map_err(|_| "B admission cleanup kill")?;
+            if wait_timeout(Some(child), 1000).map_err(|_| "B admission cleanup reap")?
+                != Outcome::Killed
+            {
+                return Err("B admission cleanup outcome");
+            }
+        }
+        close(ac.raw()).map_err(|_| "B admission cleanup A cell")?;
+        close(bc.raw()).map_err(|_| "B admission cleanup B cell")?;
+        if resource_census().map_err(|_| "B admission cleanup census")? != baseline
+            || (protected && call(QUERY, 1, 0, 0) != 192)
+        {
+            return Err("B admission cleanup return");
+        }
+        cprintln!(
+            start.console,
+            "B ADMISSION REFUSED observed={} expected={} cleanup=true",
+            competing_admit,
+            if protected { -12 } else { -38 }
+        )
+        .map_err(|_| "B admission refusal output")?;
+        return Err("B admission result");
+    }
     cprintln!(
         start.console,
         "B EXHAUSTED pages={} refusal=-12 retries=3 competing_admit={}",
         bpages,
-        if protected { -12 } else { -38 }
+        competing_admit
     )
     .map_err(|_| "B output")?;
     if protected {

@@ -13,9 +13,14 @@ SQL_FLAGS := -O2 -DSQLITE_OS_UNIX=1 -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXT
   -DSQLITE_ENABLE_LOCKING_STYLE=0 -DSQLITE_OMIT_WAL -DSQLITE_MAX_MMAP_SIZE=0 \
   -DSQLITE_TEMP_STORE=3 -D_GNU_SOURCE
 SQL_O := $(OBJ)/absd/sqlite
-$(SQL_O)/sqlite3.o: $(SQL_A)/sqlite3.c
+# Apply the clock refusal adaptation in owned output, never the staged tree.
+$(SQL_O)/sqlite3.c: $(SQL_A)/sqlite3.c $(ROOT)/patches/sqlite-3.54.0-clock.patch
 	@mkdir -p $(dir $@)
-	$(CC_ABSD) -c $(PREFIX_MAP) $(SQL_FLAGS) -I$(SQL_A) -o $@ $<
+	patch --batch --fuzz=0 -o $@.tmp $< < $(ROOT)/patches/sqlite-3.54.0-clock.patch
+	mv $@.tmp $@
+$(SQL_O)/sqlite3.o: $(SQL_O)/sqlite3.c
+	@mkdir -p $(dir $@)
+	$(CC_ABSD) -c $(PREFIX_MAP) -ffile-prefix-map=$(SQL_O)=/upstream/sqlite-amalgamation/absd/sqlite-amalgamation-3540000 $(SQL_FLAGS) -I$(SQL_A) -o $@ $<
 $(SQL_O)/shell.o: $(ROOT)/cports/build/shell-absd.c $(SQL_A)/shell.c
 	@mkdir -p $(dir $@)
 	$(CC_ABSD) -c $(PREFIX_MAP) $(SQL_FLAGS) -I$(SQL_A) -o $@ $<

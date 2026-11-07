@@ -1,0 +1,17 @@
+# Follow-up adoption status
+
+Steward 1703Z admitted this prototype as the starting policy for the paste follow-up. The candidate is still subject to independent review; the archived prototype explanation below records its original context. The follow-up design also requires queued-input cancellation and visible whole-line refusal.
+
+# Type-ahead preservation: proposed contract narrowing only
+
+This isolated prototype starts at accepted platform `21739e0281ec26026380dea522457ee5041d7375`. It is not integrated or accepted. Root/steward owns the policy decision. The base manual explicitly promises to discard unfinished application input at prompt return, and the base test `history_only_at_prompt_and_never_next_application_input` expects `unfinished secret` to disappear. Exact base files and the failing new regressions are preserved in the lane registry `typeahead149-prototype01`.
+
+The proposed change preserves bytes, cursor, partial UTF-8 and escape state during prompt-mode changes within one live session. It prevents the observed 3707-C prefix from disappearing when the prompt rearms before the remaining 383 Cs arrive. Mode 0 means application input, not proof of a private owner or of actual stdin consumption. No new mode/API or owner handshake is introduced.
+
+The changed outcome is deliberate: unfinished same-session application text may remain pending and executable as a shell command after prompt return, while never being promoted into history. This includes unread inherited stdin. Complete lines already in the child input pipe remain queued as before. The terminal does not infer which program will read either kind of input. Operators must cancel unwanted pending text explicitly with Ctrl-C.
+
+A logical draft becomes sticky ineligible for history after accepting any input outside an armed primary prompt (including continuation mode). Rearming, edits, Up/Down recall, and partial Ctrl-D delivery cannot clear ineligibility. Newline completion or Ctrl-C cancellation starts a new draft. Primary input with no intervening application-mode input may still be collected. History contains only primary-prompt commands, is session-local/bounded, and has no persistent file. Partial Ctrl-D still delivers the partial bytes, empty Ctrl-D still closes input, and explicit Ctrl-C still clears editing state and notifies the shell. Session destruction retains no draft/history for a new session.
+
+Only production TTY and SSH Connection from this exact base are in scope. This base has no local-console Manager or maintenance mode; no later Manager overlay is used, and no claim about its cleanup is made. Existing logout/maintenance/session-retirement paths outside these files are unchanged. No queue sizes, ABI, capability ownership, runtime backend, or replacement protocol changes. This state is live-session-private and not exported to a replacement generation; no live transfer or downgrade claim is added.
+
+Host tests replay observed segmentation and cursor/UTF/escape boundaries with the real LineDiscipline, and dispatch InputMode through the real Connection control consumer. These are source-level regressions, not a physical serial, SSH transport, or VM result. Existing 393-byte/full4095 runtime successes and the original coalesced UNKNOWN remain unchanged. Practical deterministic tests and explicit policy prose suffice here; there is no new authority/state-transfer protocol to model.

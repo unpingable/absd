@@ -65,6 +65,7 @@ pub struct ResponseParser {
     expected: usize,
     body_read: usize,
     failed: Option<Error>,
+    document: Option<Vec<u8>>,
 }
 
 impl ResponseParser {
@@ -80,7 +81,22 @@ impl ResponseParser {
             expected: expected_body_len,
             body_read: 0,
             failed: None,
+            document: None,
         })
+    }
+
+    /// Collect an arbitrary bounded document; the fixture constructor is unchanged.
+    pub fn document() -> Self {
+        let mut parser = Self::new(0).expect("zero body length");
+        parser.document = Some(Vec::new());
+        parser
+    }
+
+    pub fn take_document(&mut self) -> Option<Vec<u8>> {
+        if !self.is_complete() {
+            return None;
+        }
+        self.document.take()
     }
 
     /// Consume every available plaintext byte, including bytes after the body.
@@ -111,7 +127,10 @@ impl ResponseParser {
                     let line_len = self.used - self.line_start;
                     self.line_start = self.used;
                     if line_len == 2 {
-                        parse_headers(&self.headers[..self.used], self.expected)?;
+                        self.expected = parse_headers(
+                            &self.headers[..self.used],
+                            self.document.is_none().then_some(self.expected),
+                        )?;
                         self.header_done = true;
                     }
                 }
@@ -120,7 +139,9 @@ impl ResponseParser {
                 if self.body_read == self.expected {
                     return Err(Error::ExtraBody);
                 }
-                if byte != expected_body_byte(self.body_read) {
+                if let Some(body) = &mut self.document {
+                    body.push(byte);
+                } else if byte != expected_body_byte(self.body_read) {
                     return Err(Error::BodyMismatch);
                 }
                 self.body_read += 1;
@@ -158,7 +179,7 @@ impl ResponseParser {
     }
 }
 
-fn parse_headers(headers: &[u8], expected: usize) -> Result<(), Error> {
+fn parse_headers(headers: &[u8], expected: Option<usize>) -> Result<usize, Error> {
     let mut lines = headers.split(|&byte| byte == b'\n');
     let status = lines.next().ok_or(Error::InvalidStatus)?;
     let status = status.strip_suffix(b"\r").ok_or(Error::InvalidLineEnding)?;
@@ -224,10 +245,11 @@ fn parse_headers(headers: &[u8], expected: usize) -> Result<(), Error> {
             encoding_seen = true;
         }
     }
-    if length.ok_or(Error::MissingLength)? != expected {
+    let length = length.ok_or(Error::MissingLength)?;
+    if expected.is_some_and(|expected| length != expected) {
         return Err(Error::LengthMismatch);
     }
-    Ok(())
+    Ok(length)
 }
 
 fn trim_ows(mut value: &[u8]) -> &[u8] {

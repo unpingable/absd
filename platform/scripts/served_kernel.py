@@ -13,6 +13,17 @@ import subprocess
 import sys
 
 FEATURES = "frame-admission-v0"
+# Current durable/FSD profile: absd-kernel abi/src/program.rs FILE_SERVER_SLOTS.
+# The logger has a separate private channel; it is not a session pool slot.
+FILE_SERVER_SLOTS = 18
+
+
+def file_server_started(serial, *, logger_present):
+    """One exact start record for the declared profile, including its logger."""
+    channels = 1 + FILE_SERVER_SLOTS + int(logger_present)
+    expected = f"FILE SERVER START pid=2 channels={channels}"
+    records = [line for line in serial.splitlines() if line.startswith("FILE SERVER START ")]
+    return records == [expected]
 
 
 def kernel_make():
@@ -24,8 +35,12 @@ def main(args):
     # override inherited EXTERNAL_KERNEL_FEATURES (including make -e).
     if any("EXTERNAL_KERNEL_FEATURES" in arg or "frame-reservation" in arg for arg in args):
         raise ValueError("served kernel features are owned by served_kernel.py")
-    env = dict(os.environ, EXTERNAL_KERNEL_FEATURES=FEATURES)
-    return subprocess.call(["make", *args, f"EXTERNAL_KERNEL_FEATURES={FEATURES}"], env=env)
+    smp = bool(args and args[0] == "--operator-smp")
+    if smp:
+        args = args[1:]
+    features = FEATURES + (",smp-operator" if smp else "")
+    env = dict(os.environ, EXTERNAL_KERNEL_FEATURES=features)
+    return subprocess.call(["make", *args, f"EXTERNAL_KERNEL_FEATURES={features}"], env=env)
 
 
 if __name__ == "__main__":

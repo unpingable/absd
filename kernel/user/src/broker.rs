@@ -37,6 +37,15 @@ pub const ROLE_MACHINE: u8 = 15;
 /// unchanged for `program::SERVED_LIVENESS_TICKS` after readiness as that
 /// service's fault. Never present outside a served boot.
 pub const ROLE_LIVENESS: u8 = 18;
+/// Read-only per-session terminal metadata cell. Its session owner alone
+/// writes dimensions; this role confers neither input nor display rights.
+pub const ROLE_TERMINAL: u8 = 21;
+/// Experimental read-only diagnostic grant; never console input/display rights.
+pub const ROLE_DIAGNOSTICS: u8 = 20;
+/// Exact served NIC/time owner only; never copied to ordinary commands.
+pub const ROLE_CLOCK_OWNER: u8 = 22;
+/// Write-only worker-to-init display stream; no physical-input authority.
+pub const ROLE_LOCAL_TERMINAL: u8 = 19;
 
 pub const REQUEST_SPAWN: u8 = 1;
 pub const REPLY_STARTED: u8 = 1;
@@ -225,6 +234,28 @@ pub fn startup_record(out: &mut [u8], roles: &[(u8, u8)], args: &[u8]) -> Option
     }
     writer.bytes(args)?;
     Some(writer.len())
+}
+
+/// Exact startup shape of init's private logger child.
+pub fn logd_startup_record(out: &mut [u8]) -> Option<usize> {
+    let used = startup_record(
+        out,
+        &[
+            (ROLE_STDIN, 1),
+            (ROLE_FS_REQUEST, 2),
+            (ROLE_FS_REPLY, 3),
+            (ROLE_DIAGNOSTICS, 4),
+            (ROLE_LIVENESS, 5),
+        ],
+        &[0, 0],
+    )?;
+    let mut tail = Writer::new(out.get_mut(used..)?);
+    tail.u16(0)?; // empty environment
+    tail.u16(1)?;
+    tail.bytes(b"/")?; // working directory precedes name
+    tail.u16(4)?;
+    tail.bytes(b"logd")?;
+    Some(used + tail.len())
 }
 
 /// A parsed startup record: the vector index of each role (slot roles in

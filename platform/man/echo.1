@@ -1,0 +1,37 @@
+.Dd November 3, 2026
+.Dt ECHO 1
+.Os ABSD
+.Sh NAME
+.Nm echo
+.Nd print arguments separated by spaces
+.Sh SYNOPSIS
+.Nm
+.Op Fl n
+.Op Ar argument ...
+.Sh DESCRIPTION
+Join arguments with single spaces and write them to standard output,
+followed by a newline.
+Only a first argument exactly equal to
+.Fl n
+suppresses that newline.
+Subsequent dash words, including
+.Ql -- ,
+are literal arguments.
+Backslash escapes are not interpreted.
+With no arguments print a newline.
+.Pp
+The shell performs quoting and redirection; the command itself opens no
+files and changes no authority.
+Use
+.Xr printf 1
+for formatted output.
+.Sh EXIT STATUS
+0 after writing and flushing; 1 for output failure.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+echo hello world
+echo -n label
+.Ed
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr printf 1

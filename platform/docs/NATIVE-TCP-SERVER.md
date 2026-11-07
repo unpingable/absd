@@ -5,12 +5,23 @@ Standalone runtime `2b2f882c`, proof/peer `c1377f6c` and native run
 on 2026-10-16. The kernel is lane `ed6a15ea`, not composed kernel 7. Candidate
 10 composition and kernel 7 + platform 10 replay remain steward-owned.
 
-Experimental source for existing coordination issue 29. It adds one exact-peer
-IPv4 server capability and a delegated echo consumer, based on candidate8
-eb70b62f. No compiler, host protocol test, guest or independent Linux run was
-executed by the source producer. Release/main/U1 and supported-ABI holds remain.
+The original source tranche for existing coordination issue 29 added one
+exact-peer IPv4 server capability and a delegated echo consumer, based on
+candidate 8 eb70b62f. Its source-stage description was UNRUN: no compiler,
+host protocol test, guest or independent Linux run was executed by that
+source producer. The later sustained-refusal result is recorded in
+NATIVE-TCP-SERVER-PROOF.md. The new observation source was UNRUN at its
+`90ab` / `8b7d` freeze; occurrence `14761ecf` subsequently passed at those
+exact sources, as recorded there.
+Release/main/U1 and supported-ABI holds remain.
 smoltcp 0.14 remains the TCP/checksum/SYN/MSS implementation; no kernel call,
 dependency version, lockfile, broker or protocol implementation is added.
+The later [native boundary fixture](NATIVE-TCP-SERVER-BOUNDARY.md)
+adds selected actual grant/API/slot and pipe-only child interruption checks
+before a fresh positive flow. Occurrence `9cde345e` passed at exact product
+`137f6ac6` / oracle `f2d79c4b`; the `1476` result remains at its earlier
+source. Net semantics are unchanged. See the proof document for exact
+evidence and the remaining native cases.
 
 `Stack::stream_server_grant` accepts one nonprivileged local port, an exact
 on-link unicast peer IP and port, an accept timeout of 100..10000 ms and an
@@ -118,14 +129,18 @@ within its original bound, fences and requires zero sockets. No SSH owner is
 commandeered; this is a separate dedicated test boot.
 
 Inside the separately admitted isolated Linux namespace, configure only
-192.0.2.1/24 on its lane-owned TAP, attach the dedicated QEMU e1000 guest, and
-retain an independent raw capture. After `TCP SERVER GRANT READY ...`, run:
+192.0.2.1/24 on its lane-owned TAP and attach the dedicated QEMU e1000 guest.
+The original source-stage recipe below is historical; the current proof
+successor waits for LISTEN and verified neighbor readiness, then uses one
+wrong-port connect and one positive connect, without retries. Its exact
+source-pinned instructions are in NATIVE-TCP-SERVER-PROOF.md. The original
+positive-only invocation was:
 
 ```sh
 python3 scripts/native-tcp-server-peer.py NEW_RESULT_JSON
 ```
 
-The ordinary Linux AF_INET client binds source port 42030, connects to 7005,
+That historical ordinary Linux AF_INET client binds source port 42030, connects to 7005,
 sends a fixed 3072-byte pattern, half-closes, verifies every echoed byte and
 requires EOF. The marker announces the owner grant; the client retries bounded
 connection refusal while the child issues LISTEN. The parent separately emits
@@ -153,6 +168,77 @@ consumer cancellation, backlog/load exhaustion, retransmission under loss and
 live SSH coexistence remain unexecuted. Existing outbound and SSH suites also
 need execution against this exact source; their unchanged design is not a pass.
 
+## Bounded owner observation
+
+The NIC holder can read `Stack::stats().tcp_server_peer_dropped` and
+`last_tcp_server_peer_refusal`. The count saturates at `u64::MAX`; the one
+last record still updates at saturation. It names the observed source and
+local destination, the rule's expected peer, TCP flags and sequence number,
+and complete Ethernet frame length. This is a tuple/header observation, not
+cryptographic authentication, stable peer identity or a unique frame hash.
+There is no event queue, per-peer registry, reset operation or client message.
+
+Only a frame actually discarded at one of the existing server ingress checks
+can count. The observation classifier requires an installed, fault-free rule,
+the exact local IP and port, a different peer IP or port, complete IPv4/TCP
+lengths, IPv4 and TCP checksums, and parseable TCP options. IPv4 options,
+fragments or reserved flags, nonzero TCP reserved bits, truncated headers,
+bad checksums/options, unrelated local addresses/ports, and clock/link/expiry
+faults are excluded. Exact-length frames and zero padding to the Ethernet
+minimum are accepted for observation. This is deliberately a narrower subset
+of ingress drops. It does not strengthen or alter admission: the original
+`ingress` predicate and its ordering are unchanged, including its existing
+delegation of malformed permitted-tuple packets to smoltcp.
+
+After an ingress discard, observation-only classification may verify the
+IPv4 header checksum and TCP pseudoheader checksum and parse TCP options
+before recording or excluding the frame. This adds work proportional to the
+bounded candidate frame under repeated rejected traffic; no throughput or
+per-frame timing bound was measured. Admission remains unchanged.
+
+`Port::fill` records only when it consumes a refused frame without caching
+it. `Device::receive` records only when it takes a cached frame and its
+second ingress check refuses it. The same discarded frame cannot reach both
+sites. A cached frame that later encounters an expired/faulted rule is not
+classified as a peer mismatch. No count is added for an API Denied reply,
+queue discard, MTU refusal, rule removal, or a packet never received.
+
+The new native parent reports a zero baseline and one final version 1 record
+through its existing console after the child is reaped, bounded close drain
+and fence. The child gets no observation API or additional authority; its
+existing `denied=1` remains an independent framed API check. The proof must
+bind the guest count and last record to the full captured wrong-tuple SYN
+census and retain the complete positive stream, FIN/ACK/EOF and cleanup
+checks. At the `90ab` / `8b7d` source freeze this qualification was UNRUN.
+
+The opt-in native probe prints one final refusal observation containing the
+observed and expected IP/port tuples, TCP sequence, flags and frame length.
+Console output, raw serial and retained proof evidence therefore contain
+that metadata. These fields describe an observation, not cryptographic peer
+authentication.
+The later `14761ecf-2155-443b-af58-90415887c6b6` occurrence passed: default
+333 / DHCP 346 host methods including all nine new methods in both, SSH
+20 method executions, 30 artifact plus two cleanup methods, and the native
+proof with guest count 2 matching both wrong SYNs in the complete 31-frame
+capture. The grant-authorized 3072-byte exchange and FIN/ACK/EOF also pass.
+Exact raw identities, prior failures, independent review and resource
+disposition are recorded in NATIVE-TCP-SERVER-PROOF.md. The historical
+`a6fe` v2 proof had no guest observation; its separate bounded acceptance
+does not accept this new telemetry. The steward independently accepted
+`1476` with limits on 2026-10-18; its two wrong SYNs share a sequence, so it
+does not distinguish first from last observation. A future varying-sequence
+fixture and first-record substitution remain proposed on existing issue 29.
+The later `9cde345e` adds the selected native boundary cases documented
+separately; its explicit remaining limits still apply.
+
+The history is Stack-local, begins at zero on open, and survives endpoint
+close, rebind and fencing. Preserving these values does not revive a handle
+or reserve a port. A new implementation generation reconstructs the Stack
+and authority rather than importing native Rust layout. A future transfer
+of this optional diagnostic would require an explicit versioned schema,
+counter/saturation semantics and independent successor validation; it must
+not transfer sockets, queues, grants or retired authority implicitly.
+
 ## Evolution and formalization consideration
 
 The logical service/peer differs from its checked implementation instance and
@@ -168,12 +254,20 @@ HalfClosed/Draining/Fenced, with eight slots and one I/O crossing a bound. The
 durable propositions are no traffic-derived grants, no stale-handle revival,
 and no submission after an observed fence while retaining the possible first
 effect. Literal vectors and practical state-transition fixtures suffice for
-this small source tranche; tests are authored, not executed. A later model
+the original source tranche; its source-stage test descriptions were authored,
+not executed at that freeze. The telemetry tests/native proof later passed
+in the exact bounded `1476` occurrence; that does not expand the stated
+proposition or the native cases exercised. A later model
 must separate wire effects, tuple correlation and hardware exclusion instead
 of treating local queue removal as rollback. Source/result identities belong
 in the lane receipt and independent acceptance, not this document.
 
-Root owns aggregate S2 storage; the source allowance is 32 MiB. No targets,
-VMs, captures, package caches or keys are created here. Retain exact commits
-and minimal receipts for review/integration/replay; retire the reproducible
-worktree after those consumers end. Named next review: 2026-10-17.
+Root owns lane storage coordination; the steward owns aggregate ABSD storage.
+The telemetry worktree initially allocated 30,113,792 bytes, with less than
+128 KiB of added source forecast. These are observations/estimates, not a
+per-lane quota. The hard free-space reserve remains 60 GiB independently on
+`/` and `/data`. No targets, VMs, captures, package caches or keys are created
+by this source task. Retain exact commits and minimal receipts for
+review/integration/rollback; retire the reproducible worktree after those
+consumers end. Root reviews custody at dependency end or
+2026-10-18T23:59:59Z.

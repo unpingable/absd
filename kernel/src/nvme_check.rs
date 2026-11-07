@@ -64,6 +64,11 @@ fn fail(what: &str, lba: u64) -> ! {
 }
 
 pub fn run(phase: Phase) -> ! {
+    // Its LBAs, and the backend-level reads it makes, are device LBAs:
+    // never run over a GPT partition (docs/hardware/GPT-PARTITION.md).
+    if block::partitioned() {
+        fail("block-partition selected", 0);
+    }
     let (Some(Backend::Nvme), Some(sectors)) = (block::backend(), block::sector_count()) else {
         fail("no nvme backend", 0);
     };

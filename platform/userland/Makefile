@@ -21,7 +21,7 @@ SRC ?= $(error set SRC)
 UP ?= $(error set UP)
 OUT ?= $(error set OUT)
 SIDE ?= $(error set SIDE)
-UTILS := printf test grep sort sed od cmp ed find diff hexdump tar
+UTILS := printf test grep sort sed od cmp ed find diff hexdump tar tr dirname tee sleep rmdir paste
 TOYBOX_UTILS := diff hexdump
 TOYBOX_SRC ?= $(OUT)/toybox-src
 CPPFLAGS := -D_DEFAULT_SOURCE -D_NETBSD_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64

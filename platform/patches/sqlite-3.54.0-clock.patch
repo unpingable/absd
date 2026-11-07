@@ -1,0 +1,11 @@
+--- a/sqlite3.c
++++ b/sqlite3.c
+@@ -47837,6 +47837,6 @@
+   *piNow = unixEpoch + 1000*(sqlite3_int64)sNow.tv_sec + sNow.tv_nsec/1000000;
+ #else
+-  struct timeval sNow;
+-  (void)gettimeofday(&sNow, 0);  /* Cannot fail given valid arguments */
++  struct timeval sNow = {0, 0};
++  if( gettimeofday(&sNow, 0)!=0 ) return SQLITE_ERROR;
+   *piNow = unixEpoch + 1000*(sqlite3_int64)sNow.tv_sec + sNow.tv_usec/1000;
+ #endif

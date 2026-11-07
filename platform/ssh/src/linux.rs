@@ -94,7 +94,7 @@ impl Spawner for LinuxSpawner<'_> {
     fn machine_request(&mut self, request: conn::MachineRequest) -> Result<String, String> {
         Err(format!("sshd: {}: machine requests are served only by sshd on ABSD\n", request.word()))
     }
-    fn spawn(&mut self, command: &conn::Command, terminal: bool) -> io::Result<LinuxChild> {
+    fn spawn(&mut self, command: &conn::Command, terminal: Option<&crate::tty::Terminal>) -> io::Result<LinuxChild> {
         let argv = self.config.argv(command).map_err(|m| io::Error::new(io::ErrorKind::InvalidInput, m))?;
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..])
@@ -104,7 +104,12 @@ impl Spawner for LinuxSpawner<'_> {
             .process_group(0)
             .stdin(Stdio::piped());
         // A terminal: stdout and stderr share one pipe.
-        let merged = if terminal {
+        if let Some(terminal) = terminal {
+            if let Some(term) = &terminal.term { cmd.env("TERM", term); } else { cmd.env_remove("TERM"); }
+            if terminal.size.columns > 0 { cmd.env("COLUMNS", terminal.size.columns.to_string()); }
+            if terminal.size.rows > 0 { cmd.env("LINES", terminal.size.rows.to_string()); }
+        }
+        let merged = if terminal.is_some() {
             let (reader, writer) = io::pipe()?;
             cmd.stdout(writer.try_clone()?).stderr(writer);
             Some(reader)
@@ -265,10 +270,10 @@ fn service(
     for _ in 0..8 {
         if conn.wants_input() {
             match slot.sock.read(buf) {
-                Ok(0) => conn.input_closed(),
+                Ok(0) => conn.input_closed(conn::InputClose::Eof),
                 Ok(n) => conn.push_input(&buf[..n], now),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                Err(_) => conn.input_closed(),
+                Err(_) => conn.input_closed(conn::InputClose::Failure),
             }
         }
         let progressed = conn.pump(spawner, identity, &config.limits, now);
@@ -281,7 +286,7 @@ fn service(
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(_) => {
-                    conn.input_closed();
+                    conn.input_closed(conn::InputClose::Failure);
                     break;
                 }
             }

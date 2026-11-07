@@ -1,0 +1,70 @@
+.Dd November 3, 2026
+.Dt UNIQ 1
+.Os ABSD
+.Sh NAME
+.Nm uniq
+.Nd select adjacent groups of equal lines
+.Sh SYNOPSIS
+.Nm
+.Op Fl cduiz
+.Op Fl f Ar fields
+.Op Fl s Ar characters
+.Op Fl w Ar count
+.Op Ar input Op Ar output
+.Sh DESCRIPTION
+Reduce each adjacent run of equal lines to one line by default.
+Equal lines separated by different lines remain separate groups;
+use
+.Xr sort 1
+first when global grouping is wanted.
+.Fl c
+prefixes each group with its count.
+.Fl d
+prints only repeated groups and
+.Fl u
+only groups occurring once.
+.Fl i
+compares without letter case.
+.Fl f Ar fields
+skips fields before comparing,
+.Fl s Ar characters
+skips characters after skipped fields, and
+.Fl w Ar count
+limits the comparison width.
+.Fl z
+uses NUL-terminated records.
+.Pp
+Read standard input when input is omitted or
+.Ql - .
+Write standard output when output is omitted or
+.Ql - ;
+a named output is created or truncated and needs writable authority.
+Do not use the same path for input and output: opening output can destroy
+unread input.
+This is stream processing, not a transactional file edit.
+See
+.Xr sync 1
+for a barrier after writing a named output.
+.Sh EXIT STATUS
+0 on successful processing; nonzero for invalid options or
+input/output failure. Diagnostics use standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+uniq -c /etc/words.txt
+cat /etc/words.txt | uniq | wc -l
+.Ed
+.Sh ABSD PROFILE
+This is the unmodified uutils 0.12.0 utility pinned by the platform build.
+The reference describes selected source-supported options; use
+.Fl Fl help
+for the complete upstream interface.
+File access uses the process's ABSD filesystem view, output uses its
+inherited stream, and the command acquires no additional authority.
+There are no native Unix processes, signals or permission bits underneath
+this port.
+The command matrix exercises the example forms below; other options
+listed here are source-checked, not separately guest-qualified.
+.Sh SEE ALSO
+.Xr sort 1 ,
+.Xr sync 1 ,
+.Xr filesystem 7

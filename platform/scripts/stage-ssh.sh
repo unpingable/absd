@@ -8,7 +8,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-stage=$(dirname "$root")/absd-std-staged-ssh
+stage=${ABSD_SSH_STAGE:-$root/.staged-ssh}
 crate=${CARGO_HOME:-$HOME/.cargo}/registry/cache/index.crates.io-1949cf8c6b5b557f/sunset-0.6.0.crate
 expected=3b52312b804ac95f10d3963f6ef5889117ad678bd6ce977be4aa4cf491bad78f
 
@@ -23,11 +23,13 @@ if len(pins) != 1 or pins[0]["version"] != "0.6.0" or "source" in pins[0]:
     sys.exit(f"ssh/Cargo.lock does not resolve sunset to the staged 0.6.0: {pins}")
 PY
 fi
-if git apply --numstat "$root/patches/sunset-server-channel.patch" | awk '{print $3}' |
-    grep -v '^src/'; then
-    echo "sunset-server-channel.patch touches something outside sunset's sources" >&2
-    exit 1
-fi
+for patch in sunset-server-channel.patch sunset-terminal-metadata.patch; do
+    # Inspect from the component, without inheriting an outer monorepo prefix.
+    if GIT_CEILING_DIRECTORIES="$(dirname "$root")" git -C "$root" apply --numstat "$root/patches/$patch" | awk '{print $3}' | grep -v '^src/'; then
+        echo "$patch touches something outside sunset's sources" >&2
+        exit 1
+    fi
+done
 rm -rf "${stage:?}"
 mkdir -p "$stage"
 tar -xzf "$crate" -C "$stage"
@@ -35,7 +37,10 @@ mv "$stage/sunset-0.6.0" "$stage/sunset"
 (cd "$stage/sunset" &&
     GIT_CEILING_DIRECTORIES=$stage git apply --check "$root/patches/sunset-server-channel.patch" &&
     GIT_CEILING_DIRECTORIES=$stage git apply "$root/patches/sunset-server-channel.patch" &&
-    GIT_CEILING_DIRECTORIES=$stage git apply --reverse --check "$root/patches/sunset-server-channel.patch")
+    GIT_CEILING_DIRECTORIES=$stage git apply --reverse --check "$root/patches/sunset-server-channel.patch" &&
+    GIT_CEILING_DIRECTORIES=$stage git apply --check "$root/patches/sunset-terminal-metadata.patch" &&
+    GIT_CEILING_DIRECTORIES=$stage git apply "$root/patches/sunset-terminal-metadata.patch" &&
+    GIT_CEILING_DIRECTORIES=$stage git apply --reverse --check "$root/patches/sunset-terminal-metadata.patch")
 # The archive itself carries Cargo.toml.orig (cargo's original manifest).
 test -z "$(find "$stage" \( -name '*.rej' -o -name '*.orig' \) \
     ! -path "$stage/sunset/Cargo.toml.orig" -print -quit)"
@@ -52,5 +57,10 @@ mkdir -p "$root/ssh/tree"
 for crate in runtime broker fs fsd release net; do
     ln -sfn "../../$crate" "$root/ssh/tree/$crate"
 done
-ln -sfn ../../../absd-std-staged-ssh/sunset "$root/ssh/tree/sunset"
+sunset_link=$(python3 - "$stage/sunset" "$root/ssh/tree" <<'PYREL'
+import os, sys
+print(os.path.relpath(sys.argv[1], sys.argv[2]))
+PYREL
+)
+ln -sfn "$sunset_link" "$root/ssh/tree/sunset"
 printf '%s\n' 'ABSD SSH SUNSET PATCH APPLY OK'

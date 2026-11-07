@@ -1,16 +1,58 @@
 #!/bin/sh
 set -eu
 
+# Entry refusal precedes even root resolution, inputs and cleanup traps.
+case $0 in */*) entry_scripts=${0%/*} ;; *) entry_scripts=. ;; esac
+"$entry_scripts/check-gate-entry.sh"
+unset entry_scripts
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 campaign_root=$(dirname "$root")
 . "$root/scripts/inputs.sh"
+
+# Shell slice host composition and terminal controls (no guest).
+python3 -I "$root/scripts/test_shell_packaging.py"
+python3 -I "$root/scripts/test-dmesg.py"
+python3 -I "$root/scripts/test-observations.py"
+python3 -I "$root/scripts/test-civil-clock.py"
+python3 -B -I "$root/scripts/test_sqlite_clock.py"
+if [ "$ABSD_PROFILE" = full ]; then
+    ABSD_AG_SOURCE=$(absd_source AG) python3 -B -I "$root/scripts/test_ag_clock.py"
+    python3 -B -I "$root/scripts/test_nq_clock.py" --source "$(absd_source NQ)" \
+        --work "$root/target/nq-clock-host" --target-dir "$root/target/nq-clock-host-target"
+fi
+python3 -I "$root/scripts/test-system-time.py" --work "$root/target/system-time-host"
+python3 -I "$root/scripts/test-plain-input-read.py" --work "$root/target/plain-input-read-host"
+python3 -I "$root/scripts/test-time-owner.py" --work "$root/target/time-owner-host" \
+    --target-dir "$root/target/time-owner-host-target"
+python3 -I "$root/scripts/tests/test_terminal_size.py"
+python3 -I "$root/scripts/tests/test_prompt_mode_ack.py"
+python3 -I "$root/scripts/tests/test_shell_control_poll.py"
+python3 -B -I "$root/scripts/tests/test_shell_stdin_feed.py"
+python3 -I "$root/scripts/tests/test_ssh_prompt_steps.py"
+python3 -I "$root/scripts/tests/test_ssh_process_authority.py"
+python3 -I "$root/scripts/tests/test_ssh_storage_oracle.py"
+python3 -I "$root/scripts/tests/test_fsd_capacity_oracles.py"
+python3 -I "$root/scripts/tests/test_fsd_probe_startup_role.py"
+python3 -I "$root/scripts/tests/test_ssh_journal_objects.py"
+python3 -I "$root/scripts/tests/test_served_prompt_contexts.py"
+python3 -I "$root/scripts/test_operator_provenance_units.py"
 canonical_kernel=$(absd_source KERNEL)
+python3 -B -I "$root/scripts/test-local-ready-stream.py" --kernel "$canonical_kernel" \
+    --work "$root/target/local-ready-stream-host"
 # An explicit full revision selects a successor pair. The default retains
 # the previous accepted pair; changing the source repository does not select
 # its moving HEAD. The exact-revision check below precedes building.
-kernel_commit=${ABSD_KERNEL_COMMIT:-aee59ea40a0a062dc1c45a30055a8a3b3cf98ffd}
+kernel_commit=${ABSD_KERNEL_COMMIT:-1a44e3c207e514e1f776f3d745d62eb870d0c608}
 run=
 old_run=
+# Shared kit source checks also run at the direct install boundary.
+check_c_kit_source() {
+    python3 -I "$root/scripts/c_kit_source.py" kit "$root" \
+        "${ABSD_CKIT_BUILD:-$campaign_root/ckit-build}/kit"
+}
+# The stopped copy of the operator image the matrix builds (coordination record #67);
+# cleanup() removes it on every exit, including failure and interruption.
+operator_reference=
 # A kernel before frame_stats (syscall 35): the observation matrix's
 # "kernel refuses, answer unknown" case.
 old_kernel_commit=bc97503a9aaad7dfe4f9187abe3157c6c88b6bfd
@@ -29,6 +71,12 @@ cleanup() {
             esac
         fi
     done
+    if [ -n "$operator_reference" ] && [ -e "$operator_reference" ]; then
+        case "$operator_reference" in
+            "${TMPDIR:-/tmp}"/absd-operator-reference.*) rm -rf "$operator_reference" ;;
+            *) printf '%s\n' "refusing unexpected cleanup path: $operator_reference" >&2; status=1 ;;
+        esac
+    fi
     allocated=$(du -s -B1 "$root" | awk '{print $1}')
     printf 'ABSD RUST CLEANUP allocated=%s qemu=' "$allocated"
     # Only this run's guests: other VMs on the host are not ours to judge.
@@ -56,25 +104,74 @@ test "$available_bytes" -ge "$required_bytes"
 # recorded baseline (docs/PROVENANCE.md). Fast; builds nothing.
 "$root/scripts/provenance.py" check
 python3 "$root/scripts/test_provenance.py"
+python3 "$root/scripts/test_picolibc_provenance.py"
+python3 "$root/scripts/test_document_notices.py"
+python3 -B -I "$root/scripts/test_gate_entry.py"
+python3 -B -I "$root/scripts/test_gate_arity.py"
+python3 -B -I "$root/scripts/test_toolbox_t3.py"
+python3 -B -I "$root/scripts/test_rmdir_poststate.py"
+python3 -B -I "$root/scripts/test_rm_host.py"
+python3 -B -I "$root/scripts/test_media_profile_gate.py"
+python3 -B -I "$root/scripts/test_post_kit.py"
+python3 -B -I "$root/scripts/test_harness_cohort.py"
 python3 "$root/scripts/test_served_kernel.py"
 python3 "$root/scripts/test_served_ram.py"
+python3 -B "$root/scripts/test_work_dir_guard.py"
+# Frozen source identity controls use a temporary Git repo, no history/guest/build.
+python3 -B -I "$root/scripts/test_storage_fence_frozen.py"
+python3 -I "$root/scripts/test_c_kit_source.py"
+# Census and selftest lifecycle controls use fresh host fixtures, no C-port build.
+python3 -B -I "$root/scripts/c-kit-matrix-selftest.py"
+python3 -B -I "$root/scripts/test_c_kit_selftest.py"
+python3 -B -I "$root/scripts/test-cports-quiescence.py"
+python3 -B -I "$root/scripts/test-c-kit-confirmation.py"
+python3 -B -I "$root/scripts/test_c_kit_selftest_retirement.py"
+# Installed SDK packaging/integrity contracts (host only; no guest or build).
+python3 -B -I "$root/scripts/test_sdk.py"
+# ABSD-target C compilations read no host system header (Picolibc, absd-cc,
+# the kit, the cc-crate flags); build-picolibc.sh checks its real build too.
+python3 -B -I "$root/scripts/test_target_host_headers.py"
 # The release recipe: recorded kernel features, their replay, and the
 # manifest schema (host only; fixture Makefiles, no kernel compile).
 python3 "$root/scripts/test_release_manifest.py"
+python3 "$root/scripts/test_public_source_identity.py"
+python3 "$root/scripts/test_app_replacement_qualification.py"
+python3 -I "$root/scripts/test_app_a_vm_runner.py"
 # Staging receipt dispositions and exact-byte refusal controls (no guest/build).
 python3 -B -I "$root/scripts/test_release_tool.py"
+python3 -B -I "$root/scripts/test_preview_bundle.py"
+python3 -B -I "$root/scripts/test_boot_corresponding_source.py"
+python3 -B "$root/scripts/test_p2_boot_binding.py"
+python3 -B "$root/scripts/test_boot_artifacts.py"
+python3 -B "$root/scripts/test_operator_boot_binding.py"
+python3 -B -I "$root/scripts/test_logger_boot_binding.py"
+python3 -B -I "$root/scripts/test_ssh_priority_cleanup.py"
+python3 -B -I "$root/scripts/test_operator_cpus.py"
+python3 -B -I "$root/scripts/test_operator_build_diagnostics.py"
+python3 -B -I "$root/scripts/test_operator_geometry.py"
+python3 -B -I "$root/scripts/test_operator_geometry_release.py"
+python3 -B -I "$root/scripts/test_operator_geometry_resume.py"
+python3 -B -I "$root/scripts/test_manual.py"
+python3 -B -I "$root/scripts/tests/test_process_capacity.py"
+python3 -B -I "$root/scripts/test_local_console_enroll.py"
+python3 -B -I "$root/scripts/tests/test_boot_operator_console.py"
+python3 -B -I "$root/scripts/tests/test_boot_operator_supervisor.py"
+python3 -B -I "$root/scripts/test_operator_packaging.py"
+python3 -B "$root/scripts/test-qualify-operator-binding.py"
+python3 -B "$root/scripts/qualification/composition/test-handoffs.py"
+python3 -B -I "$root/scripts/test_fsd_regeneration.py"
+python3 -B -I "$root/scripts/test_fixture_import_plan.py"
 # Symbol-demand reports are written in the C locale (byte order).
 python3 -I "$root/scripts/test_demand_locale.py"
 python3 "$root/scripts/test_e1000_rx.py"
 python3 "$root/scripts/test_ssh_owner_samples.py"
 python3 "$root/scripts/test-health-observation.py" --host
-# The candidate-media builder (scripts/media.py): host tests plus the
-# end-to-end refusals, which assemble real images with the pinned image
-# tools (no compiler, no QEMU). The S4 classes need the private S4
-# candidate; without it the last line lists each skip and its reason, and
-# ABSD_REQUIRE_S4=1 turns any skip into a failure.
+python3 -B -I "$root/scripts/test-spawn-cwd.py" --work "$root/.host-target/spawn-cwd"
 python3 -B -I "$root/scripts/test_media_copy.py"
-ABSD_MEDIA_E2E=1 python3 -I "$root/scripts/test_media.py"
+# The disk installer on sparse temporary images: layout, both GPT copies,
+# refusals with the target unchanged, exact-disk confirmation (docs/INSTALL-DISK.md).
+python3 -B -I "$root/scripts/test_install_disk.py"
+python3 -B -I "$root/scripts/test_native_installer.py"
 # A kernel checkout must hold the exact revision. A kernel snapshot (a plain
 # directory, as in a source release) has no revision to test: it must be the
 # tree the release's manifest names, unless ABSD_ALLOW_MODIFIED=1 says a
@@ -103,22 +200,66 @@ extended() {
         not_run="$not_run $absd_step"
     fi
 }
-# The core programs whose two builds are compared.
-core_hashes() {
-    sha256sum \
-        "$root/probe.elf" "$root/exit-std.elf" "$root/text-stats.elf" "$root/panic-std.elf" \
-        "$root/fixture-import.elf" "$root/broker-requester.elf" "$root/broker-echo.elf" \
-        "$root/netd-probe.elf" "$root/exec-probe.elf" "$root/sh-launch.elf" "$root/sshd.elf" \
-        "$root/absd-fsd.elf" "$root/absd-fsd-regenerate.elf" "$root/absd-enroll.elf" "$root/fsd-probe.elf" "$root/sshtest.elf" \
-        "$root"/commands/absd-sh "$root"/commands/cat "$root"/commands/echo \
-        "$root"/commands/ls "$root"/commands/printenv "$root"/commands/pwd "$root"/commands/uname \
-        "$root"/commands/sh-probe "$root"/commands/mkdir "$root"/commands/rm "$root"/commands/mv \
-        "$root"/commands/cp "$root"/commands/head "$root"/commands/tail "$root"/commands/wc \
-        "$root"/commands/sha256sum "$root"/commands/stat "$root"/commands/df "$root"/commands/sync \
-        "$root"/commands/man "$root"/commands/date "$root"/commands/uptime "$root"/commands/release \
-        "$root"/commands/sysinfo "$root"/commands/health "$root"/commands/net-status |
-        awk '{print $1}'
+# Reproducibility artifact declaration
+# Both build rounds and their named receipt use these paths. No positional labels.
+artifact_paths() {
+    case "$ABSD_PROFILE" in
+    core) printf '%s\n' \
+        probe.elf exit-std.elf text-stats.elf panic-std.elf \
+        fixture-import.elf broker-requester.elf broker-echo.elf netd-probe.elf \
+        exec-probe.elf sh-launch.elf absd-logd.elf sshd.elf absd-sftp.elf absd-fsd.elf \
+        absd-fsd-regenerate.elf absd-enroll.elf fsd-probe.elf sshtest.elf \
+        commands/absd-sftp commands/absd-sh commands/cat commands/echo commands/ls \
+        commands/printenv commands/pwd commands/uname commands/sh-probe \
+        commands/mkdir commands/rm commands/mv commands/cp \
+        commands/head commands/tail commands/wc commands/sha256sum \
+        commands/stat commands/df commands/sync commands/man \
+        commands/date commands/uptime commands/release commands/sysinfo \
+        commands/health commands/net-status commands/terminal-size commands/sh commands/ps commands/interfaces commands/dmesg commands/logs ;;
+    full) printf '%s\n' \
+        probe.elf exit-std.elf text-stats.elf pulse-std.elf \
+        panic-std.elf ag-authority.elf pulse-journal-std.elf ag-sqlite.elf \
+        fixture-import.elf nightshift-resolver.elf nightshift-writer.elf broker-requester.elf \
+        broker-echo.elf pulse-support-resolver.elf pulse-support-resolver-test.elf nq.elf \
+        nq-unknown.elf nightshift-pipeline-writer.elf nightshift-ag-resolver.elf ag-loopctl-init.elf \
+        ag-loopctl-record-proposal.elf nightshift-ag-resolver-short-ttl.elf netd-probe.elf exec-probe.elf \
+        sh-launch.elf absd-logd.elf sshd.elf absd-sftp.elf absd-fsd.elf absd-fsd-regenerate.elf \
+        absd-enroll.elf fsd-probe.elf sshtest.elf commands/absd-sftp commands/absd-sh \
+        commands/cat commands/echo commands/ls commands/printenv \
+        commands/pwd commands/uname commands/sh-probe commands/mkdir \
+        commands/rm commands/mv commands/cp commands/head \
+        commands/tail commands/wc commands/sha256sum commands/stat \
+        commands/df commands/sync commands/man commands/date \
+        commands/uptime commands/release commands/sysinfo commands/health \
+        commands/net-status commands/terminal-size commands/sh commands/ps commands/interfaces commands/dmesg commands/logs pulse-frame-pressure-cycle.elf pulse-frame-pressure-resolver.elf pulse-frame-pressure-resolver-test.elf ;;
+    *) echo 'unsupported reproducibility profile' >&2; return 1 ;;
+    esac
 }
+artifact_hashes() {
+    (
+        cd "$root"
+        paths=$(artifact_paths) || return
+        set -- $paths
+        [ "$#" -gt 0 ] || { echo "empty artifact declaration" >&2; return 1; }
+        sha256sum "$@"
+    )
+}
+artifact_summary() {
+    artifact_program_count=$(artifact_paths | wc -l | tr -d ' ')
+    artifact_command_count=$(artifact_paths | awk '/^commands\// {n++} END {print n+0}')
+    if [ "$ABSD_PROFILE" = full ]; then
+        artifact_prefix='ABSD RUST REPRODUCIBLE OK'
+    else
+        artifact_prefix='ABSD RUST CORE REPRODUCIBLE OK'
+    fi
+    printf '%s builds=2 programs=%s commands=%s' "$artifact_prefix" "$artifact_program_count" "$artifact_command_count"
+    printf '%s\n' "$second_hashes" | while read -r hash path; do
+        printf ' %s=%s' "$path" "$hash"
+    done
+    printf ' manual=%s\n' "${second_manual%% *}"
+}
+# End reproducibility helpers
+
 if absd_is_checkout "$canonical_kernel"; then
     test "$(git -C "$canonical_kernel" rev-parse "$kernel_commit^{commit}")" = "$kernel_commit"
 else
@@ -131,6 +272,9 @@ fi
 extended "$root/scripts/check-pulse-oracle.sh"
 
 "$root/scripts/prepare-and-build.sh"
+# Separate from host entry: validate the existing hash-vector constants as
+# soon as the first build ends, before repeating builds or starting guests.
+python3 -B -I "$root/scripts/check-gate-arity.py" "$root/scripts/check-all.sh"
 # The filesystem library against a host sector device: every crash point
 # of every operation, corruption refusal, identity, locks, ENOSPC.
 (cd "$root/fs" && env -u RUSTFLAGS cargo +1.95.0 test --offline --release \
@@ -170,83 +314,35 @@ printf '%s\n' 'ABSD NET HOST TESTS OK'
 (cd "$root/ssh" && env -u RUSTFLAGS cargo +1.95.0 test --offline --locked --release \
     --target x86_64-unknown-linux-gnu --target-dir "$root/.host-target-ssh")
 printf '%s\n' 'ABSD SSHD HOST TESTS OK'
-if [ "$ABSD_PROFILE" = full ]; then
-first_hashes=$(sha256sum \
-    "$root/probe.elf" "$root/exit-std.elf" "$root/text-stats.elf" \
-    "$root/pulse-std.elf" "$root/panic-std.elf" \
-    "$root/ag-authority.elf" "$root/pulse-journal-std.elf" "$root/ag-sqlite.elf" \
-    "$root/fixture-import.elf" "$root/nightshift-resolver.elf" "$root/nightshift-writer.elf" \
-    "$root/broker-requester.elf" "$root/broker-echo.elf" \
-    "$root/pulse-support-resolver.elf" "$root/pulse-support-resolver-test.elf" \
-    "$root/nq.elf" "$root/nq-unknown.elf" "$root/nightshift-pipeline-writer.elf" \
-    "$root/nightshift-ag-resolver.elf" "$root/ag-loopctl-init.elf" "$root/ag-loopctl-record-proposal.elf" \
-    "$root/nightshift-ag-resolver-short-ttl.elf" "$root/netd-probe.elf" \
-    "$root/exec-probe.elf" "$root/sh-launch.elf" "$root/sshd.elf" "$root/absd-fsd.elf" \
-    "$root/absd-fsd-regenerate.elf" "$root/absd-enroll.elf" "$root/fsd-probe.elf" \
-    "$root/sshtest.elf" "$root"/commands/absd-sh "$root"/commands/cat "$root"/commands/echo \
-    "$root"/commands/ls "$root"/commands/printenv "$root"/commands/pwd "$root"/commands/uname \
-    "$root"/commands/sh-probe "$root"/commands/mkdir "$root"/commands/rm "$root"/commands/mv \
-    "$root"/commands/cp "$root"/commands/head "$root"/commands/tail "$root"/commands/wc \
-    "$root"/commands/sha256sum "$root"/commands/stat "$root"/commands/df "$root"/commands/sync \
-    "$root"/commands/man "$root"/commands/date "$root"/commands/uptime "$root"/commands/release \
-    "$root"/commands/sysinfo "$root"/commands/health "$root"/commands/net-status \
-    "$root/pulse-frame-pressure-cycle.elf" "$root/pulse-frame-pressure-resolver.elf" \
-    "$root/pulse-frame-pressure-resolver-test.elf" |
-    awk '{print $1}')
-else
-    first_hashes=$(core_hashes)
-fi
+first_hashes=$(artifact_hashes)
 first_manual=$(cd "$root/manpages" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum)
 "$root/scripts/clean-owned.sh"
 "$root/scripts/prepare-and-build.sh"
-if [ "$ABSD_PROFILE" = full ]; then
-second_hashes=$(sha256sum \
-    "$root/probe.elf" "$root/exit-std.elf" "$root/text-stats.elf" \
-    "$root/pulse-std.elf" "$root/panic-std.elf" \
-    "$root/ag-authority.elf" "$root/pulse-journal-std.elf" "$root/ag-sqlite.elf" \
-    "$root/fixture-import.elf" "$root/nightshift-resolver.elf" "$root/nightshift-writer.elf" \
-    "$root/broker-requester.elf" "$root/broker-echo.elf" \
-    "$root/pulse-support-resolver.elf" "$root/pulse-support-resolver-test.elf" \
-    "$root/nq.elf" "$root/nq-unknown.elf" "$root/nightshift-pipeline-writer.elf" \
-    "$root/nightshift-ag-resolver.elf" "$root/ag-loopctl-init.elf" "$root/ag-loopctl-record-proposal.elf" \
-    "$root/nightshift-ag-resolver-short-ttl.elf" "$root/netd-probe.elf" \
-    "$root/exec-probe.elf" "$root/sh-launch.elf" "$root/sshd.elf" "$root/absd-fsd.elf" \
-    "$root/absd-fsd-regenerate.elf" "$root/absd-enroll.elf" "$root/fsd-probe.elf" \
-    "$root/sshtest.elf" "$root"/commands/absd-sh "$root"/commands/cat "$root"/commands/echo \
-    "$root"/commands/ls "$root"/commands/printenv "$root"/commands/pwd "$root"/commands/uname \
-    "$root"/commands/sh-probe "$root"/commands/mkdir "$root"/commands/rm "$root"/commands/mv \
-    "$root"/commands/cp "$root"/commands/head "$root"/commands/tail "$root"/commands/wc \
-    "$root"/commands/sha256sum "$root"/commands/stat "$root"/commands/df "$root"/commands/sync \
-    "$root"/commands/man "$root"/commands/date "$root"/commands/uptime "$root"/commands/release \
-    "$root"/commands/sysinfo "$root"/commands/health "$root"/commands/net-status \
-    "$root/pulse-frame-pressure-cycle.elf" "$root/pulse-frame-pressure-resolver.elf" \
-    "$root/pulse-frame-pressure-resolver-test.elf" |
-    awk '{print $1}')
-else
-    second_hashes=$(core_hashes)
-fi
+second_hashes=$(artifact_hashes)
 test "$first_hashes" = "$second_hashes" || { echo "ABSD RUST REPRODUCIBLE FAILED: program hashes differ between builds" >&2; exit 1; }
 second_manual=$(cd "$root/manpages" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum)
 test "$first_manual" = "$second_manual" || { echo "ABSD RUST REPRODUCIBLE FAILED: manual pages differ between builds" >&2; exit 1; }
-set -- $second_hashes
-if [ "$ABSD_PROFILE" = full ]; then
-test "$#" -eq 60 || { echo "ABSD RUST REPRODUCIBLE FAILED: hashed $# files, expected 60" >&2; exit 1; }
-printf '%s\n' \
-    "ABSD RUST REPRODUCIBLE OK builds=2 probe=$1 exit=$2 text=$3 pulse=$4 panic=$5 ag=$6 journal=$7 sqlite=$8 import=$9 resolver=${10} writer=${11} requester=${12} echo=${13} support=${14} support_test=${15} nq=${16} nq_unknown=${17} pipeline=${18} ag_resolver=${19} ag_init=${20} ag_record=${21} ag_resolver_short=${22} netd=${23} exec=${24} sh_launch=${25} sshd=${26} fsd=${27} fsd_regenerate=${28} commands=26 manual=${second_manual%% *}"
-else
-    test "$#" -eq 42 || { echo "ABSD RUST CORE REPRODUCIBLE FAILED: hashed $# files, expected 42" >&2; exit 1; }
-    printf '%s\n' "ABSD RUST CORE REPRODUCIBLE OK builds=2 programs=$# commands=26 manual=${second_manual%% *}"
-fi
+artifact_summary
 
 run=$(mktemp -d "$campaign_root/absd-kernel-std-run.XXXXXX")
 absd_kernel_run "$canonical_kernel" "$kernel_commit" "$run"
 if absd_is_checkout "$canonical_kernel"; then
     test -z "$(git -C "$run" status --porcelain --untracked-files=all)"
 fi
+# Real kernel producer through the actual collector, private RPC and filesystem.
+# The clean kernel clone above pins the source; host substitutions make no
+# authorization or guest claim. Ordinary target cleanup owns these caches.
+python3 -I "$root/scripts/test-journal-source-admission.py" --kernel "$run" \
+    --work "$root/target/log-source-admission" --target-dir "$root/target/log-source-admission-target"
+python3 -I "$root/scripts/test-journal-source-admission.py" --kernel "$run" \
+    --work "$root/target/log-recovery" --target-dir "$root/target/log-source-admission-target" --scenario recovery
+# Actual local init relay/publication through this pair's unchanged host readers.
+python3 -B -I "$run/scripts/test-local-console-startup.py" --platform "$root"
 # The runtime's hand-copied syscall table is generation
 # absd_release::KERNEL_ABI; every program refuses (status 103) a kernel that
 # answers abi_version (42) with anything else.
 release_abi=$(sed -n 's/^pub const KERNEL_ABI: u32 = \([0-9][0-9]*\);$/\1/p' "$root/release/src/lib.rs")
+python3 -B -I "$root/scripts/check-wait-readable-contract.py" --kernel "$run"
 grep -qx "pub const KERNEL_ABI: u64 = $release_abi;" "$run/abi/src/lib.rs" || \
     { echo "check-all: kernel $kernel_commit is not syscall ABI generation $release_abi" >&2; exit 1; }
 # The kernel facts this tree copies by hand (loader segment cap, image
@@ -259,6 +355,7 @@ python3 -I "$run/scripts/check-frame-admission.py" --platform "$root" \
 python3 -I "$run/scripts/check-frame-admission.py" --self-test
 python3 -I "$root/scripts/check-abi-elf.py" --kernel "$run" --root "$root"
 ABSD_KERNEL_RUN=$run python3 -I "$root/scripts/tests/test_check_abi_elf.py"
+ABSD_KERNEL_RUN=$run python3 -I "$root/scripts/tests/test_check_abi_compiler_facts.py"
 
 ABSD_KERNEL_RUN=$run ABSD_SKIP_BUILD=1 "$root/scripts/run-probe.sh"
 ABSD_KERNEL_RUN=$run ABSD_SKIP_BUILD=1 "$root/scripts/run-exit.sh"
@@ -298,14 +395,31 @@ ABSD_KERNEL_RUN=$run ABSD_SKIP_BUILD=1 "$root/scripts/run-served-matrix.sh"
 # (docs/base-userland-20261012/RECORD.md, "Gate on merge (I1)").
 sh "$root/scripts/build-picolibc.sh"
 sh "$root/scripts/build-c-kit.sh"
+check_c_kit_source
 sh "$root/scripts/build-userland.sh"
+check_c_kit_source
+# Post-kit, separate from cheap entry checks: use the existing installer's
+# output and original context/digest predicates before building Rust ports.
+python3 -B -I "$root/scripts/check-post-kit.py" "$root"
 "$root/scripts/build-ports.sh"
 ABSD_KERNEL_RUN=$run ABSD_SKIP_BUILD=1 "$root/scripts/run-cmds-matrix.sh"
 # The kit's own gate (clang and gcc builds, the embedded and shell matrices)
 # stays in the full profile.
 extended env ABSD_KERNEL_RUN="$run" ABSD_SKIP_BUILD=0 ABSD_C_GCC=1 "$root/scripts/run-c-kit.sh"
 ABSD_KERNEL_RUN=$run ABSD_SKIP_BUILD=1 "$root/scripts/run-perf-matrix.sh"
-ABSD_KERNEL_RUN=$run ABSD_SKIP_BUILD=1 "$root/scripts/run-operator-matrix.sh"
+operator_reference=$(mktemp -d "${TMPDIR:-/tmp}/absd-operator-reference.XXXXXX")
+ABSD_KERNEL_RUN=$run ABSD_SKIP_BUILD=1 ABSD_OPERATOR_REFERENCE=$operator_reference "$root/scripts/run-operator-matrix.sh"
+# The candidate-media builder (scripts/media.py): host tests plus the
+# end-to-end refusals, which assemble real images with the pinned image
+# tools (no compiler, no QEMU). The S4 classes need the private S4
+# candidate; without it the last line lists each skip and its reason, and
+# ABSD_REQUIRE_S4=1 turns any skip into a failure. Its operator-disk case and
+# absd-try's real-reader cases read the stopped copy of the image the operator
+# matrix just built (coordination record #67): never a protected endurance guest's disk.
+ABSD_MEDIA_E2E=1 ABSD_U1B_IMAGE=$operator_reference python3 -I "$root/scripts/test_media.py"
+ABSD_TRY_REAL_DISK=$operator_reference/absd-operator.img python3 -I "$root/scripts/test_absd_try.py"
+rm -rf "${operator_reference:?}"
+operator_reference=
 # Session containment (E2) runs under KVM: its churn and race columns are
 # hundreds of sessions, and this is the matrices' KVM column.
 ABSD_CONTAIN_ACCEL=kvm ABSD_KERNEL_RUN=$run ABSD_SKIP_BUILD=1 "$root/scripts/run-contain-matrix.sh"
@@ -324,7 +438,7 @@ else
 fi
 ABSD_KERNEL_RUN=$run ABSD_SKIP_BUILD=1 "$root/scripts/run-compat-probe.sh"
 if [ "$ABSD_PROFILE" = full ]; then
-    printf '%s\n' "ABSD RUST STD MATRIX OK programs=56 kernel=$kernel_identity observe_old_kernel=$observe_old_kernel ag_native=$ag_native"
+    printf '%s\n' "ABSD RUST STD MATRIX OK programs=$artifact_program_count kernel=$kernel_identity observe_old_kernel=$observe_old_kernel ag_native=$ag_native"
 else
     printf '%s\n' "ABSD RUST STD CORE MATRIX OK kernel=$kernel_identity extended=NOT_RUN steps=$(set -- $not_run; echo $#):$(echo $not_run | tr ' ' ,)"
 fi

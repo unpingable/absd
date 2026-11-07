@@ -26,3 +26,6 @@ debug = false
 codegen-units = 1
 
 [workspace]
+
+[features]
+native-pcm-experiment = ["absd-runtime/native-pcm-experiment"]

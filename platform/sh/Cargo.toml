@@ -5,6 +5,8 @@ edition = "2024"
 description = "absd-sh's line parser and builtins, host-tested; the ABSD binary is src/bin/absd_sh.rs"
 
 [dependencies]
+conch-parser = { path = "../vendor/conch-parser" }
+glob = { path = "../vendor/shell-glob" }
 
 # Tested on the host on its own; the ABSD binary includes src/lib.rs by path,
 # so the platform workspace and its lock do not change.

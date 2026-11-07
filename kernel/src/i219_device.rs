@@ -6,6 +6,7 @@ use crate::{
     e1000::{Identity, SendError},
     mmio, pci,
 };
+use absd_kernel::dma_policy;
 use absd_kernel::e1000_ring::{
     BUFFER_BYTES, RX_DESCRIPTORS, RxVerdict, TX_DESCRIPTORS, TxCounters, TxSlots,
 };
@@ -77,7 +78,7 @@ impl Io for Registers {
 /// The already-probed PIT supplies minimum delays; TSC bounds a stalled PIT.
 /// Like the boot timer probe, spin with interrupts enabled instead of an
 /// unbounded HLT. Only UP is admitted, and IRQs cannot switch a kernel frame.
-fn delay_ms(ms: u32) -> bool {
+pub(crate) fn delay_ms(ms: u32) -> bool {
     if ms > 2_000 {
         return false;
     }
@@ -343,7 +344,9 @@ impl Nic {
                     Ok(false) => return Ok(false),
                     Err(fault) => return Err(self.retire(fault)),
                 }
-                pci::enable_polled_dma(self.io.function);
+                if crate::dma::arm(self.io.function, &dma_policy::I219).is_err() {
+                    return Err(self.retire(CarrierFault::Activation));
+                }
                 if let Err(fault) = i219_ring::bus_master(pci::read32(self.io.function, 4)) {
                     return Err(self.retire(fault));
                 }

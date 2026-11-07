@@ -50,6 +50,7 @@ workdir=
 kernel_dir=
 platform_dir=
 products=
+tls_stage=
 toolchain_only=0
 while [ "$#" -gt 1 ]; do
     case $1 in
@@ -57,6 +58,7 @@ while [ "$#" -gt 1 ]; do
     --workdir) workdir=${2:?}; shift 2 ;;
     --kernel-dir) kernel_dir=${2:?}; shift 2 ;;
     --platform-dir) platform_dir=${2:?}; shift 2 ;;
+    --tls-stage) tls_stage=${2:?}; shift 2 ;;
     --platform-products) products=${2:?}; shift 2 ;;
     --toolchain-only) toolchain_only=1; shift ;;
     *) echo "reconstruct-release.sh: unknown argument $1" >&2; exit 2 ;;
@@ -90,6 +92,37 @@ absd-release-manifest/1)
 *) fail "unsupported manifest schema $schema" ;;
 esac
 
+# This script reconstructs separate component repositories. Public snapshots
+# record curated component correspondence separately from repository HEAD.
+python3 - "$manifest" <<'PYPUBLIC' || fail "public snapshot reconstruction uses tools/rebuild-release.sh from the public repository; see its README.md and docs/RELEASE.md"
+import sys, tomllib
+source = tomllib.load(open(sys.argv[1], "rb")).get("source", {})
+raise SystemExit(1 if any(key in source for key in ("kernel_snapshot", "platform_snapshot")) else 0)
+PYPUBLIC
+
+# Older /2 records without App A have the historical disabled selection.
+# An App A artifact without its selection cannot be reconstructed safely.
+document=$(python3 - "$manifest" "$tls_stage" <<'PYCONFIG'
+import hashlib, json, pathlib, sys, tomllib
+doc = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())
+config = doc.get("build", {}).get("https_document", {})
+enabled = config.get("enabled", False)
+if type(enabled) is not bool:
+    raise SystemExit("invalid build.https_document.enabled")
+installed = "tree/bin/https-document" in doc.get("artifacts", {}).get("files", {})
+if installed != enabled:
+    raise SystemExit("App A artifact and recorded selection disagree")
+if enabled:
+    if not sys.argv[2]:
+        raise SystemExit("App A reconstruction requires --tls-stage DIR")
+    stage = json.loads((pathlib.Path(sys.argv[2]) / "STAGE.json").read_bytes())
+    digest = hashlib.sha256(json.dumps(stage, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if digest != config.get("ring_stage_sha256"):
+        raise SystemExit("App A ring stage differs from manifest")
+print("1" if enabled else "0")
+PYCONFIG
+) || fail "App A configuration preflight failed"
+
 # (a) The toolchain.
 if ! $tool toolchain-check --manifest "$manifest" ${tarball:+--rust-src-tarball "$tarball"}; then
     fail "this host's toolchain is not the manifest's (each mismatch named above)"
@@ -110,9 +143,19 @@ step=$(field build.kernel_image.DURABLE_STEP)
 options=$(field build.kernel_image.DURABLE_OPTIONS)
 worker=$(field build.kernel_image.EXTERNAL_USER_ELF)
 server=$(field build.kernel_image.FILE_SERVER_ELF)
+logger=$(field build.kernel_image.LOGD_ELF) || fail "manifest lacks logger artifact; reconstruct this pre-logging /2 manifest with reconstruct-release.sh at its own platform commit ($(field source.platform_commit 2>/dev/null || echo unrecorded))"
+logd_fault=$(field build.kernel_image.LOGD_FAULT) || fail "manifest lacks logger fault policy; reconstruct this pre-logging /2 manifest with reconstruct-release.sh at its own platform commit ($(field source.platform_commit 2>/dev/null || echo unrecorded))"
+test "$logger" = absd-logd.elf || fail "unsupported logger artifact"
+test "$logd_fault" = 0 || fail "release reconstruction refuses diagnostic logger fault injection"
 wait_ticks=$(field build.kernel_image.NET_WAIT_TICKS)
 features=$(field build.kernel_image.EXTERNAL_KERNEL_FEATURES 2>/dev/null) || \
     fail "manifest lacks build.kernel_image.EXTERNAL_KERNEL_FEATURES; the kernel feature selection must be recorded"
+local_console=$(field build.kernel_image.ABSD_LOCAL_CONSOLE 2>/dev/null) || \
+    fail "manifest lacks build.kernel_image.ABSD_LOCAL_CONSOLE; reconstruct with the recorded platform revision or record the console policy"
+case $local_console in
+    0|1) ;;
+    *) fail "build.kernel_image.ABSD_LOCAL_CONSOLE must be recorded as 0 or 1" ;;
+esac
 test -z "$(field build.kernel_image.EXTERNAL_READER_ELF)" || fail "a reader ELF in the boot image is not reconstructed"
 test "$(field build.kernel_image.EXTERNAL_INPUT_sha256)" = \
     e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 || \
@@ -168,6 +211,9 @@ else
     # changing directory would otherwise build whatever workspace this
     # script was started in.
     (cd "$platform" && ABSD_RELEASE_ID=$release \
+    ABSD_HTTPS_DOCUMENT=$document \
+    ABSD_TLS_STAGE=$tls_stage \
+    ABSD_HTTPS_DOCUMENT_RECEIPT="$workdir/https-document-build.json" \
     ABSD_PULSE_SOURCE=$(field source.coordination_pins.ABSD_PULSE_SOURCE) \
     ABSD_AG_SOURCE=$(field source.coordination_pins.ABSD_AG_SOURCE) \
     ABSD_NIGHTSHIFT_SOURCE=$(field source.coordination_pins.ABSD_NIGHTSHIFT_SOURCE) \
@@ -182,7 +228,7 @@ input=$workdir/empty-input.bin
 make --no-print-directory -C "$kernel_dir" durable-iso DURABLE_STEP="$step" EXTERNAL_KERNEL_FEATURES="$features" \
     EXTERNAL_USER_ELF="$platform/$worker" EXTERNAL_INPUT="$input" EXTERNAL_READER_ELF= \
     EXTERNAL_READER_INPUT= DURABLE_OPTIONS="$options" FILE_SERVER_ELF="$platform/$server" \
-    NET_WAIT_TICKS="$wait_ticks" >"$workdir/kernel-build.log" 2>&1 || \
+    NET_WAIT_TICKS="$wait_ticks" ABSD_LOCAL_CONSOLE="$local_console" LOGD_ELF="$platform/$logger" LOGD_FAULT="$logd_fault" >"$workdir/kernel-build.log" 2>&1 || \
     { tail -20 "$workdir/kernel-build.log" >&2; fail "the kernel build failed ($workdir/kernel-build.log)"; }
 iso=$kernel_dir/build/durable/absd-durable-$step.iso
 

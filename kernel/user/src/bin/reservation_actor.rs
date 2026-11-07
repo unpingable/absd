@@ -118,7 +118,12 @@ fn run(cell: Cell, role: u64) -> Result<i32, Error> {
             if absd_user::spawn(absd_user::program::SLEEPER) != Err(Error::Again) {
                 return Err(Error::Invalid);
             }
-            set(cell, 21 | (pages << 16))?;
+            // First exhaustion reply: state[0..16], pages[16..48], actual
+            // signed admission return[48..64]. Both expected refusal codes fit.
+            set(
+                cell,
+                21 | (pages << 16) | ((refused as i16 as u16 as u64) << 48),
+            )?;
             until(cell, 220)?;
             // Supervisor frees one actual process slot. Consume its returned
             // uncommitted frames, then check the independent memory refusal.

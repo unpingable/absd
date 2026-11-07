@@ -1,0 +1,60 @@
+.Dd November 3, 2026
+.Dt LS 1
+.Os ABSD
+.Sh NAME
+.Nm ls
+.Nd list visible directory entries and native metadata
+.Sh SYNOPSIS
+.Nm
+.Op Fl l
+.Op Ar path ...
+.Sh DESCRIPTION
+List the working directory when no path is supplied.
+For a directory, print sorted entry names, one per line, with a trailing
+slash on directories.
+A file operand prints that operand's path.
+With multiple operands, directory listings have a
+.Ql path:
+header.
+There is no hidden-name filter, terminal column layout, recursive listing,
+colour or Unix permission display.
+.Pp
+.Fl l
+adds kind
+.Pq Ql d No or Ql - ,
+read-only flag
+.Pq Ql ro No or Ql -- ,
+link count, byte size, and modification time in UTC to the minute.
+Unknown modification time is printed as
+.Ql - .
+The size column is aligned within each listing.
+ABSD has no owner, group or mode bits.
+The object's read-only flag alone does not describe this session's mount
+access; consult
+.Xr stat 1
+or
+.Xr df 1 .
+Options precede operands; a later option word is a path.
+.Ql --
+ends option processing; use it or a
+.Ql ./
+prefix for a name beginning with a dash.
+Unknown leading options return status 2.
+.Pp
+The listing is limited to this process's visible filesystem view.
+No file is changed.
+A failed operand is diagnosed on standard error and later operands are
+attempted.
+Output failure stops listing; broken pipe is quiet.
+.Sh EXIT STATUS
+0 for successful listing; 1 for a path, metadata or output failure;
+2 for an unknown leading option.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+ls -l /home/operator
+ls -- /etc/network.conf
+.Ed
+.Sh SEE ALSO
+.Xr df 1 ,
+.Xr stat 1 ,
+.Xr filesystem 7

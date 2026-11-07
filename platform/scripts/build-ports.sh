@@ -16,15 +16,24 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+physical_root=$(CDPATH= cd -- "$root" && pwd -P)
+# Refuse stale prebuilt C ports before allocating the Rust-port build trees.
+# Missing C outputs may still be built by the installer, with fresh receipts.
+camp=$(dirname "$root")
+python3 -I "$root/scripts/c_kit_source.py" verify "$root" \
+    "${ABSD_CKIT_BUILD:-$camp/ckit-build}/kit" \
+    "${ABSD_USERLAND_BUILD:-$camp/userland-build}" --existing \
+    --posix "${ABSD_CPORTS_BUILD:-$camp/cports-build}/lib/libabsd-posix.a"
 toolchain=${ABSD_RUST_TOOLCHAIN:-$HOME/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu}
 sysroot=$root/.staged-sysroot
-stage=$(dirname "$root")/absd-std-staged-compat
+stage=${root}.staged-compat
 # The host's Cargo registry (index and downloaded archives) is read through
 # a private Cargo home per port (see the loop); nothing else of it is used.
 host_cargo=${CARGO_HOME:-$HOME/.cargo}
 index=index.crates.io-1949cf8c6b5b557f  # as scripts/stage-compat.sh reads it
-# The stage, the Cargo homes and the target directories are shared by every
-# checkout beside this one: one invocation at a time (waits for the lock).
+# This checkout owns a uniquely named sibling stage, Cargo homes and target
+# directories. Keep it outside the checkout's .cargo configuration ancestry.
+# Serialize invocations for this checkout so they cannot replace its inputs.
 mkdir -p "$stage"
 exec 9>"$stage/.build-ports.lock"
 flock 9
@@ -56,6 +65,28 @@ for port in $ports; do
     awk -F"$tab" -v c="$crate" -v v="$version" -v b="$bin" \
         '$1 == c && $2 == v && $4 == b && $5 == "run" {found=1} END {exit !found}' "$root/compat/programs.tsv" ||
         { echo "build-ports: $tree $bin is not a run row of compat/programs.tsv" >&2; exit 1; }
+    # As in ssh/tree, keep local dependency paths inside the utility's
+    # workspace so Cargo hashes them relatively into -C metadata. Source
+    # prefix remapping alone does not change that Cargo identity.
+    local_tree=$stage/absd/$tree/absd-tree
+    mkdir "$local_tree"
+    for local_crate in runtime broker fs fsd release; do
+        ln -s "$root/$local_crate" "$local_tree/$local_crate"
+    done
+    # Change only the dependency stanza stage-compat.sh appended. Keep the
+    # compatibility probe and upstream source bodies unchanged; refuse if
+    # that generated boundary has changed.
+    python3 - "$stage/absd/$tree/Cargo.toml" "$root/runtime" <<'PY'
+from pathlib import Path
+import sys
+manifest = Path(sys.argv[1])
+text = manifest.read_text()
+stanza = "\n[target.'cfg(target_os = \"absd\")'.dependencies.absd-runtime]\n"
+old = stanza + 'path = "' + sys.argv[2] + '"\n'
+if not text.endswith(old):
+    sys.exit('build-ports: unexpected staged runtime dependency')
+manifest.write_text(text[:-len(old)] + stanza + 'path = "absd-tree/runtime"\n')
+PY
     # uucore's build script embeds the locales of every uu_* crate unpacked
     # next to it in the Cargo registry, so a port built against the host's
     # ~/.cargo depended on what other builds had unpacked there. Each port
@@ -64,7 +95,9 @@ for port in $ports; do
     # unpacks exactly the crates this port's pinned lock and build-std need,
     # and the host's Cargo configuration is not read. Its own target
     # directory keeps one port's build-script output from another's. The
-    # private paths are remapped. The build's environment is exactly the
+    # private paths are remapped. Map both platform spellings too, as the
+    # base userland does: staged std sources may use the physical path.
+    # The build's environment is exactly the
     # one written below (env -i): nothing else of the caller's reaches it,
     # in particular no CARGO_* setting, no locale (uucore reads LANG to
     # embed a second one), no GIT_DIR/GIT_WORK_TREE, and no
@@ -95,7 +128,7 @@ for port in $ports; do
         RUST_TARGET_PATH=$root/targets \
         ABSD_RESTRICTED_STD_ALL=1 \
         CARGO_TARGET_DIR=$stage/target-ports/$tree \
-        CARGO_TARGET_X86_64_UNKNOWN_ABSD_RUSTFLAGS="-C link-arg=-T$root/user-linker.ld -C link-arg=--gc-sections --cfg getrandom_backend=\"rdrand\" --remap-path-prefix=$home=/absd/cargo-home" \
+        CARGO_TARGET_X86_64_UNKNOWN_ABSD_RUSTFLAGS="-C link-arg=-T$root/user-linker.ld -C link-arg=--gc-sections --cfg getrandom_backend=\"rdrand\" --remap-path-prefix=$home=/absd/cargo-home --remap-path-prefix=$root=/absd --remap-path-prefix=$physical_root=/absd" \
         CARGO_PROFILE_RELEASE_PANIC=abort \
         CARGO_PROFILE_RELEASE_LTO=true \
         CARGO_PROFILE_RELEASE_OPT_LEVEL=z \

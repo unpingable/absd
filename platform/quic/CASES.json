@@ -683,11 +683,11 @@
     },
     {
       "id": "Q27",
-      "name": "icmp-1228",
+      "name": "icmp-1200",
       "ordinal": 26,
       "local_port": 7826,
       "expected_outcome": "Native",
-      "peer_mode": "icmp-1228",
+      "peer_mode": "icmp-1200",
       "grant_lifetime_ms": 15000,
       "missing_time": false,
       "missing_output": false,
@@ -698,7 +698,7 @@
       "native_error_codes": [
         14
       ],
-      "icmp_mtu": 1228,
+      "icmp_mtu": 1200,
       "requires": [
         "recent_submitted_quote",
         "peer_icmp_sent",
@@ -888,5 +888,5 @@
     "cells_before",
     "cells_after"
   ],
-  "qualification_note": "Preregistered source expectations for independent review before any execution. A failed branch establishment is NOT_ESTABLISHED, not PASS. Raw outcome and cleanup verdict remain separate. Q27 conservatively fences on ICMP1228, not path-MTU continuation. Exact expected TLS alerts require independent source review before execution."
+  "qualification_note": "Preregistered source expectations for independent review before any execution. A failed branch establishment is NOT_ESTABLISHED, not PASS. Raw outcome and cleanup verdict remain separate. Q27 conservatively fences on advertised 1200-byte IPv4 MTU, strictly below its actual 1228-byte IPv4 packet containing 1200 UDP payload bytes; not path-MTU continuation. Exact expected TLS alerts require independent source review before execution."
 }

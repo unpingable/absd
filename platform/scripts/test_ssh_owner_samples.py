@@ -9,13 +9,14 @@ import cports_warm
 import ssh_absd
 
 class OwnerSampleObjects(unittest.TestCase):
-    def objects(self, sample=b'a'*512, sample_path='/var/log/network-status', readonly=False, directory=False, extra=None, missing=False, sample_serial=7):
+    def objects(self, sample=b'a'*512, sample_path='/var/log/network-status', readonly=False, directory=False, extra=None, missing=False, sample_serial=7, sample_blocks=(3,)):
         def record(data, ro=False, is_dir=False):
             return {'dir':is_dir,'readonly':ro,'serial':7,'size':len(data),'data':data}
         rows={'/etc/motd':record(b'fixed',True), '/var/log/fsd':record(b'changing log')}
         if not missing:
             rows[sample_path]=record(sample,readonly,directory)
             rows[sample_path]['serial']=sample_serial
+            rows[sample_path]['blocks']=list(sample_blocks)
         if extra:rows.update(extra)
         target=ssh_absd.AbsdTarget.__new__(ssh_absd.AbsdTarget);target.image=pathlib.Path('/unused/image')
         with patch.object(ssh_absd.absd_fs,'fs_region',return_value=object()), \
@@ -30,6 +31,14 @@ class OwnerSampleObjects(unittest.TestCase):
         self.assertTrue(all(len(row)==5 for row in first))
     def test_missing_sample_changes_comparison(self):
         self.assertNotEqual(self.objects(),self.objects(missing=True))
+    def test_writable_guard_preserves_identity_and_allocation(self):
+        kwargs={'sample_path':'/var/recovery.guard'}
+        before=self.objects(**kwargs)
+        self.assertEqual(before,self.objects(**dict(kwargs,sample=b'b'*512)))
+        for changed in [{'sample_serial':8},{'sample_blocks':(4,)},{'missing':True},
+                        {'sample':b'a'*511},{'readonly':True},{'directory':True}]:
+            with self.subTest(changed=changed):
+                self.assertNotEqual(before,self.objects(**dict(kwargs,**changed)))
     def test_recovery_projection_keeps_its_exact_shape_and_presence(self):
         kwargs={'sample_path':'/var/log/network-recovery','sample':b'a'*128}
         before=self.objects(**kwargs)

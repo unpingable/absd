@@ -1,0 +1,139 @@
+#![allow(dead_code,static_mut_refs,unused_imports,unused_variables)]
+use std::fmt::Write;
+EMITTER
+#[path="abi.rs"]pub mod syscall;
+#[path="program.rs"]mod program;
+#[path="object.rs"]mod object;
+#[path="gate.rs"]mod frame_admission;
+#[path="policy.rs"]mod logd_policy;
+mod absd_abi {pub use crate::syscall;}
+use syscall::SpawnHandleCopy;
+
+#[derive(Clone,Copy)]struct Console;
+impl std::fmt::Write for Console {fn write_str(&mut self,s:&str)->std::fmt::Result{DISPLAY.lock().unwrap().extend_from_slice(s.as_bytes());Ok(())}}
+impl Console {fn write_once(self,b:&[u8])->Result<usize,()>{DISPLAY.lock().unwrap().extend_from_slice(b);Ok(b.len())}}
+#[derive(Clone,Copy)]struct Child(u64);
+impl Child{fn from_raw(n:u64)->Self{Self(n)}fn raw(self)->u64{self.0}}
+#[derive(Clone,Copy)]struct Error(i64);
+impl Error{fn from_code(n:i64)->Self{Self(n)}fn code(self)->i64{self.0}}
+struct Info {pid:u64}
+struct Cell;
+impl Cell{fn create(_:u64)->Result<Self,()>{Ok(Self)}fn raw(self)->u64{25}fn from_raw(_:u64)->Self{Self}fn read(self)->Result<(u64,u64),()>{Ok((0,0))}}
+struct Pipe;
+impl Pipe{fn from_raw(_:u64)->Self{Self}fn write_all(self,_:&[u8])->Result<(),()>{Ok(())}}
+const MAX_WRITE:usize=256;
+ACTUAL_BUFFER
+const RIGHT_READ:u64=1;const RIGHT_WRITE:u64=2;
+const SERVED_LOGD_FRAMES:u64=9291;
+mod absd_user {pub mod broker {
+ pub const ROLE_STDIN:u64=1;pub const ROLE_FS_REQUEST:u64=2;pub const ROLE_FS_REPLY:u64=3;pub const ROLE_LIVENESS:u64=21;
+ pub fn startup_record(_:&mut[u8],_:&[(u64,u64)],_:&[u8])->Option<usize>{Some(8)}
+ pub fn logd_startup_record(_:&mut[u8])->Option<usize>{Some(8)}
+}}
+static mut LOGD_CHILD:u64=0;static mut LOGD_PID:u64=0;
+static mut LOGD_INPUT:u64=0;static mut LOGD_OUTPUT:u64=0;static mut LOGD_CELL:u64=0;
+static mut LOGD_BEAT:(u64,u64)=(0,0);static mut LOGD_FAULT_AT:u64=u64::MAX;
+static mut LOGD_FAULT_INJECTED:bool=false;const LOGD_FAULT:bool=false;
+static mut LOGD_POLICY:logd_policy::Policy=logd_policy::Policy::new();
+COLLECT_GLOBALS
+static mut SERVICE_DIAGNOSTICS:u64=20;static mut LOGD_CHANNEL:(u64,u64)=(21,22);
+static mut SERVED_READY:bool=false;
+static mut SERVED_READY_PROBE:program::ServedReadyProbe=program::ServedReadyProbe::new();
+static mut GATE:frame_admission::BootstrapAdmission=frame_admission::BootstrapAdmission::new();
+static mut GRANTED:bool=true;static mut NOW:u64=0;
+static RECORDS:std::sync::Mutex<Vec<Vec<u8>>>=std::sync::Mutex::new(Vec::new());
+static DISPLAY:std::sync::Mutex<Vec<u8>>=std::sync::Mutex::new(Vec::new());
+static mut INFO_ERROR:bool=false;static SNAPSHOT:std::sync::Mutex<Option<Vec<u8>>>=std::sync::Mutex::new(None);
+static mut PRESSURE:bool=false;static mut INITIAL_PRESSURE:bool=false;static mut ORDINARY:usize=0;
+static mut LOGD_GENERATION:u64=0;static mut LOGD_SPAWN_ERROR:Option<i64>=None;
+static mut REQUESTS:usize=0;static mut COPIES:usize=0;static mut LAST:i64=999;
+fn time()->u64{unsafe{NOW}}fn served()->bool{true}fn getpid()->u64{1}
+fn close(_:u64)->Result<(),()>{Ok(())}
+fn kill(_:Child)->Result<(),()>{Ok(())}
+fn wait_timeout(_:Option<Child>,_:u64)->Result<(),Error>{if unsafe{INFO_ERROR}{Err(Error(-110))}else{Ok(())}}
+fn info(_:Option<Child>)->Result<Info,()>{if unsafe{INFO_ERROR}{Err(())}else{Ok(Info{pid:4})}}
+fn split_pipe()->Result<(u64,u64),&'static str>{Ok((31,32))}
+fn service_record(_:Console,_:u64,service:u64,_:u64,text:&[u8]){assert_eq!(service,3);RECORDS.lock().unwrap().push(text.to_vec());}
+fn service_outcome(_:Console,_:u64,_:u64,_:i64){}
+fn logd_output(_:Console){}
+fn logd_retry_notice(_:Console){}
+ENDED_FUNCTION
+ORDINARY_WRAPPER
+unsafe fn syscall3(number:u64,request:u64,b:u64,c:u64)->i64{
+ if number==syscall::SYS_SPAWN_MANY_COPY {
+  assert!(unsafe{LOGD_CHILD}==0,"live old child was replaced");assert_eq!(request,program::LOGD|syscall::SPAWN_NO_SPAWN);assert_eq!(c,7);
+  let copies=unsafe{std::slice::from_raw_parts(b as*const u8,7*syscall::SPAWN_HANDLE_COPY_BYTES)};
+  assert_eq!(copies,SNAPSHOT.lock().unwrap().as_ref().unwrap().as_slice(),"replacement changed narrowed handles");
+  unsafe{ORDINARY+=1;LAST=if PRESSURE{-12}else{42};return LAST;}
+ }
+ assert_eq!(number,syscall::SYS_SPAWN_RESERVED_COPY);
+ unsafe{REQUESTS+=1;}
+ let allowed=unsafe{GATE.allowed(1,GRANTED)};
+ let result=frame_admission::read_request(allowed,b,c,|out|{
+  unsafe{COPIES+=1;out.copy_from_slice(std::slice::from_raw_parts(request as*const u8,syscall::SPAWN_RESERVED_REQUEST_BYTES));}true
+ });
+ let raw=match result{Ok(r)=>{assert_eq!(r.program_and_flags,program::LOGD|syscall::SPAWN_NO_SPAWN);assert_eq!(r.total_frames,9291);
+  let copies=unsafe{std::slice::from_raw_parts(r.copies_address as*const u8,r.copies_count as usize*syscall::SPAWN_HANDLE_COPY_BYTES)};
+  *SNAPSHOT.lock().unwrap()=Some(copies.to_vec());
+  if unsafe{INITIAL_PRESSURE}{-12}else{41}},Err(e)=>e};
+ unsafe{LAST=raw;}raw
+}
+include!("init-functions.rs");
+fn deliver(bytes:&[u8],pipe:object::PipeId){
+ // Substitute kernel pipe/copy I/O only. Actual kernel gate precedes user observer.
+ if unsafe{GATE.delivered(1,pipe,bytes)}{unsafe{GRANTED=false;}}
+ observe_served_ready(bytes);
+}
+
+fn main(){
+ if std::env::args().nth(1).as_deref()==Some("--emit-ready"){emit_ready();return;}
+ let scenario=std::env::args().nth(1).unwrap_or("normal".into());
+ let bound=object::fixture(10,1);unsafe{GATE.designate(1);GATE.bind(1,bound);}
+ if scenario=="initial-refusal"{unsafe{INITIAL_PRESSURE=true;}}
+ if scenario=="identity-unknown"{unsafe{INFO_ERROR=true;}}
+ INITIAL_CALL
+ if scenario=="identity-unknown"{
+  assert_eq!(unsafe{LOGD_CHILD},41);assert_eq!(unsafe{LOGD_PID},0);
+  assert_eq!(unsafe{LOGD_POLICY.state},logd_policy::State::Stopped);
+  let visible=String::from_utf8(DISPLAY.lock().unwrap().clone()).unwrap();
+  assert!(visible.contains("child state unknown"));assert!(!visible.contains("not running"));
+  assert!(RECORDS.lock().unwrap().iter().any(|r|String::from_utf8_lossy(r).contains("child state unknown")));
+  logd_step(Console);assert_eq!(unsafe{REQUESTS},1);assert_eq!(unsafe{ORDINARY},0);
+  println!("initial metadata failure retains unknown child; no replacement or false not-running claim");return;
+ }
+ if scenario=="initial-refusal"{
+  assert!(initial.is_err());assert_eq!(unsafe{LOGD_CHILD},0);assert_eq!(unsafe{ORDINARY},0);
+  let visible=String::from_utf8(DISPLAY.lock().unwrap().clone()).unwrap();assert!(visible.contains("service=logd generation=1"));assert!(visible.contains("code=-12"));assert!(visible.contains("next_backoff_ticks=none"));
+  assert!(RECORDS.lock().unwrap().iter().any(|r|r==visible.trim_end().as_bytes()||String::from_utf8_lossy(r).contains("next_backoff_ticks=none")));
+  // The actual bootstrap consumer returned normally; continue READY and
+  // ordinary supervision without retrying this terminal logger refusal.
+  deliver(b"SSH LISTENING port=22 authorized_keys=1 preauth_per_source=2\n",bound);
+  assert!(unsafe{SERVED_READY});assert!(!unsafe{GATE.allowed(1,GRANTED)});
+  unsafe{NOW=u64::MAX;}logd_step(Console);assert_eq!(unsafe{REQUESTS},1);assert_eq!(unsafe{ORDINARY},0);
+  assert_eq!(unsafe{LOGD_POLICY.state},logd_policy::State::Stopped);
+  println!("initial reserved refusal visible; worker READY continues; no ordinary first generation or reserved retry");return;
+ }
+ assert!(initial.is_ok(),"initial logger did not start before READY");assert_eq!(unsafe{LOGD_CHILD},41);assert_eq!(unsafe{REQUESTS},1);assert_eq!(unsafe{ORDINARY},0);
+ let output=std::process::Command::new(std::env::current_exe().unwrap()).arg("--emit-ready").output().unwrap();assert!(output.status.success());
+ let stdout_ready=!output.stdout.is_empty();assert!(stdout_ready^!output.stderr.is_empty());
+ let bytes=if stdout_ready{output.stdout}else{output.stderr};
+ let historical=scenario=="historical-stderr"||!stdout_ready;
+ let pipe=if historical{object::fixture(11,1)}else{bound};
+ if scenario=="fragmented"{deliver(&bytes[..11],pipe);assert!(!unsafe{SERVED_READY});deliver(&bytes[11..],pipe);}
+ else{deliver(&bytes,pipe);}
+ assert!(unsafe{SERVED_READY});assert_eq!(unsafe{GATE.allowed(1,GRANTED)},historical);
+ logd_step(Console);assert_eq!(unsafe{ORDINARY},0,"live child replaced");
+ // Supply exact old-child reap at the kernel-I/O boundary; actual Policy controls retries.
+ unsafe{LOGD_CHILD=0;LOGD_PID=0;}logd_ended(Console,4,75);unsafe{NOW=LOGD_POLICY.due;}
+ if scenario=="pressure"{unsafe{PRESSURE=true;}}
+ logd_step(Console);
+ assert_eq!(unsafe{REQUESTS},1,"replacement tried revived reserved admission");assert_eq!(unsafe{ORDINARY},1);
+ if scenario=="pressure"{
+  assert_eq!(unsafe{LOGD_CHILD},0);let visible=String::from_utf8(DISPLAY.lock().unwrap().clone()).unwrap();
+  assert!(visible.contains("service=logd generation=2"));assert!(visible.contains("code=-12"));assert!(visible.contains("next_backoff_ticks=2000"));
+  assert!(RECORDS.lock().unwrap().iter().any(|r|String::from_utf8_lossy(r).contains("generation=2")&&String::from_utf8_lossy(r).contains("code=-12")));
+  assert_eq!(unsafe{LOGD_POLICY.restarts},0);
+  unsafe{PRESSURE=false;NOW=LOGD_POLICY.due;}logd_step(Console);assert_eq!(unsafe{LOGD_CHILD},42);
+ }else{assert_eq!(unsafe{LOGD_CHILD},42);}
+ println!("scenario={scenario} initial_reserved=true replacement_copied22=true producer_stdout={stdout_ready} bootstrap_allowed={} console_status_checked=true",unsafe{GATE.allowed(1,GRANTED)});
+}

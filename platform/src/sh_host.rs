@@ -31,7 +31,8 @@
 //! control channel (startup roles 16 and 17, `absd_runtime::session`;
 //! the protocol is `ssh/src/control.rs`). While a pipeline runs, the shell
 //! alternates a timed wait on each child it has not reaped (`try_wait`, one
-//! tick) with a timed read of the control channel ([`CONTROL_TICKS`]); on
+//! tick) with a control check. Progressing copies inspect channel readiness;
+//! otherwise the check uses a timed read ([`CONTROL_TICKS`]). On
 //! ^C there it kills every child still running with the process handle it
 //! holds and reaps it. No signal, process group, or wait on several objects
 //! at once is involved. A shell without the channel waits for its children
@@ -77,6 +78,10 @@ pub struct Absd {
     control: Option<Control>,
     /// sshd ended the session: every child is gone and the shell exits.
     ended: bool,
+    paste_records: bool,
+    plain_recovery: bool,
+    plain_refused: bool,
+    pause_confirmed: bool,
 }
 
 impl Absd {
@@ -85,8 +90,29 @@ impl Absd {
             events,
             requests,
             decoder: Decoder::new(control::EVENTS),
+            prompt_cancelled: false,
         });
-        Absd { control, ended: false }
+        Absd { control, ended: false, paste_records: false, plain_recovery: false, plain_refused: false, pause_confirmed: false }
+    }
+
+    /// Wait on control, never on a stdin pipe whose producer is paused.
+    fn wait_plain_cancel(&mut self) -> bool {
+        let Some(channel) = self.control.as_mut() else { self.ended = true; return true; };
+        channel.prompt_cancelled = false;
+        loop {
+            match channel.listen(1) {
+                Heard::Nothing => {},
+                Heard::Interrupt => {
+                    channel.prompt_cancelled = false;
+                    self.plain_refused = false;
+                    return true;
+                }
+                Heard::End | Heard::Gone | Heard::Answer(..) => {
+                    self.ended = true;
+                    return true;
+                }
+            }
+        }
     }
 }
 
@@ -96,6 +122,7 @@ struct Control {
     events: u64,
     requests: u64,
     decoder: Decoder,
+    prompt_cancelled: bool,
 }
 
 enum Heard {
@@ -109,7 +136,19 @@ enum Heard {
 }
 
 impl Control {
-    /// Waits at most `ticks` for events.
+    /// The shell is the sole reader of this event pipe. Ready bytes cannot
+    /// be consumed by a competing reader between the query and the read.
+    /// An event arriving just after an empty snapshot waits until the next
+    /// bounded supervision turn. Decoder-buffered frames still need service.
+    fn poll(&mut self) -> Heard {
+        match absd_runtime::fsd::pipe_info(self.events) {
+            Ok([0, _, _, writers]) if writers > 0 => self.decode(),
+            Ok(_) => self.listen(1), // ready bytes or EOF; neither needs a wait
+            Err(_) => Heard::Gone,
+        }
+    }
+
+    /// Uses the existing timed read with a `ticks` timeout.
     fn listen(&mut self, ticks: u64) -> Heard {
         let mut buffer = [0u8; 256];
         match absd_runtime::read_within(self.events, &mut buffer, ticks) {
@@ -118,11 +157,18 @@ impl Control {
             Err(KERNEL_TIMEOUT) => {}
             Err(_) => return Heard::Gone,
         }
+        self.decode()
+    }
+
+    fn decode(&mut self) -> Heard {
         let mut heard = Heard::Nothing;
         loop {
             match self.decoder.next() {
                 Ok(None) => return heard,
-                Ok(Some(Frame::Interrupt)) => heard = Heard::Interrupt,
+                Ok(Some(Frame::Interrupt)) => {
+                    self.prompt_cancelled = true;
+                    heard = Heard::Interrupt;
+                },
                 Ok(Some(Frame::End)) => return Heard::End,
                 Ok(Some(Frame::Reply { status, text })) => return Heard::Answer(status, text),
                 Ok(Some(_)) | Err(_) => return Heard::Gone,
@@ -130,9 +176,9 @@ impl Control {
         }
     }
 
-    /// Discards what waits in the channel: a ^C typed at the prompt, which
-    /// is not meant for the line just read. `Nothing`, `End`, or `Gone`.
-    fn discard_stale(&mut self) -> Heard {
+    /// Consume available control frames, retaining interruption for the
+    /// interactive loop. Return `Nothing`, `End`, or `Gone`.
+    fn drain_events(&mut self) -> Heard {
         loop {
             match self.listen(1) {
                 Heard::Interrupt | Heard::Answer(..) => {}
@@ -152,7 +198,8 @@ impl Control {
                 Err(_) => return Err(gone()),
             }
         }
-        // A ^C while waiting has nothing to end: it is dropped.
+        // The request completes, while interrupts remain latched for the
+        // interactive loop to cancel input before any command effect.
         while absd_runtime::ticks() < start + ANSWER_TICKS {
             match self.listen(1000) {
                 Heard::Answer(status, text) => return Ok((status, text)),
@@ -172,15 +219,44 @@ impl Drop for Control {
     }
 }
 
-/// A file this process opened for writing; `flush` syncs it.
-pub struct Sink(File);
+#[path = "sh_drain.rs"]
+mod sh_drain;
+use sh_drain::{BufferedFile, Step, Target};
 
+struct FileBacking(File);
+impl Write for FileBacking {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.0.write(bytes) }
+    fn flush(&mut self) -> io::Result<()> { self.0.sync_all() }
+}
+/// One buffer per actual file endpoint, inside the shell's SharedSink.
+/// Write::flush keeps its existing durability meaning.
+pub struct Sink(BufferedFile<FileBacking, fn() -> u64>);
 impl Write for Sink {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.0.write(bytes) }
+    fn flush(&mut self) -> io::Result<()> { self.0.flush() }
+}
+enum DrainTarget {
+    File(crate::shell::SharedSink<Sink>),
+    Immediate(Box<dyn Write>),
+}
+impl Write for DrainTarget {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        match self { Self::File(w) => w.write(bytes), Self::Immediate(w) => w.write(bytes) }
     }
     fn flush(&mut self) -> io::Result<()> {
-        self.0.sync_all()
+        match self { Self::File(w) => w.flush(), Self::Immediate(w) => w.flush() }
+    }
+}
+impl Target for DrainTarget {
+    fn flush_pending(&mut self, force: bool) -> io::Result<bool> {
+        match self { Self::File(w) => w.with_mut(|w| w.0.flush_pending(force)), Self::Immediate(_) => Ok(false) }
+    }
+    fn wait_limit(&self, ticks: u64) -> u64 {
+        match self { Self::File(w) => w.with_mut(|w| w.0.wait_limit(ticks)), Self::Immediate(_) => ticks }
+    }
+    fn finish(&mut self, durable: bool) -> io::Result<()> {
+        self.flush_pending(true)?;
+        if durable { self.flush() } else { Ok(()) }
     }
 }
 
@@ -191,12 +267,13 @@ fn kernel_error(code: i64) -> io::Error {
     }
 }
 
-/// Bytes on their way from a source into a child's stdin.
+/// Refill file input in 4 KiB reads; each step still offers at most 256
+/// bytes to the pipe so other streams and session control get their turn.
 struct Feed {
     stage: usize,
     to: ChildStdin,
     from: Source,
-    buffer: [u8; 256],
+    buffer: [u8; 4096],
     start: usize,
     end: usize,
 }
@@ -234,21 +311,7 @@ impl Pipe {
     }
 }
 
-/// A child's output on its way into a file.
-struct Drain {
-    stage: usize,
-    from: Pipe,
-    to: Sink,
-}
-
-enum Step {
-    /// Nothing moved within the wait.
-    Pending,
-    /// Bytes moved.
-    Moved,
-    Done,
-    Failed(io::Error),
-}
+type Drain = sh_drain::Drain<Pipe, DrainTarget>;
 
 impl Feed {
     fn step(&mut self, ticks: u64) -> Step {
@@ -261,7 +324,8 @@ impl Feed {
                 Err(error) => return Step::Failed(error),
             }
         }
-        let bytes = &self.buffer[self.start..self.end];
+        let end = self.end.min(self.start + 256);
+        let bytes = &self.buffer[self.start..end];
         match absd_runtime::write_within(self.to.as_raw_handle(), bytes, ticks) {
             Ok(count) => {
                 self.start += count;
@@ -270,24 +334,6 @@ impl Feed {
             Err(KERNEL_TIMEOUT) => Step::Pending,
             // The child stopped reading its input: not an error of ours.
             Err(KERNEL_BROKEN_PIPE) => Step::Done,
-            Err(code) => Step::Failed(kernel_error(code)),
-        }
-    }
-}
-
-impl Drain {
-    fn step(&mut self, ticks: u64) -> Step {
-        let mut buffer = [0u8; 256];
-        match absd_runtime::read_within(self.from.handle(), &mut buffer, ticks) {
-            Ok(0) => match self.to.flush() {
-                Ok(()) => Step::Done,
-                Err(error) => Step::Failed(error),
-            },
-            Ok(count) => match self.to.write_all(&buffer[..count]) {
-                Ok(()) => Step::Moved,
-                Err(error) => Step::Failed(error),
-            },
-            Err(KERNEL_TIMEOUT) => Step::Pending,
             Err(code) => Step::Failed(kernel_error(code)),
         }
     }
@@ -328,7 +374,13 @@ fn copy_round(feeds: &mut Vec<Feed>, drains: &mut Vec<Drain>, ran: &mut [Ran], t
     }
     let mut index = 0;
     while index < drains.len() {
-        match drains[index].step(ticks) {
+        match drains[index].step(ticks, |from, buffer, wait| {
+            match absd_runtime::read_within(from.handle(), buffer, wait) {
+                Ok(n) => Ok(Some(n)),
+                Err(KERNEL_TIMEOUT) => Ok(None),
+                Err(code) => Err(kernel_error(code)),
+            }
+        }) {
             Step::Pending => index += 1,
             Step::Moved => {
                 moved = true;
@@ -353,11 +405,11 @@ fn exit_of(status: io::Result<std::process::ExitStatus>) -> io::Result<Exit> {
 }
 
 /// Runs a started pipeline to its end under a control channel: copies,
-/// timed waits on the children, and a timed read of the channel, in turn.
+/// timed waits on the children, and a control-channel check, in turn.
 /// On ^C every child still running is killed and reaped
 /// (`Exit::Interrupted`); what was copied into files so far is kept. On
-/// `END` the same, without waiting for the files to be made durable (the
-/// file server commits the session's files when sshd releases it); `true`
+/// `END` the same, flushing accepted bytes without an extra explicit sync
+/// (the destination's existing close semantics still apply); `true`
 /// then: the session has ended.
 fn supervise(
     control: &mut Option<Control>,
@@ -368,10 +420,13 @@ fn supervise(
 ) -> bool {
     let mut streak = 0;
     loop {
+        let mut copied = false;
         if !feeds.is_empty() || !drains.is_empty() {
             // While bytes flow, several rounds of copying between looks at
-            // the children and the channel (each look costs a tick).
-            if copy_round(&mut feeds, &mut drains, ran, INTERLEAVE_TICKS) && streak < COPY_STREAK {
+            // the children and the channel. Keep the same observation cadence
+            // without paying an empty control timeout after a successful copy.
+            copied = copy_round(&mut feeds, &mut drains, ran, INTERLEAVE_TICKS);
+            if copied && streak < COPY_STREAK {
                 streak += 1;
                 continue;
             }
@@ -396,7 +451,8 @@ fn supervise(
             return false;
         }
         let Some(channel) = control.as_mut() else {
-            // The channel is gone (sshd ended): finish as a shell without one.
+            // This shell started without a session channel. Managed control loss
+            // is handled below as END before another round can run.
             copy_all(feeds, drains, ran);
             for (result, slot) in ran.iter_mut().zip(children.iter_mut()) {
                 if let Some(mut child) = slot.take() {
@@ -406,8 +462,8 @@ fn supervise(
             return false;
         };
         let ticks = if feeds.is_empty() && drains.is_empty() { CONTROL_TICKS } else { 1 };
-        let heard = channel.listen(ticks);
-        if let Heard::Interrupt | Heard::End = heard {
+        let heard = if copied { channel.poll() } else { channel.listen(ticks) };
+        if let Heard::Interrupt | Heard::End | Heard::Gone = heard {
             // A killed child releases everything it held at once; `wait`
             // then frees its slot. It had no spawn right, so nothing of
             // its own is left behind.
@@ -419,24 +475,110 @@ fn supervise(
                 }
             }
             // Dropping the copiers closes this shell's pipe ends; what
-            // reached a file stays (on ^C made durable first).
+            // was accepted into shared file buffers is written (on ^C synced
+            // too). A terminal flush error remains a redirection failure.
             drop(feeds);
-            if let Heard::End = heard {
-                return true;
-            }
+            let ending = matches!(heard, Heard::End | Heard::Gone);
             for mut drain in drains {
-                let _ = drain.to.flush();
+                if let Err(error) = drain.finish(!ending) { ran[drain.stage].redirect.get_or_insert(error); }
             }
-            return false;
-        }
-        match heard {
-            Heard::Gone => *control = None,
-            Heard::Nothing | Heard::Answer(..) | Heard::Interrupt | Heard::End => {}
+            return ending;
         }
     }
 }
 
 impl Host for Absd {
+    fn prompt_cancelled(&mut self) -> bool {
+        if self.plain_refused {
+            // The producer can confirm cancellation that already arrived in
+            // the refusal batch. Otherwise this is still a discard, not EOF.
+            self.prompt_input(0);
+            if self.ended { return true; }
+            if self.pause_confirmed {
+                if let Some(channel) = self.control.as_mut() { channel.prompt_cancelled = false; }
+                return true;
+            }
+            return self.wait_plain_cancel();
+        }
+        self.control.as_mut().is_some_and(|channel| std::mem::take(&mut channel.prompt_cancelled))
+    }
+
+    fn terminal_size(&self) -> Option<(u32, u32)> {
+        absd_runtime::terminal::size().map(|s| (s.columns, s.rows))
+    }
+
+    fn prompt_input(&mut self, mode: u8) {
+        self.pause_confirmed = false;
+        if let Some(channel) = self.control.as_mut() {
+            // Serialize this with all other shell requests. Commands never
+            // receive these pipe ends, so an application cannot race replies.
+            match channel.ask(&control::encode(control::INPUT_MODE, &[mode])) {
+                Ok((status @ (0 | control::INPUT_REFUSED | control::INPUT_PAUSED), capability)) => {
+                    self.paste_records = capability == "paste-record-v2";
+                    self.plain_recovery = capability == "plain-discard-v1";
+                    self.plain_refused = self.plain_recovery && status == control::INPUT_REFUSED;
+                    self.pause_confirmed = matches!(mode, 0 | 4) && status == control::INPUT_PAUSED;
+                },
+                _ => self.ended = true,
+            }
+        }
+    }
+
+    fn input_limit_notice(&self) -> &'static str {
+        if self.plain_recovery {
+            "absd-sh: input exceeds 1 MiB; command discarded; press Ctrl-C to recover"
+        } else {
+            "absd-sh: input exceeds 1 MiB"
+        }
+    }
+
+    fn refuse_interactive_input(&mut self) -> bool {
+        if self.plain_recovery {
+            self.prompt_input(4);
+            if self.ended || !self.pause_confirmed { return false; }
+            // Its reply follows the producer's new discard fence.
+            return self.wait_plain_cancel();
+        }
+        if !self.paste_records { return false; }
+        self.prompt_input(4);
+        !self.ended
+    }
+
+    fn discard_pending_input(&mut self) {
+        if self.ended || self.control.is_none() { return; }
+        // A cancelled session's mode-0 reply fences the producer pause.
+        // No later stdin write can race the drain until the next prompt.
+        self.prompt_input(0);
+        if self.ended || !self.pause_confirmed { return; }
+        let (input, _) = absd_runtime::standard_stream_handles();
+        if input == 0 { return; }
+        let mut bytes = [0u8; 256];
+        for _ in 0..=4096 {
+            match absd_runtime::read_within(input, &mut bytes, 1) {
+                Ok(0) | Err(KERNEL_TIMEOUT) => return,
+                Ok(_) => {},
+                Err(_) => { self.ended = true; return; },
+            }
+        }
+        // Keep the producer quarantined if the acknowledged pipe contract
+        // was exceeded. Do not label a partial drain successful.
+        self.prompt_input(4);
+    }
+
+    fn interrupted(&mut self) -> bool {
+        let Some(channel) = &mut self.control else { return false; };
+        match channel.listen(1) {
+            Heard::Interrupt => true,
+            Heard::End | Heard::Gone => { self.ended = true; true },
+            _ => channel.prompt_cancelled,
+        }
+    }
+
+    fn read_interactive(&mut self, input: &mut dyn io::BufRead, text: &mut String) -> io::Result<usize> {
+        if self.paste_records { crate::shell::read_interactive_record(input, text) }
+        else { crate::shell::read_interactive_plain(input, text) }
+    }
+
     type Source = File;
     type Sink = Sink;
 
@@ -456,7 +598,7 @@ impl Host for Absd {
         } else {
             options.write(true).truncate(true);
         }
-        options.open(path).map(Sink)
+        options.open(path).map(|file| Sink(BufferedFile::new(FileBacking(file), absd_runtime::ticks as fn() -> u64)))
     }
 
     fn run(&mut self, stages: Vec<Stage<File, Sink>>) -> Vec<Ran> {
@@ -464,14 +606,10 @@ impl Host for Absd {
         let mut children: Vec<Option<Child>> = Vec::with_capacity(stages.len());
         let mut feeds = Vec::new();
         let mut drains = Vec::new();
-        let mut previous: Option<ChildStdout> = None;
+        let mut previous: Option<Stdio> = None;
         // While a redirection is being copied this shell uses its own
         // channel to the file server, so no child may borrow it then.
-        let copying = stages.iter().any(|stage| {
-            matches!(stage.stdin, Input::File(_))
-                || matches!(stage.stdout, Output::File(_))
-                || matches!(stage.stderr, Output::File(_))
-        });
+        let copying = stages.iter().any(Stage::copies_files);
         for (index, stage) in stages.into_iter().enumerate() {
             absd_runtime::fsd::set_next_child(match stage.authority {
                 Authority::Shell if copying => ChildFs::SpareOnly,
@@ -480,7 +618,11 @@ impl Host for Absd {
                 Authority::None => ChildFs::None,
             });
             let mut command = Command::new(&stage.program);
-            command.args(&stage.args).current_dir(&stage.cwd);
+            command.args(&stage.args).current_dir(&stage.cwd).env_clear().envs(stage.env);
+            if let Some(size) = absd_runtime::terminal::size() {
+                if size.columns > 0 { command.env("COLUMNS", size.columns.to_string()); } else { command.env_remove("COLUMNS"); }
+                if size.rows > 0 { command.env("LINES", size.rows.to_string()); } else { command.env_remove("LINES"); }
+            }
             let feed = match stage.stdin {
                 Input::Inherit => {
                     command.stdin(Stdio::inherit());
@@ -489,7 +631,7 @@ impl Host for Absd {
                 // The previous command's read end, consumed by this spawn;
                 // if the previous command never started, end-of-file.
                 Input::Previous => {
-                    command.stdin(previous.take().map_or_else(Stdio::null, Stdio::from));
+                    command.stdin(previous.take().unwrap_or_else(Stdio::null));
                     None
                 }
                 Input::Bytes(bytes) => {
@@ -501,35 +643,57 @@ impl Host for Absd {
                     Some(Source::File(file))
                 }
             };
-            let mut sinks = [None, None];
+            let merged = matches!(stage.stderr, Output::SameAsStdout);
+            let direct = match &stage.stdout {
+                Output::Inherit | Output::ParentStdout => Some(0),
+                Output::ParentStderr => Some(1),
+                _ => None,
+            };
+            let merge_pipe = merged && direct.is_none();
+            let mut next = [false, false];
+            let mut sinks: [Option<DrainTarget>; 2] = [None, None];
             for (slot, output) in [stage.stdout, stage.stderr].into_iter().enumerate() {
                 let stdio = match output {
                     Output::Inherit => Stdio::inherit(),
-                    Output::Next => Stdio::piped(),
-                    Output::File(sink) => {
-                        sinks[slot] = Some(sink);
-                        Stdio::piped()
-                    }
+                    Output::ParentStdout => Stdio::from(io::stdout()),
+                    Output::ParentStderr => Stdio::from(io::stderr()),
+                    Output::SameAsStdout => match direct {
+                        Some(0) => Stdio::from(io::stdout()),
+                        Some(_) => Stdio::from(io::stderr()),
+                        None => Stdio::piped(),
+                    },
+                    Output::Next => { next[slot] = true; Stdio::piped() },
+                    Output::Discard => { sinks[slot] = Some(DrainTarget::Immediate(Box::new(io::sink()))); Stdio::piped() },
+                    Output::Shared(sink) => { sinks[slot] = Some(DrainTarget::File(sink)); Stdio::piped() },
+                    Output::Capture(capture) => { sinks[slot] = Some(DrainTarget::Immediate(Box::new(capture))); Stdio::piped() },
                 };
                 if slot == 0 { command.stdout(stdio) } else { command.stderr(stdio) };
             }
-            match command.spawn() {
+            // Existing per-process spawn policy, scoped to this single spawn.
+            // Clearing before handling either result also covers refused starts.
+            absd_runtime::process::merge_output_for_children(merge_pipe);
+            let spawned = command.spawn();
+            absd_runtime::process::merge_output_for_children(false);
+            match spawned {
                 Ok(mut child) => {
                     if let Some(from) = feed {
                         let to = child.stdin.take().expect("piped stdin");
-                        feeds.push(Feed { stage: index, to, from, buffer: [0; 256], start: 0, end: 0 });
+                        feeds.push(Feed { stage: index, to, from, buffer: [0; 4096], start: 0, end: 0 });
                     }
                     let [out_sink, err_sink] = sinks;
                     match out_sink {
                         Some(to) => {
                             let from = Pipe::Out(child.stdout.take().expect("piped stdout"));
-                            drains.push(Drain { stage: index, from, to });
+                            drains.push(Drain::new(index, from, to));
                         }
-                        None => previous = child.stdout.take(),
+                        None if next[0] => previous = child.stdout.take().map(Stdio::from),
+                        None => {},
                     }
                     if let Some(to) = err_sink {
                         let from = Pipe::Err(child.stderr.take().expect("piped stderr"));
-                        drains.push(Drain { stage: index, from, to });
+                        drains.push(Drain::new(index, from, to));
+                    } else if next[1] {
+                        previous = child.stderr.take().map(Stdio::from);
                     }
                     ran.push(Ran { exit: Ok(Exit::Other), redirect: None });
                     children.push(Some(child));
@@ -565,13 +729,14 @@ impl Host for Absd {
         let Some(channel) = self.control.as_mut() else { return Err(io::ErrorKind::Unsupported.into()) };
         let frame = match request {
             SessionRequest::Machine(words) => control::encode(control::MACHINE, words.as_bytes()),
+            SessionRequest::Clock(words) => control::encode(control::CLOCK, words.as_bytes()),
             SessionRequest::List => control::encode(control::LIST, b""),
         };
         match channel.ask(&frame) {
             Ok((status, text)) => Ok((i32::from(status), text)),
             Err(error) => {
                 match error.kind() {
-                    io::ErrorKind::BrokenPipe => self.control = None,
+                    io::ErrorKind::BrokenPipe => self.ended = true,
                     io::ErrorKind::ConnectionAborted => self.ended = true,
                     _ => {}
                 }
@@ -582,9 +747,9 @@ impl Host for Absd {
 
     fn line_read(&mut self) {
         if let Some(channel) = self.control.as_mut() {
-            match channel.discard_stale() {
+            match channel.drain_events() {
                 Heard::End => self.ended = true,
-                Heard::Gone => self.control = None,
+                Heard::Gone => self.ended = true,
                 _ => {}
             }
         }

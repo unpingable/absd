@@ -1,0 +1,23 @@
+{
+  "source_revision": "4a4bae2b5364938b97a953f6427f7f75a5c2188c",
+  "kernel_revision": "0f770fe5469861e5d6a55652a2153c75ba834ffe",
+  "run": "79354150-4abf-4c18-8c35-25eeeae560df",
+  "original_outcome": "Case6 PASS, case7 aborted before readiness; original run remains FAIL.",
+  "files": [
+    {
+      "path": "release-failed-selection.serial",
+      "bytes": 2619,
+      "sha256": "b96ce8834c26aeb6a6665b1f96a51fd2e7b34a1f8aa50efe6e6259f83ffaee07",
+      "original_case": "case6",
+      "original_path": "archived-occurrence"
+    },
+    {
+      "path": "release-fenced-successor.serial",
+      "bytes": 2576,
+      "sha256": "8caf3b8ef0fb9113c24bffcab2908a8779cc2db6883deb4e0ab902df4d08199d",
+      "original_case": "case7",
+      "original_path": "archived-occurrence"
+    }
+  ],
+  "scope": "Captured serial regression vectors for host orchestration tests; fake disk state is not native or hardware evidence."
+}

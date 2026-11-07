@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The enrollment image's case matrix (slice A).
+"""The enrollment image's case matrix (coordination record #31 slice A).
 
 Builds two durable ISOs from one kernel checkout: an importer image whose
 embedded fixture lays out a small operator disk (the release's blank-disk
@@ -56,6 +56,7 @@ import time
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
 import absd_try  # noqa: E402
+import storage_fence_state
 from served_kernel import kernel_make  # noqa: E402
 from served_ram import served_qemu
 
@@ -95,7 +96,7 @@ def stream(*records):
 
 def blank_tree(release_id):
     """The release's blank operator disk, in miniature."""
-    return [
+    return storage_fence_state.fresh_files() + [
         ("/absd/selected", release_id.encode() + b"\n"),
         ("/etc/rc", b"# enroll-matrix fixture\n"),
         ("/etc/hostname", b"absd\n"),
@@ -350,19 +351,34 @@ class Matrix:
             status, raw, killed = boot_enroll(self.enroll_iso, image, self.work / f"{name}.serial.log", full,
                                               kill_after_mount=delay)
             after = absd_try.read_state(image)
-            keys = absd_try.read_tree(image).get(KEYS)
-            old = after == blank_state
-            new = not absd_try.enrol_changes(blank_state, after, one)
+            tree = absd_try.read_tree(image)
+            keys = tree.get(KEYS)
+            marker = storage_fence_state.parse(tree.get(storage_fence_state.PATH))
+            # An interrupted writer's dirty owner sector is an expected
+            # additional state. Every ordinary object must still be
+            # exactly old or new; no partial key file is accepted.
+            normalized = dict(after, objects=dict(after['objects']))
+            if marker == 'dirty':
+                owner = dict(normalized['objects'][storage_fence_state.PATH])
+                owner['sha256'] = blank_state['objects'][storage_fence_state.PATH]['sha256']
+                normalized['objects'][storage_fence_state.PATH] = owner
+            old = normalized == blank_state
+            new = not absd_try.enrol_changes(blank_state, normalized, one)
             finished = not killed and status == 3 and absd_try.ENROLL_OK.search(worker_text(raw)) is not None
             self.ok(f"{name}: {'QEMU killed after ENROLL MOUNT' if killed else 'the enrollment finished before the cut'}; "
                     f"the disk holds the old state or the new one, nothing else "
                     f"({'new' if new else 'old' if old else 'NEITHER'}, seq {after['seq']})",
-                    (killed and (old or new)) or (finished and new), f"{status} {after['seq']} {keys!r:.80}")
+                    marker in ('fresh', 'dirty') and ((killed and (old or new)) or (finished and new)),
+                    f"{status} {after['seq']} guard={marker} {keys!r:.80}")
             if old:
                 self.ok(f"{name}: the unenrolled disk is refused by the helper's boot check (no key)",
                         absd_try.enrolled(absd_try.read_tree(image)) == [])
-            again = self.happy(f"{name}-again", image, stream(record(KEYS, two)), two, 2)
-            cuts[name] = {"killed": killed, "state": "new" if new else "old", "seq": after["seq"], "again": again}
+            if marker == 'dirty':
+                again = self.refused(f"{name}-again", image, stream(record(KEYS, two)), 'writable-guard')
+            else:
+                again = self.happy(f"{name}-again", image, stream(record(KEYS, two)), two, 2)
+            cuts[name] = {"killed": killed, "state": "new" if new else "old", "guard": marker,
+                          "seq": after["seq"], "again": again}
         cases["interrupted-kill"] = cuts
         # a blank device is never formatted; a disk without the placeholder is refused
         zero = self.work / "unformatted.img"

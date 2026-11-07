@@ -11,6 +11,8 @@ name = "health_observation"
 path = "../src/health_observation.rs"
 
 [dependencies]
+absd-fs = { path = "../fs" }
+sha2 = "0.10"
 absd-fsd = { path = "../fsd" }
 absd-release = { path = "../release" }
 serde_json = "1.0"
@@ -26,3 +28,11 @@ path = "net-status-file.rs"
 [[test]]
 name = "net_status_wiring"
 path = "net-status-wiring.rs"
+
+[[test]]
+name = "fixture_import_file"
+path = "fixture-import-file.rs"
+
+[[test]]
+name = "logs_query"
+path = "../src/bin/logs.rs"

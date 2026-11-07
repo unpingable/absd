@@ -206,6 +206,113 @@ fn native_fields(failure: Option<Failure>) -> (&'static str, Option<u64>, Option
     }
 }
 
+fn stream_transmit_event(value: absd_native_quic_fixture::engine::StreamTransmitObservation) {
+    eprintln!(
+        "QUIC STREAM TX case=Q04 engine_ordinal={} native_request_ordinal={} accepted_ordinal={} bytes={} sha256={} stream_frames_before={} stream_frames_after={} authenticated={}",
+        value.engine_ordinal,
+        value.native_request_ordinal,
+        value.accepted_ordinal,
+        value.bytes,
+        hash_text(Some(value.sha256)),
+        value.stream_frames_before,
+        value.stream_frames_after,
+        value.authenticated,
+    );
+}
+
+fn route_receive_event(value: absd_native_quic_fixture::engine::TagReceiveObservation) {
+    eprintln!(
+        "QUIC ROUTE RX case=Q16 at_ms={} receive_ordinal={} bytes={} sha256={} stream_frames_before={} stream_frames_after={} authenticated_before={} target_handled={}",
+        value.at_ms,
+        value.receive_ordinal,
+        value.bytes,
+        hash_text(Some(value.sha256)),
+        value.stream_frames_before,
+        value.stream_frames_after,
+        value.authenticated_before,
+        value.target_handled,
+    );
+}
+
+fn reorder_receive_event(value: absd_native_quic_fixture::engine::TagReceiveObservation) {
+    eprintln!(
+        "QUIC REORDER RX case=Q05 at_ms={} receive_ordinal={} bytes={} sha256={} stream_frames_before={} stream_frames_after={} authenticated_before={} target_handled={}",
+        value.at_ms,
+        value.receive_ordinal,
+        value.bytes,
+        hash_text(Some(value.sha256)),
+        value.stream_frames_before,
+        value.stream_frames_after,
+        value.authenticated_before,
+        value.target_handled,
+    );
+}
+
+fn tag_receive_event(value: absd_native_quic_fixture::engine::TagReceiveObservation) {
+    eprintln!(
+        "QUIC TAG RX case=Q13 at_ms={} receive_ordinal={} bytes={} sha256={} stream_frames_before={} stream_frames_after={} authenticated_before={} target_handled={}",
+        value.at_ms,
+        value.receive_ordinal,
+        value.bytes,
+        hash_text(Some(value.sha256)),
+        value.stream_frames_before,
+        value.stream_frames_after,
+        value.authenticated_before,
+        value.target_handled,
+    );
+}
+
+fn flow_control_event(value: absd_native_quic_fixture::engine::FlowControlObservation) {
+    use absd_native_quic_fixture::engine::FlowControlObservation;
+    match value {
+        FlowControlObservation::Blocked {
+            at_ms,
+            sent_stream,
+            requested,
+            authenticated,
+            max_data_received,
+            max_stream_data_received,
+        } => eprintln!(
+            "QUIC FLOW BLOCKED case=Q06 at_ms={at_ms} sent_stream={sent_stream} requested={requested} authenticated={authenticated} max_data_received={max_data_received} max_stream_data_received={max_stream_data_received}"
+        ),
+        FlowControlObservation::Transmit {
+            engine_ordinal,
+            native_request_ordinal,
+            accepted_ordinal,
+            bytes,
+            sha256,
+            data_blocked_before,
+            data_blocked_after,
+            authenticated,
+        } => eprintln!(
+            "QUIC FLOW TX case=Q06 engine_ordinal={engine_ordinal} native_request_ordinal={native_request_ordinal} accepted_ordinal={accepted_ordinal} bytes={bytes} sha256={} data_blocked_before={data_blocked_before} data_blocked_after={data_blocked_after} authenticated={authenticated}",
+            hash_text(Some(sha256))
+        ),
+        FlowControlObservation::Credit {
+            at_ms,
+            receive_ordinal,
+            bytes,
+            sha256,
+            max_data_before,
+            max_data_after,
+            max_stream_data_before,
+            max_stream_data_after,
+        } => eprintln!(
+            "QUIC FLOW CREDIT case=Q06 at_ms={at_ms} receive_ordinal={receive_ordinal} bytes={bytes} sha256={} max_data_before={max_data_before} max_data_after={max_data_after} max_stream_data_before={max_stream_data_before} max_stream_data_after={max_stream_data_after}",
+            hash_text(Some(sha256))
+        ),
+        FlowControlObservation::Resumed {
+            at_ms,
+            sent_before,
+            written,
+            max_data_received,
+            max_stream_data_received,
+        } => eprintln!(
+            "QUIC FLOW RESUMED case=Q06 at_ms={at_ms} sent_before={sent_before} written={written} max_data_received={max_data_received} max_stream_data_received={max_stream_data_received}"
+        ),
+    }
+}
+
 fn emit_report(args: &Arguments, start: u64, deadline: u64, native_pair: bool, report: &Report) {
     sample_resources();
     let (kind, code, detail) = native_fields(report.native_failure);
@@ -280,8 +387,11 @@ fn run() -> Result<(), String> {
     family.check_case(case.id).map_err(str::to_owned)?;
     if family == Family::Ipv6 {
         eprintln!(
-            "QUIC TRANSPORT case={} family=6 scope=1 peer_ip=fd00:ab5d::2 peer_port=4443",
-            case.id
+            "QUIC TRANSPORT case={} family=6 scope={} peer_ip={} peer_port={}",
+            case.id,
+            IPV6_PEER.scope,
+            std::net::Ipv6Addr::from(IPV6_PEER.ip),
+            IPV6_PEER.port
         );
     }
     if args.unix_seconds.is_none() != case.missing_time {
@@ -396,6 +506,51 @@ fn run() -> Result<(), String> {
         };
         let root = include_bytes!(env!("ABSD_QUIC_ROOT_DER"));
         match family {
+            Family::Ipv4 if args.case == "Q04" => {
+                absd_native_quic_fixture::engine::run_stream_observed(
+                    pipe,
+                    root,
+                    settings,
+                    hooks,
+                    stream_transmit_event,
+                )
+            }
+            Family::Ipv4 if args.case == "Q06" => {
+                absd_native_quic_fixture::engine::run_flow_observed(
+                    pipe,
+                    root,
+                    settings,
+                    hooks,
+                    flow_control_event,
+                )
+            }
+            Family::Ipv4 if args.case == "Q05" => {
+                absd_native_quic_fixture::engine::run_tag_observed(
+                    pipe,
+                    root,
+                    settings,
+                    hooks,
+                    reorder_receive_event,
+                )
+            }
+            Family::Ipv4 if args.case == "Q13" => {
+                absd_native_quic_fixture::engine::run_tag_observed(
+                    pipe,
+                    root,
+                    settings,
+                    hooks,
+                    tag_receive_event,
+                )
+            }
+            Family::Ipv4 if args.case == "Q16" => {
+                absd_native_quic_fixture::engine::run_tag_observed(
+                    pipe,
+                    root,
+                    settings,
+                    hooks,
+                    route_receive_event,
+                )
+            }
             Family::Ipv4 => absd_native_quic_fixture::engine::run(pipe, root, settings, hooks),
             Family::Ipv6 => {
                 absd_native_quic_fixture::engine::run_ipv6(pipe, IPV6_PEER, root, settings, hooks)

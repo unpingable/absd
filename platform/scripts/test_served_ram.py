@@ -25,6 +25,11 @@ sys.path.insert(0, str(ROOT))
 import served_ram
 
 LAUNCHERS = {
+    'app-a-vm-runner.py': 1,
+    'app-replacement-qualification.py': 1,
+    'qualify-operator-binding.py': 1,
+    'recovery-point-matrix.py': 1,
+    'storage-fence-resume-matrix.py': 2,
     'native-ipv6-mtu1280-matrix.py': 1,
     'native-tls-ipv6-routed-matrix.py': 1,
     'native-ipv6-dad-matrix.py': 1,
@@ -34,16 +39,21 @@ LAUNCHERS = {
     'native-ipv6-routed-tcp-matrix.py': 1,
     'native-quic-q01.py': 1,
     'native-dhcp-refusal-matrix.py': 1,
+    'fixture-import-matrix.py': 1,
     'absd_try.py': 2, 'ag-native-matrix.py': 2, 'durable-matrix.py': 1,
     'enroll-matrix.py': 1, 'exec-matrix.py': 1, 'link-matrix.py': 1,
     'mtime-matrix.py': 1,
     'media_boot.py': 1, 'media_operator.py': 1, 'native-tls-matrix.py': 1,
+    'fixtures/storage-fence-frozen/served-matrix.py': 1,
+    'fixtures/storage-fence-frozen/ssh_absd.py': 3,
+    'native-installer-e2e.py': 1,
     'native-tls-ipv6-matrix.py': 1,
     'net-matrix.py': 1, 'nightshift-matrix.py': 1, 'observe-matrix.py': 1,
     'operator_image.py': 1, 'pipeline-matrix.py': 1, 'pulse-matrix.py': 1,
     'native-ipv6-matrix.py': 1, 'native-ipv6-tcp-matrix.py': 1,
     'release.py': 2, 'served-matrix.py': 1, 'ssh_absd.py': 3,
     'survival-pre-ready.py': 1, 'u1-endurance.py': 2,
+    'storage_fence_guest.py': 1,
     'boot-operator.sh': 1, 'run-broker.sh': 1,
     'native-dhcp-directed-arp-matrix.py': 1,
     'native-dhcp-matrix.py': 1,
@@ -56,6 +66,12 @@ LAUNCHERS = {
     'native-ipv6-tcp-reason-matrix.py': 1,
     'native-sntp-matrix.py': 1,
     'native-tcp-server-matrix.py': 1,
+    'native-echo-wire-matrix.py': 1,
+    'native-ipv6-echo-boundary.py': 1,
+    'native-ipv6-tcp-server-matrix.py': 1,
+    'native-tcp-mtu-matrix.py': 1,
+    'native-tcp-mtu-boundary-matrix.py': 1,
+    'native-tcp-mtu-delegated-matrix.py': 1,
 }
 
 
@@ -117,6 +133,14 @@ def audit(name, source):
     for node in ast.walk(tree):
         if not isinstance(node, (ast.List, ast.Tuple)):
             continue
+        # A literal membership comparator validates values; it is not an
+        # executable argv. Assigned or passed tuples remain audited below.
+        parent = parents.get(node)
+        if (isinstance(parent, ast.Compare) and node in parent.comparators
+                and all(isinstance(op, (ast.In, ast.NotIn)) for op in parent.ops)
+                and all(isinstance(n, ast.Constant) and isinstance(n.value, str)
+                        for n in node.elts)):
+            continue
         # Only argv-level constants and the script expression in its first
         # word. Do not double-count an enclosing list or an inner RAM prefix.
         strings = [n.value for n in node.elts if isinstance(n, ast.Constant) and isinstance(n.value, str)]
@@ -141,7 +165,7 @@ def audit(name, source):
             if 'DURABLE_OPTIONS' in source:
                 raise ValueError('observe matrix must remain qualification-only for its low-RAM probe')
             continue
-        if name == 'served-matrix.py' and function == 'ram_below_minimum_boot':
+        if name in ('served-matrix.py', 'fixtures/storage-fence-frozen/served-matrix.py') and function == 'ram_below_minimum_boot':
             if not has_policy(owner) or '"128M"' not in ast.unparse(owner).replace("'", '"'):
                 raise ValueError('missing deliberate 128M negative gate')
             continue
@@ -181,6 +205,21 @@ class ServedRamTests(unittest.TestCase):
     def test_all_launchers_use_policy(self):
         self.assertEqual(audit_tree(ROOT), LAUNCHERS)
 
+    def test_frozen_served_fixture_keeps_exact_negative_policy_scope(self):
+        name = 'fixtures/storage-fence-frozen/served-matrix.py'
+        source = (ROOT / name).read_text()
+        self.assertEqual(audit(name, source), 1)
+        for mutant in (source.replace('served_qemu(', 'list('),
+                       source.replace('"128M"', '"256M"')):
+            with self.subTest(mutant=mutant[-80:]), self.assertRaises(ValueError):
+                audit(name, mutant)
+        for unknown in ('unknown/served-matrix.py',
+                        'fixtures/unknown/served-matrix.py'):
+            with self.subTest(path=unknown), self.assertRaises(ValueError):
+                audit(unknown, source)
+        self.assertEqual(audit('fixtures/storage-fence-frozen/storage-fence-ghost.py',
+            (ROOT / 'fixtures/storage-fence-frozen/storage-fence-ghost.py').read_text()), 0)
+
     def test_every_launcher_bypass_is_rejected(self):
         for name in LAUNCHERS:
             if name == 'observe-matrix.py':
@@ -191,9 +230,15 @@ class ServedRamTests(unittest.TestCase):
                 audit(name, mutant)
         for source in ('subprocess.Popen(["qemu", "-cdrom", iso])',
                        'commands = [["qemu", "-cdrom", iso]]',
+                       'argv = ("qemu", "-cdrom", iso); alias = argv; subprocess.Popen(alias)',
+                       'subprocess.Popen(("qemu", "-cdrom", iso))',
                        'subprocess.run([str(kernel / "scripts/durable-boot.sh"), iso, image, log, "300", *qemu])'):
             with self.assertRaises(ValueError):
                 audit('new.py', source)
+        self.assertEqual(audit('validator.py',
+            'need(value in ("e1000,netdev=n0", "isa-debug-exit,iobase=0xf4,iosize=0x04"))'), 0)
+        with self.assertRaises(ValueError):
+            audit('new.py', 'argv = ("qemu", "isa-debug-exit,iobase=0xf4,iosize=0x04")')
         with self.assertRaises(ValueError):
             audit('new.sh', '$qemu -cdrom "$iso"')
 
@@ -250,6 +295,47 @@ class ServedRamTests(unittest.TestCase):
         self.assertEqual(served_ram.served_qemu('qemu -m 512M', env={'ABSD_GUEST_RAM': '1G'})[-1], '1G')
         self.assertEqual(served_ram.served_qemu('qemu', memory='512M', env={})[-1], '512M')
         self.assertEqual(served_ram.served_qemu('"/a path/qemu" -m 512M', env={})[0], '/a path/qemu')
+
+        # Exercise the actual replacement launch builder up to its bound
+        # launcher, without starting QEMU or entering the readiness loop.
+        app = load('app-replacement-qualification.py')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            iso = root / app.rel.ISO
+            iso.parent.mkdir(parents=True, exist_ok=True)
+            iso.write_bytes(b'ISO control')
+            release = SimpleNamespace(path=root, artifact_digests=lambda: {app.rel.ISO: app.ba.sha(iso)})
+            target = SimpleNamespace(iso=iso, image=root / 'disk.raw')
+            target.image.write_bytes(b'disk control')
+            class LaunchCaptured(Exception):
+                pass
+            for wrong in (False, True):
+                for override, expected in (('', '256M'), ('512M', '512M'), ('128M', None)):
+                    driver = object.__new__(app.Qualification)
+                    driver.check_lease = lambda: None
+                    driver.active = None
+                    driver.wrong = driver.release = release
+                    driver.evidence = root
+                    driver.qemu = ['/pinned/qemu', '-m', '256M']
+                    driver.cfg = {'qemu': {'sha256': 'pinned'}}
+                    driver.boots = []
+                    environment = dict(os.environ)
+                    environment.pop('ABSD_GUEST_RAM', None)
+                    if override:
+                        environment['ABSD_GUEST_RAM'] = override
+                    with patch.dict(os.environ, environment, clear=True), patch.object(
+                            app.ba, 'launch', side_effect=LaunchCaptured) as launch:
+                        with self.assertRaises(LaunchCaptured if expected else ValueError):
+                            app.Qualification.start(driver, target, f'ram-{wrong}-{expected}', wrong=wrong)
+                    if expected is None:
+                        launch.assert_not_called()
+                        continue
+                    argv = launch.call_args.args[0]
+                    self.assertEqual(argv[argv.index('-m') + 1], expected)
+                    self.assertEqual(argv.count('-m'), 1)
+                    self.assertIn('-no-reboot', argv)
+                    self.assertEqual(launch.call_args.kwargs['qemu_sha256'], 'pinned')
+                    self.assertEqual(launch.call_args.kwargs['iso_sha256'], app.ba.sha(iso))
 
     def test_low_and_malformed_sizes_are_refused(self):
         for value in ('128M', '255', '0', '-1G', '', '256MB', '1e9',

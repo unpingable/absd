@@ -39,10 +39,13 @@ pub fn omit_refusal(site: u64) -> bool {
 }
 
 // Sealed SMP_USER image: 15 RX + 1 RW pages; 3 upper + 3 leaf tables;
-// 2 initial user-stack + 8 kernel-stack pages; 1 retained scratch leaf.
+// 2 initial user-stack pages; the kernel stack (8 pages, 16 in the #115
+// builder profile); 1 retained scratch leaf: 33 frames, or 41 in the profile.
 // Re-derive this test-fixture budget if that image/layout changes. Ordinary
 // processes retain the suite's existing 24-frame allowance.
-pub(crate) const ACTOR_FRAMES: usize = 16 + 3 + 3 + 2 + 8 + 1;
+pub(crate) const ACTOR_FRAMES: usize = 16 + 3 + 3 + 2 + absd_kernel::layout::KERNEL_STACK_PAGES + 1;
+#[cfg(not(feature = "builder-profile"))]
+const _: () = assert!(ACTOR_FRAMES == 33);
 static mut FRAME_PIDS: [u64; 10] = [0; 10];
 // A bounded test-only attribution receipt. Per-CPU immutable entry identity
 // survives pinned lock-release waits; no handler/table borrow is re-derived.

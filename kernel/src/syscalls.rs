@@ -4,6 +4,12 @@
 //! result for `RAX` or blocks the process with the state needed to finish
 //! the operation later.
 
+#[cfg(feature = "mwm-experiment")]
+#[path = "syscalls/display.rs"]
+pub(crate) mod display;
+#[cfg(feature = "native-pcm-experiment")]
+#[path = "syscalls/pcm.rs"]
+mod pcm;
 use crate::block;
 use crate::sched::{
     Transfer, UserImage, abort_spawn, activate_spawn, cells, deadline, deliver_outcome,
@@ -56,6 +62,8 @@ const STOP_OBSERVE_TICKS: u64 = 1_000;
 
 #[path = "syscalls/nic.rs"]
 mod nic;
+#[path = "syscalls/observation.rs"]
+mod observation;
 #[cfg(target_arch = "x86_64")]
 #[path = "arch/x86_64/syscall_platform.rs"]
 mod platform;
@@ -63,6 +71,9 @@ mod platform;
 #[path = "arch/aarch64/syscall_platform.rs"]
 mod platform;
 pub(crate) use nic::wake_nic_receivers;
+#[path = "syscalls/readable.rs"]
+mod readable;
+pub(crate) use readable::wake_readable_waiters;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn user_syscall_dispatch(frame: *mut u64) -> u64 {
@@ -101,6 +112,28 @@ pub extern "C" fn user_syscall_dispatch(frame: *mut u64) -> u64 {
             result
         } else {
             match number {
+                0x7fb0 => civil_info(current, arg0, arg1, arg2),
+                0x7fb1 => civil_update(current, arg0, arg1, arg2),
+                0x7fb2 => civil_mint(current, arg0, arg1, arg2),
+                0x7fc0 => syscall_log_read(current, arg0, arg1, arg2),
+                0x7fc2 => syscall_service_append(current, arg0, arg1, arg2),
+                0x7fc3 => syscall_diagnostics_mint(current, arg0, arg1, arg2),
+                absd_kernel::console_presentation::SYS_PRESENTATION => {
+                    syscall_console_presentation(current, arg0, arg1, arg2)
+                }
+                absd_kernel::syscall::SYS_WAIT_READABLE => {
+                    match readable::call(current, arg0, arg1, arg2) {
+                        WaitOutcome::Done(result) => result,
+                        WaitOutcome::Blocked => {
+                            crate::arch_runtime::set_frame_result(frame, 0);
+                            switch_from_frame(frame, false);
+                        }
+                    }
+                }
+                #[cfg(feature = "mwm-experiment")]
+                0x7fd0..=0x7fd4 | 0x7fdf => display::call(current, number, arg0, arg1, arg2),
+                #[cfg(feature = "native-pcm-experiment")]
+                0x7fe0..=0x7fe3 => pcm::call(current, number, arg0, arg1, arg2),
                 0x7fff => crate::smp_user::test_call(arg0, arg1, arg2),
                 #[cfg(feature = "frame-reservation-experiment")]
                 0x7ff0 => {
@@ -162,6 +195,7 @@ pub extern "C" fn user_syscall_dispatch(frame: *mut u64) -> u64 {
                 }
                 SYS_EXIT => {
                     let process = &mut table().entries[current];
+                    serial::presenter_ended(process.pid, process.parent, process.program);
                     process.exit_status = arg0 as i32;
                     process.state = ProcessState::Exited;
                     stats().exits += 1;
@@ -209,8 +243,9 @@ pub extern "C" fn user_syscall_dispatch(frame: *mut u64) -> u64 {
                 SYS_MACHINE_STOP => syscall_machine_stop(current, pid, arg0, arg1),
                 SYS_MACHINE_RESTART => syscall_machine_restart(current, pid, arg0),
                 SYS_MACHINE_RECOVER => syscall_machine_recover(current, pid, arg0),
+                0x7fc1 => observation::read(current, arg0, arg1, arg2),
                 SYS_BOOT_ID => syscall_boot_id(current, arg0),
-                SYS_WALL_CLOCK => syscall_wall_clock(),
+                SYS_WALL_CLOCK => rtc_wall_clock(),
                 SYS_FRAME_STATS => syscall_frame_stats(current, arg0),
                 SYS_RESOURCE_CENSUS => syscall_resource_census(current, arg0),
                 SYS_ABI_VERSION => absd_abi::KERNEL_ABI as i64,
@@ -1039,6 +1074,8 @@ unsafe fn syscall_duplicate(current: usize, handle: u64, rights: u64) -> i64 {
 /// Takes the reference a new handle with `rights` holds on a kernel object.
 pub(crate) unsafe fn retain_object(object: Object, rights: u8) {
     match object {
+        #[cfg(feature = "native-pcm-experiment")]
+        Object::Playback => unsafe { pcm::retain(rights) },
         Object::Cell(id) => {
             if let Err(error) = unsafe { cells() }.retain(id) {
                 panic!("cell retain failed: {error:?}");
@@ -1051,12 +1088,16 @@ pub(crate) unsafe fn retain_object(object: Object, rights: u8) {
                 panic!("pipe retain failed: {error:?}");
             }
         }
+        #[cfg(feature = "mwm-experiment")]
+        Object::Display(_) => unsafe { display::state().retain(rights) },
         Object::None
         | Object::Console
         | Object::Process(_)
         | Object::Block
         | Object::Nic
-        | Object::Machine => {}
+        | Object::Machine
+        | Object::Diagnostics
+        | Object::Clock => {}
     }
 }
 
@@ -1064,6 +1105,8 @@ pub(crate) unsafe fn retain_object(object: Object, rights: u8) {
 /// Losing the last reader or writer of a pipe wakes the other side.
 pub(crate) unsafe fn release_object(object: Object, rights: u8) {
     match object {
+        #[cfg(feature = "native-pcm-experiment")]
+        Object::Playback => unsafe { pcm::release(rights) },
         Object::Cell(id) => {
             if cfg!(absd_mutant_cell_skip_release) {
                 return;
@@ -1081,12 +1124,21 @@ pub(crate) unsafe fn release_object(object: Object, rights: u8) {
                 Err(error) => panic!("pipe release failed: {error:?}"),
             }
         }
+        #[cfg(feature = "mwm-experiment")]
+        Object::Display(_) => unsafe {
+            display::state().release(rights);
+            if display::state().writers == 0 && rights & RIGHT_WRITE != 0 {
+                crate::framebuffer::clear();
+            }
+        },
         Object::None
         | Object::Console
         | Object::Process(_)
         | Object::Block
         | Object::Nic
-        | Object::Machine => {}
+        | Object::Machine
+        | Object::Diagnostics
+        | Object::Clock => {}
     }
 }
 
@@ -1314,6 +1366,9 @@ pub(crate) unsafe fn wake_pipe_waiters(id: PipeId, _status: PipeStatus) {
         }
     }
     scope.finish(0);
+    unsafe {
+        wake_readable_waiters();
+    }
 }
 
 /// `read(handle, buffer, length)`: from the console (serial input) or a
@@ -1602,7 +1657,7 @@ unsafe fn console_write(current: usize, address: u64, length: u64) -> i64 {
         return ERROR_FAULT;
     }
     for byte in &bytes[..length] {
-        serial::byte_out(*byte);
+        serial::display_byte_out(*byte);
     }
     unsafe {
         stats().writes += 1;
@@ -1615,7 +1670,7 @@ unsafe fn console_write(current: usize, address: u64, length: u64) -> i64 {
 /// their address. Fails closed without mapping anything on a bad count or
 /// a full window; frames already mapped are unmapped again if the frame
 /// pool runs out part way.
-unsafe fn syscall_map(current: usize, pages: u64) -> i64 {
+#[rustfmt::skip] unsafe fn syscall_map(current: usize, pages: u64) -> i64 {
     if pages == 0 || pages > MAX_MAP_PAGES {
         unsafe {
             stats().map_refusals += 1;
@@ -1625,13 +1680,20 @@ unsafe fn syscall_map(current: usize, pages: u64) -> i64 {
     let table = unsafe { table() };
     let process = &mut table.entries[current];
     let pid = process.pid as u32;
-    let Some(base) = (unsafe {
-        vm::find_unmapped_run(&process.address_space, USER_HEAP_BASE, USER_HEAP_END, pages)
-    }) else {
+    // Every heap page below the hint is mapped, so the lowest free run starts
+    // at or above it; searching from there returns the same address.
+    let start = process.address_space.heap_hint.max(USER_HEAP_BASE);
+    #[cfg(feature = "frame-admission-core")]
+    let reserved = unsafe { vm::frames() }.reservation(pid).is_some();
+    #[cfg(not(feature = "frame-admission-core"))]
+    let reserved = false;
+    let end = crate::heap_search_end!(current, pid, reserved);
+    let Some(base) = (unsafe { vm::find_unmapped_run(&process.address_space, start, end, pages) })
+    else {
         unsafe {
             stats().map_refusals += 1;
         }
-        return ERROR_NO_MEMORY;
+        #[cfg(feature = "builder-class-heap")] crate::builder_heap::refused(current, pid, true); return ERROR_NO_MEMORY;
     };
     let frames = unsafe { vm::frames() };
     for index in 0..pages {
@@ -1659,19 +1721,22 @@ unsafe fn syscall_map(current: usize, pages: u64) -> i64 {
             unsafe {
                 stats().map_refusals += 1;
             }
-            return ERROR_NO_MEMORY;
+            #[cfg(feature = "builder-class-heap")] crate::builder_heap::refused(current, pid, false); return ERROR_NO_MEMORY;
         }
+    }
+    if base == start {
+        process.address_space.heap_hint = base + pages * PAGE_SIZE;
     }
     unsafe {
         stats().maps += 1;
     }
-    base as i64
+    #[cfg(feature = "builder-class-heap")] crate::builder_heap::mapped(frames, current, pid, base, pages); base as i64
 }
 
 /// `unmap(address, pages)`: returns `pages` mapped heap pages starting at
 /// `address`. Every page is checked before any is released, so a bad range
 /// changes nothing.
-unsafe fn syscall_unmap(current: usize, address: u64, pages: u64) -> i64 {
+#[rustfmt::skip] unsafe fn syscall_unmap(current: usize, address: u64, pages: u64) -> i64 {
     let table = unsafe { table() };
     let process = &mut table.entries[current];
     let pid = process.pid as u32;
@@ -1681,7 +1746,7 @@ unsafe fn syscall_unmap(current: usize, address: u64, pages: u64) -> i64 {
         && address >= USER_HEAP_BASE
         && address
             .checked_add(pages * PAGE_SIZE)
-            .is_some_and(|end| end <= USER_HEAP_END)
+            .is_some_and(|end| end <= crate::heap_end!(current, pid))
         && (0..pages).all(|index| unsafe {
             vm::is_mapped(&process.address_space, address + index * PAGE_SIZE)
         });
@@ -1701,10 +1766,13 @@ unsafe fn syscall_unmap(current: usize, address: u64, pages: u64) -> i64 {
         }
         crate::invalidate_page(page);
     }
+    if address < process.address_space.heap_hint {
+        process.address_space.heap_hint = address;
+    }
     unsafe {
         stats().unmaps += 1;
     }
-    0
+    #[cfg(feature = "builder-class-heap")] crate::builder_heap::unmapped(current, pid, pages); 0
 }
 
 enum WaitOutcome {
@@ -2080,7 +2148,7 @@ unsafe fn syscall_resource_census(current: usize, address: u64) -> i64 {
     0
 }
 
-use platform::syscall_wall_clock;
+use platform::syscall_wall_clock as rtc_wall_clock;
 
 /// Resolves a machine handle carrying `rights`. Every refusal is written to
 /// the serial log with the caller's PID, so a host sees an attempt to end
@@ -2189,8 +2257,313 @@ unsafe fn syscall_machine_recover(current: usize, pid: u64, handle: u64) -> i64 
         }
         serial::write("\n");
     }
+    // Keep BKL and the abandonment census intact; announce reset only after
+    // AP hardware departure. A missing ACK must never emit the reset record.
+    #[cfg(target_arch = "x86_64")]
+    crate::smp_operator::retire();
     serial::write("MACHINE RECOVER RESET pid=");
     serial::decimal(pid);
     serial::write("\n");
     crate::machine_reset()
+}
+
+/// Experimental read-only diagnostics: authority is checked before memory.
+unsafe fn syscall_log_read(current: usize, handle: u64, address: u64, reserved: u64) -> i64 {
+    use absd_kernel::kernel_log::{
+        FRAME_BYTES, LOG, authorize_reader_for, read_request, root_init_role,
+    };
+    let process = unsafe { &table().entries[current] };
+    if let Err(error) = authorize_reader_for(
+        &process.handles,
+        handle,
+        root_init_role(process.pid, process.parent, process.program),
+    ) {
+        return unsafe { handle_error(error) };
+    }
+    if reserved != 0 {
+        return ERROR_INVALID;
+    }
+    let mut bytes = [0u8; FRAME_BYTES];
+    if unsafe { copy_from_user(&process.address_space, address, &mut bytes) }.is_err() {
+        return ERROR_FAULT;
+    }
+    let cursor = match read_request(&bytes, reserved) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let read = match LOG.read(cursor) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if unsafe { copy_to_user(&process.address_space, address, &read.encode()) }.is_err() {
+        return ERROR_FAULT;
+    }
+    0
+}
+unsafe fn syscall_console_presentation(
+    current: usize,
+    handle: u64,
+    mode: u64,
+    reserved: u64,
+) -> i64 {
+    use absd_kernel::console_presentation::RequestError;
+    let process = unsafe { &table().entries[current] };
+    match serial::presentation_request(
+        process.pid,
+        process.parent,
+        process.program,
+        &process.handles,
+        handle,
+        mode,
+        reserved,
+    ) {
+        Ok(()) => 0,
+        Err(RequestError::Rights) => ERROR_RIGHTS,
+        Err(RequestError::Invalid) => ERROR_INVALID,
+        Err(RequestError::Unsupported) => ERROR_NOT_IMPLEMENTED,
+        Err(RequestError::Handle(error)) => unsafe { handle_error(error) },
+    }
+}
+
+unsafe fn syscall_diagnostics_mint(current: usize, handle: u64, arg1: u64, arg2: u64) -> i64 {
+    use absd_kernel::kernel_log::root_init_role;
+    let process = unsafe { &mut table().entries[current] };
+    if !root_init_role(process.pid, process.parent, process.program) {
+        return ERROR_RIGHTS;
+    }
+    if let Err(error) = process.handles.console(handle, RIGHT_WRITE) {
+        return unsafe { handle_error(error) };
+    }
+    if arg1 != 0 || arg2 != 0 {
+        return ERROR_INVALID;
+    }
+    match process.handles.insert(Object::Diagnostics, RIGHT_READ) {
+        Ok(h) => h as i64,
+        Err(e) => unsafe { handle_error(e) },
+    }
+}
+unsafe fn syscall_service_append(current: usize, handle: u64, address: u64, reserved: u64) -> i64 {
+    use absd_kernel::kernel_log::{LOG, root_init_role, service_request};
+    let process = unsafe { &table().entries[current] };
+    if !root_init_role(process.pid, process.parent, process.program) {
+        return ERROR_RIGHTS;
+    }
+    if let Err(error) = process.handles.console(handle, RIGHT_WRITE) {
+        return unsafe { handle_error(error) };
+    }
+    if reserved != 0 {
+        return ERROR_INVALID;
+    }
+    let mut bytes = [0u8; 296];
+    if unsafe { copy_from_user(&process.address_space, address, &mut bytes) }.is_err() {
+        return ERROR_FAULT;
+    }
+    let record = match service_request(&bytes, reserved) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if LOG.emit(
+        record.source,
+        record.severity,
+        absd_kernel::kernel_log::timestamp(now()),
+        &record.message[..record.len],
+        0,
+    ) {
+        0
+    } else {
+        -11
+    }
+}
+
+// The existing BKL serializes this boot-local software clock. RTC is sampled
+// exactly once after timer reset, before userspace; corrections never touch ticks.
+static mut CIVIL_CLOCK: absd_kernel::civil_clock::Clock = absd_kernel::civil_clock::Clock::new();
+static mut CLOCK_EVENT_LIMITER: absd_kernel::civil_clock::EventLimiter =
+    absd_kernel::civil_clock::EventLimiter::new();
+static mut CLOCK_LAST_INFO: Option<absd_kernel::civil_clock::Info> = None;
+fn clock_event(
+    kind: &str,
+    before: absd_kernel::civil_clock::Info,
+    after: absd_kernel::civil_clock::Info,
+    suppressed: u64,
+) {
+    use absd_kernel::civil_clock::source_name;
+    use core::fmt::Write;
+    struct Line {
+        bytes: [u8; 480],
+        len: usize,
+        truncated: bool,
+    }
+    impl core::fmt::Write for Line {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            let n = s.len().min(self.bytes.len() - self.len);
+            self.bytes[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
+            self.len += n;
+            self.truncated |= n != s.len();
+            Ok(())
+        }
+    }
+    let mut line = Line {
+        bytes: [0; 480],
+        len: 0,
+        truncated: false,
+    };
+    let delta = before
+        .now_ns
+        .zip(after.now_ns)
+        .map(|(old, new)| i128::from(new) - i128::from(old));
+    let _ = write!(
+        line,
+        "event={kind} utc_uncertainty=unknown boot_only=yes tick={} old_tick={} generation={} old_source={} new_source={} old_unix_ns={:?} new_unix_ns={:?} delta_ns={:?} flags={}->{} attempt_source={} errno={} peer={:08x}:{} last_success_rtt_ms={} failures_suppressed={suppressed}",
+        after.now_tick,
+        before.now_tick,
+        after.generation,
+        source_name(before.source),
+        source_name(after.source),
+        before.now_ns,
+        after.now_ns,
+        delta,
+        before.flags,
+        after.flags,
+        source_name(after.attempt_source),
+        after.last_error,
+        after.attempt_peer,
+        after.attempt_peer_port,
+        after.rtt_ms
+    );
+    absd_kernel::kernel_log::LOG.emit(
+        b"clock",
+        if after.last_error != 0 { 4 } else { 5 },
+        Some(after.now_tick),
+        &line.bytes[..line.len],
+        if line.truncated {
+            absd_kernel::kernel_log::TRUNCATED
+        } else {
+            0
+        },
+    );
+}
+fn observe_clock_quality(info: absd_kernel::civil_clock::Info) {
+    if let Some(previous) = unsafe { CLOCK_LAST_INFO }
+        && previous.flags != info.flags
+    {
+        let kind = if info.now_ns.is_none() {
+            "quality-unknown"
+        } else if previous.now_ns.is_none() {
+            "quality-known"
+        } else if info.flags & 2 != 0 {
+            "quality-stale"
+        } else {
+            "quality-fresh"
+        };
+        clock_event(kind, previous, info, 0);
+    }
+    unsafe { CLOCK_LAST_INFO = Some(info) };
+}
+pub(crate) fn initialize_civil_time() {
+    let (before, after) = {
+        let clock = unsafe { &mut *core::ptr::addr_of_mut!(CIVIL_CLOCK) };
+        if clock.initialized() {
+            return;
+        }
+        let before = clock.info(now());
+        let rtc = rtc_wall_clock();
+        clock.initialize_rtc_result(if rtc >= 0 { Ok(rtc as u64) } else { Err(rtc) }, now());
+        (before, clock.info(now()))
+    };
+    clock_event(
+        if after.now_ns.is_some() {
+            "rtc-anchor"
+        } else {
+            "rtc-unavailable"
+        },
+        before,
+        after,
+        0,
+    );
+    unsafe { CLOCK_LAST_INFO = Some(after) };
+}
+
+unsafe fn civil_info(current: usize, address: u64, arg1: u64, arg2: u64) -> i64 {
+    if arg1 != 0 || arg2 != 0 {
+        return ERROR_INVALID;
+    }
+    initialize_civil_time();
+    let info = unsafe { (&*core::ptr::addr_of!(CIVIL_CLOCK)).info(now()) };
+    observe_clock_quality(info);
+    let bytes = info.encode();
+    let process = unsafe { &table().entries[current] };
+    if unsafe { copy_to_user(&process.address_space, address, &bytes) }.is_err() {
+        ERROR_FAULT
+    } else {
+        0
+    }
+}
+unsafe fn civil_update(current: usize, handle: u64, address: u64, reserved: u64) -> i64 {
+    let process = unsafe { &table().entries[current] };
+    if let Err(e) = absd_kernel::civil_clock::authorize_update(&process.handles, handle) {
+        return unsafe { handle_error(e) };
+    }
+    if reserved != 0 {
+        return ERROR_INVALID;
+    }
+    let mut bytes = [0; absd_kernel::civil_clock::REQUEST_BYTES];
+    if unsafe { copy_from_user(&process.address_space, address, &mut bytes) }.is_err() {
+        return ERROR_FAULT;
+    }
+    initialize_civil_time();
+    let (before, after, result) = {
+        let clock = unsafe { &mut *core::ptr::addr_of_mut!(CIVIL_CLOCK) };
+        let before = clock.info(now());
+        let result = clock.update(&bytes, now());
+        (before, clock.info(now()), result)
+    };
+    observe_clock_quality(after);
+    let limiter = unsafe { &mut *core::ptr::addr_of_mut!(CLOCK_EVENT_LIMITER) };
+    match result {
+        Ok(()) => {
+            if after.last_error != 0 {
+                if let Some(n) = limiter.failure(
+                    after.attempt_source,
+                    after.attempt_peer,
+                    after.attempt_peer_port,
+                    after.last_error,
+                    after.now_tick,
+                ) {
+                    clock_event("sync-failed", before, after, n);
+                }
+            } else {
+                let n = limiter.recovered();
+                clock_event("civil-correction", before, after, n);
+            }
+            0
+        }
+        Err(e) => {
+            let mut refusal = after;
+            refusal.last_error = e;
+            refusal.attempt_source = 0;
+            refusal.attempt_peer = 0;
+            refusal.attempt_peer_port = 0;
+            if let Some(n) = limiter.failure(0, 0, 0, e, after.now_tick) {
+                clock_event("correction-refused", before, refusal, n);
+            }
+            e
+        }
+    }
+}
+unsafe fn civil_mint(current: usize, console: u64, arg1: u64, arg2: u64) -> i64 {
+    let p = unsafe { &mut table().entries[current] };
+    if !absd_kernel::kernel_log::root_init_role(p.pid, p.parent, p.program) {
+        return ERROR_RIGHTS;
+    }
+    if let Err(e) = p.handles.console(console, RIGHT_WRITE) {
+        return unsafe { handle_error(e) };
+    }
+    if arg1 != 0 || arg2 != 0 {
+        return ERROR_INVALID;
+    }
+    match p.handles.insert(Object::Clock, RIGHT_WRITE) {
+        Ok(h) => h as i64,
+        Err(e) => unsafe { handle_error(e) },
+    }
 }

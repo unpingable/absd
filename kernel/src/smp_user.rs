@@ -1,5 +1,5 @@
-//! Fixed-placement AP userspace qualification. This is inert
-//! unless both the compile feature and the exact qualification boot are set.
+//! Shared fixed-placement AP execution. Qualification and ordinary operator
+//! admission are separate; fixture effects require qualification_enabled().
 use absd_kernel::process::{CpuClaim, MAX_PROCESSES, Process, ProcessState, StopState};
 use absd_kernel::syscall::{ERROR_NOT_IMPLEMENTED, FRAME_RDX};
 use core::arch::{asm, global_asm};
@@ -92,7 +92,7 @@ pub fn skip_nvme_first_poll() {
     assert!(!NVME_SKIP_FIRST_POLL.swap(true, Ordering::AcqRel));
 }
 pub fn device_first_poll(site: crate::kernel_lock::WaitSite) {
-    if !enabled() || standalone() || crate::cpu::current() == crate::cpu::NO_TASK {
+    if !qualification_enabled() || standalone() || crate::cpu::current() == crate::cpu::NO_TASK {
         return;
     }
     let (bit, name) = match site {
@@ -131,7 +131,7 @@ pub fn calls_on(cpu: usize) -> u64 {
 /// Test-only timing pressure while the BSP continuation is pinned and the
 /// BKL is released. No kernel object/table reference crosses this interval.
 pub fn device_window(site: usize, before: u64) {
-    if !enabled()
+    if !qualification_enabled()
         || standalone()
         || (crate::cpu::current() == crate::cpu::NO_TASK && !crate::smp_startup::active())
     {
@@ -149,7 +149,7 @@ pub fn device_window(site: usize, before: u64) {
     crate::smp_startup::window(site);
 }
 pub fn pressure_finish() {
-    if !enabled() || standalone() {
+    if !qualification_enabled() || standalone() {
         return;
     }
     assert_eq!(crate::cpu::id(), 0);
@@ -203,8 +203,11 @@ fn stop_path(path: &str, pid: u64, claim: CpuClaim) {
     crate::serial::write("\n");
 }
 
-pub fn enabled() -> bool {
+pub fn qualification_enabled() -> bool {
     ENABLED.load(Ordering::Acquire)
+}
+pub fn enabled() -> bool {
+    qualification_enabled() || crate::smp_operator::enabled()
 }
 pub fn configure() {
     if !cfg!(feature = "smp-user-test") {
@@ -260,7 +263,7 @@ pub fn fpu_peer_progress() -> u64 {
     shared(221).load(Ordering::Acquire)
 }
 pub fn standalone() -> bool {
-    STANDALONE.load(Ordering::Acquire)
+    !crate::smp_operator::enabled() && STANDALONE.load(Ordering::Acquire)
 }
 pub fn pressure_mode() {
     STANDALONE.store(false, Ordering::Release);
@@ -280,7 +283,7 @@ fn native_app(process: &Process) -> bool {
         && process.program == absd_kernel::program::EXTERNAL_WORKLOAD as usize
 }
 pub fn pressure_reservation() -> u64 {
-    if enabled() && !standalone() {
+    if qualification_enabled() && !standalone() {
         if crate::smp_app_pressure::enabled() {
             crate::smp_app_pressure::reservation()
         } else if crate::smp_timer::enabled() {
@@ -334,7 +337,7 @@ fn log_event(label: &str, index: usize, pid: u64, claim: CpuClaim) {
 /// unmap it. No private task frame is shared, and roots remain independent.
 pub fn prepare_process(index: usize, process: &mut Process) {
     crate::smp_app_scale::prepare(index, process);
-    if !enabled() || process.program != absd_kernel::program::SMP_USER as usize {
+    if !qualification_enabled() || process.program != absd_kernel::program::SMP_USER as usize {
         return;
     }
     let role = process.task.context[FRAME_RDX];
@@ -388,14 +391,8 @@ pub fn prepare_process(index: usize, process: &mut Process) {
             false,
         )
         .expect("fixture map");
-        let directory_index = ((SHARED_ADDRESS >> 21) & 0x1ff) as usize;
-        let slot = process
-            .address_space
-            .page_tables
-            .iter()
-            .find(|s| s.frame != 0 && s.directory_index == directory_index)
-            .unwrap();
-        let pte = slot.frame + ((SHARED_ADDRESS >> 12) & 0x1ff) * 8;
+        let table = crate::vm::leaf_table(&process.address_space, SHARED_ADDRESS).unwrap();
+        let pte = table + ((SHARED_ADDRESS >> 12) & 0x1ff) * 8;
         let original = core::ptr::read_volatile(pte as *const u64);
         let scratch = core::ptr::addr_of!(SHARED) as u64;
         assert_eq!(scratch & 4095, 0);
@@ -415,7 +412,7 @@ pub fn prepare_process(index: usize, process: &mut Process) {
 }
 pub fn restore_fixture_page(process: &Process) {
     crate::smp_app_scale::terminal(process);
-    if !enabled() {
+    if !qualification_enabled() {
         return;
     }
     if native_app(process) && process.state != ProcessState::Created {
@@ -455,6 +452,9 @@ pub fn restore_fixture_page(process: &Process) {
     }
 }
 pub fn initial_placement(index: usize, process: &Process) -> u8 {
+    if crate::smp_operator::enabled() {
+        return crate::smp_operator::placement(index, process);
+    }
     if let Some(cpu) = crate::smp_app_scale::placement(process) {
         return cpu;
     }
@@ -486,6 +486,10 @@ pub fn assert_selection(index: usize) {
         crate::cpu::id(),
         "fixed placement mismatch"
     );
+    if crate::smp_operator::enabled() {
+        crate::smp_operator::validate(index, p, crate::cpu::id());
+        return;
+    }
     if crate::cpu::id() > 0 {
         assert!(
             (p.program == absd_kernel::program::SMP_USER as usize
@@ -520,7 +524,10 @@ pub fn notify_runnable() {
             crate::ap::send_task_ipi(cpu);
         }
     }
-    if !STANDALONE.load(Ordering::Acquire) && !crate::smp_startup::active() {
+    if qualification_enabled()
+        && !STANDALONE.load(Ordering::Acquire)
+        && !crate::smp_startup::active()
+    {
         let t = unsafe { crate::sched::table() };
         if !t
             .entries
@@ -537,14 +544,18 @@ pub fn notify_process(process: &Process) {
     if !enabled() || !process.is_runnable() {
         return;
     }
-    let target = crate::modern_smp::placement_of_pid(process.pid).unwrap_or_else(|| {
-        (0..MAX_PROCESSES)
-            .map(fixture)
-            .find(|f| f.pid != 0 && f.pid == process.pid)
-            .map_or(if native_app(process) { native_cpu() } else { 0 }, |f| {
-                f.cpu
-            })
-    });
+    let target = if crate::smp_operator::enabled() {
+        crate::smp_operator::placement_of(process)
+    } else {
+        crate::modern_smp::placement_of_pid(process.pid).unwrap_or_else(|| {
+            (0..MAX_PROCESSES)
+                .map(fixture)
+                .find(|f| f.pid != 0 && f.pid == process.pid)
+                .map_or(if native_app(process) { native_cpu() } else { 0 }, |f| {
+                    f.cpu
+                })
+        })
+    };
     if target != crate::cpu::id() && IDLE[target as usize].load(Ordering::Acquire) {
         if target == 1 && MUTANT.load(Ordering::Acquire) == 2 {
             return; // Deterministic omitted wake IPI.
@@ -599,7 +610,9 @@ pub fn startup_assert_fence() {
 }
 pub fn start_ap() -> ! {
     assert!(enabled());
+    crate::smp_operator::check_stop();
     crate::smp_timer::start_ap();
+    crate::smp_operator::ready();
     crate::smp_app_pressure::calibration_ready();
     crate::kernel_lock::acquire(crate::cpu::id());
     crate::smp_timer::report_start();
@@ -689,6 +702,7 @@ pub fn syscall_entry(frame: *mut u64, number: u64) {
     }
     assert_eq!(root, p.address_space.root, "entry root mismatch");
     assert_eq!(unsafe { frame.add(16).read() } & 3, 3, "not a user trap");
+    crate::smp_operator::trap(slot, p, false);
     crate::smp_app_scale::trap(slot, p);
     crate::smp_app_pressure::bsp_trap(slot, p);
     if native_app(p) {
@@ -735,6 +749,7 @@ pub fn departure(slot: usize, claim: CpuClaim) {
         return;
     }
     let p = &unsafe { crate::sched::table() }.entries[slot];
+    crate::smp_operator::departure(slot, p, claim);
     if p.stop == StopState::Requested || p.stop == StopState::Observed {
         let cpu = claim.cpu as usize;
         assert!(REQUEST[cpu].load(Ordering::Acquire));
@@ -771,10 +786,19 @@ pub fn reclaimed(slot: usize, pid: u64, claim: CpuClaim) {
 pub extern "C" fn ap_user_kernel_enter() {
     assert!(enabled());
     crate::smp_timer::pause();
+    #[cfg(feature = "smp-operator-controls")]
+    crate::smp_operator::panic_control(false);
     crate::kernel_lock::acquire(crate::cpu::id());
+    #[cfg(feature = "smp-operator-controls")]
+    crate::smp_operator::panic_control(true);
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ap_user_kernel_leave() {
+    if crate::smp_operator::enabled() {
+        let slot = crate::cpu::current();
+        let p = &unsafe { crate::sched::table() }.entries[slot];
+        crate::smp_operator::validate(slot, p, crate::cpu::id());
+    }
     crate::kernel_lock::release(crate::cpu::id());
     crate::smp_timer::user_return();
 }
@@ -815,6 +839,7 @@ pub fn timer_entry(frame: *mut u64) {
     }
     assert_eq!(root, p.address_space.root);
     assert_eq!(unsafe { frame.add(16).read() } & 3, 3);
+    crate::smp_operator::trap(slot, p, true);
     if native_app(p) {
         assert_eq!(crate::cpu::id(), native_cpu());
         if !crate::smp_app_pressure::skip_native_timer(p.pid) {
@@ -834,6 +859,7 @@ pub fn probe_switch(from: u64, to: u64) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn user_stop_ipi(frame: *mut u64) {
     crate::ap::task_eoi();
+    crate::smp_operator::check_stop();
     if !enabled() || unsafe { frame.add(16).read() } & 3 == 0 {
         return;
     }
@@ -888,7 +914,7 @@ fn gap() {
     p.stop = StopState::Observed;
 }
 pub fn commit_gap(number: u64) {
-    if enabled()
+    if qualification_enabled()
         && number != 0
         && NEXT_GAP[crate::cpu::id() as usize]
             .compare_exchange(number, 0, Ordering::AcqRel, Ordering::Acquire)
@@ -898,7 +924,7 @@ pub fn commit_gap(number: u64) {
     }
 }
 pub fn blocked_frame(p: &Process) {
-    if enabled()
+    if qualification_enabled()
         && p.state == ProcessState::Waiting
         && matches!(p.wait_kind, absd_kernel::process::WaitKind::Pipe)
     {
@@ -912,7 +938,7 @@ pub fn created_gap() {
     commit_gap(0xffff);
 }
 pub fn test_call(op: u64, a: u64, b: u64) -> i64 {
-    if !enabled() {
+    if !qualification_enabled() {
         return ERROR_NOT_IMPLEMENTED;
     }
     let slot = crate::cpu::current();

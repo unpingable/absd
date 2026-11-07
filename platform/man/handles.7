@@ -37,6 +37,14 @@ it.
 Without it a process cannot start anything.
 .Pp
 Parentage, adoption by init, a PID, or a restart never grants a right.
+.Ss Read readiness
+.Xr wait_readable 2
+waits on up to eleven Pipe or Console handles with READ rights.
+It reports positional readiness bits without consuming bytes; a Pipe with
+no writers is ready even when empty.
+All handles are revalidated, so stale generations or missing rights refuse
+the whole wait.
+Readiness does not guarantee that a later read will succeed or avoid blocking.
 .Ss Files are not handles
 A file is not a kernel object.
 A process reaches files through a file server channel, and the server keeps

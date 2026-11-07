@@ -6,7 +6,7 @@ pub struct EmbeddedProgram {
     pub bytes: &'static [u8],
 }
 
-pub const PROGRAMS: [EmbeddedProgram; 44] = [
+pub const PROGRAMS: [EmbeddedProgram; 45] = [
     EmbeddedProgram {
         name: "init",
         bytes: include_bytes!(env!("ABSD_USER_INIT_ELF")),
@@ -183,6 +183,10 @@ pub const PROGRAMS: [EmbeddedProgram; 44] = [
         name: "smp-user",
         bytes: include_bytes!(env!("ABSD_USER_SMP_USER_ELF")),
     },
+    EmbeddedProgram {
+        name: "logd",
+        bytes: include_bytes!(env!("ABSD_USER_LOGD_ELF")),
+    },
 ];
 
 /// Whether a catalog entry expects the ordered handle-vector entry ABI.
@@ -197,6 +201,7 @@ pub const fn uses_multi_start(index: usize) -> bool {
         || index == absd_abi::program::BLOCK_PROBE as usize
         || index == absd_abi::program::EXTERNAL_READER as usize
         || index == absd_abi::program::FILE_SERVER as usize
+        || index == absd_abi::program::LOGD as usize
         || (index >= absd_abi::program::OWNER_1 as usize
             && index <= absd_abi::program::OWNER_4 as usize)
 }

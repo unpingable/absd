@@ -68,7 +68,7 @@ fn run() -> Result<(), String> {
         start,
         last,
     );
-    let observed = match query.observe(getrandom_0_2::getrandom, absd_runtime::wall_clock_seconds) {
+    let observed = match query.observe(getrandom_0_2::getrandom, absd_runtime::hardware_rtc_seconds) {
         Ok(observed) => observed,
         Err(Error::Refused(Refusal::EraUnknown)) => return Err("era=unknown".into()),
         Err(error) => return Err(format!("{error:?}")),

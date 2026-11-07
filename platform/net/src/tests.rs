@@ -8,6 +8,8 @@ use std::vec::Vec;
 
 use super::*;
 
+mod datagram_link_feedback;
+
 struct Wire {
     queues: [VecDeque<Vec<u8>>; 2],
     now_ms: u64,
@@ -1570,6 +1572,112 @@ fn udp_independent_malformed_lengths_checksums_fragment_and_unauthorized_source(
     assert_eq!(&out[..9], b"reference");
 }
 
+#[test]
+fn udp_grant_drop_witness_counts_dequeue_not_ingress_or_short_receive() {
+    use datagram::*;
+    let (wire, mut stack, _) = pair(0);
+    let grant = udp_grant(7002, 2, 40000);
+    let endpoint = stack.datagram_bind(grant).unwrap();
+    assert_eq!(stack.stats().udp_grant_dropped, 0);
+
+    wire.borrow_mut().queues[0].push_back(udp_frame(40001, b"different port"));
+    stack.poll();
+    assert_eq!(stack.stats().udp_grant_dropped, 0);
+    assert_eq!(stack.datagram_receive(endpoint, &mut [0; 32]), Err(Error::Again));
+    assert_eq!(stack.stats().udp_grant_dropped, 1);
+    assert_eq!(stack.datagram_receive(endpoint, &mut [0; 32]), Err(Error::Again));
+    assert_eq!(stack.stats().udp_grant_dropped, 1);
+
+    let mut other_ip = udp_frame(40000, b"different IP");
+    other_ip[29] = 3;
+    other_ip[24..26].fill(0);
+    let checksum = independent_checksum(&other_ip[14..34]);
+    other_ip[24..26].copy_from_slice(&checksum.to_be_bytes());
+    wire.borrow_mut().queues[0].push_back(other_ip);
+    stack.poll();
+    assert_eq!(stack.datagram_receive(endpoint, &mut [0; 32]), Err(Error::Again));
+    assert_eq!(stack.stats().udp_grant_dropped, 2);
+
+    wire.borrow_mut().queues[0].push_back(udp_frame(40000, b"authorized"));
+    stack.poll();
+    assert_eq!(stack.datagram_receive(endpoint, &mut []), Err(Error::TooSmall { needed: 10 }));
+    assert_eq!(stack.stats().udp_grant_dropped, 2);
+    let mut out = [0; 32];
+    assert_eq!(stack.datagram_receive(endpoint, &mut out), Ok((10, grant.peer)));
+    assert_eq!(&out[..10], b"authorized");
+    assert_eq!(stack.stats().udp_grant_dropped, 2);
+    assert_eq!(stack.datagram_send(endpoint, Address { port: 40001, ..grant.peer }, b"refused"), Err(Error::Denied));
+    assert_eq!(stack.stats().udp_grant_dropped, 2);
+}
+
+#[test]
+fn udp_grant_drop_witness_excludes_malformed_unbound_and_queue_overflow() {
+    use datagram::*;
+    let (wire, mut stack, _) = pair(0);
+    let endpoint = stack.datagram_bind(udp_grant(7002, 2, 40000)).unwrap();
+    let mut malformed = udp_frame(40001, b"bad checksum");
+    malformed[24] ^= 1;
+    let mut unbound = udp_frame(40001, b"other local port");
+    unbound[36..38].copy_from_slice(&7003u16.to_be_bytes());
+    for frame in [malformed, unbound] {
+        wire.borrow_mut().queues[0].push_back(frame);
+        stack.poll();
+        assert_eq!(stack.datagram_receive(endpoint, &mut [0; 32]), Err(Error::Again));
+        assert_eq!(stack.stats().udp_grant_dropped, 0);
+    }
+
+    // The fifth packet exceeds the socket's four-packet queue. It is not a
+    // grant-filter dequeue, even though its source also disagrees.
+    for _ in 0..QUEUE_PACKETS + 1 {
+        wire.borrow_mut().queues[0].push_back(udp_frame(40001, b"queued"));
+        stack.poll();
+    }
+    assert_eq!(stack.stats().udp_grant_dropped, 0);
+    assert_eq!(stack.datagram_receive(endpoint, &mut [0; 32]), Err(Error::Again));
+    assert_eq!(stack.stats().udp_grant_dropped, QUEUE_PACKETS as u64);
+    assert_eq!(stack.datagram_receive(endpoint, &mut [0; 32]), Err(Error::Again));
+    assert_eq!(stack.stats().udp_grant_dropped, QUEUE_PACKETS as u64);
+}
+
+#[test]
+fn udp_grant_drop_witness_survives_rebind_without_reviving_stale_endpoints() {
+    use datagram::*;
+    let (wire, mut stack, _) = pair(0);
+    let grant = udp_grant(7002, 2, 40000);
+    let old = stack.datagram_bind(grant).unwrap();
+    wire.borrow_mut().queues[0].push_back(udp_frame(40001, b"counted"));
+    stack.poll();
+    assert_eq!(stack.datagram_receive(old, &mut [0; 32]), Err(Error::Again));
+    assert_eq!(stack.stats().udp_grant_dropped, 1);
+
+    wire.borrow_mut().queues[0].push_back(udp_frame(40001, b"closed without receive"));
+    stack.poll();
+    stack.datagram_close(old).unwrap();
+    let fresh = stack.datagram_bind(grant).unwrap();
+    assert_eq!(stack.datagram_receive(old, &mut [0; 32]), Err(Error::Stale));
+    assert_eq!(stack.datagram_receive(fresh, &mut [0; 32]), Err(Error::Again));
+    assert_eq!(stack.stats().udp_grant_dropped, 1);
+    stack.datagram_fence();
+    assert_eq!(stack.datagram_receive(fresh, &mut [0; 32]), Err(Error::Stale));
+    assert_eq!(stack.stats().udp_grant_dropped, 1);
+    let (_, other, _) = pair(0);
+    assert_eq!(other.stats().udp_grant_dropped, 0);
+}
+
+#[test]
+fn udp_grant_drop_witness_saturates_without_affecting_filtering() {
+    use datagram::*;
+    let (wire, mut stack, _) = pair(0);
+    let endpoint = stack.datagram_bind(udp_grant(7002, 2, 40000)).unwrap();
+    stack.port.stats.udp_grant_dropped = u64::MAX - 1;
+    for _ in 0..2 {
+        wire.borrow_mut().queues[0].push_back(udp_frame(40001, b"discard"));
+        stack.poll();
+        assert_eq!(stack.datagram_receive(endpoint, &mut [0; 32]), Err(Error::Again));
+        assert_eq!(stack.stats().udp_grant_dropped, u64::MAX);
+    }
+}
+
 fn udp_request(op: u8, peer: datagram::Address, bytes: &[u8], capacity: usize) -> Vec<u8> {
     let mut r = vec![1, op, 0, 0];
     r.extend_from_slice(&peer.ip);
@@ -1760,6 +1868,10 @@ mod server_cases {
     include!("stream/server_tests.rs");
 }
 
+mod server_telemetry_cases {
+    include!("stream/server_telemetry_tests.rs");
+}
+
 #[test]
 fn reused_tx_buffer_cannot_supply_icmpv4_unused_fields_after_udp_retirement() {
     for fence in [false, true] {
@@ -1817,4 +1929,8 @@ fn reused_tx_buffer_cannot_supply_icmpv4_unused_fields_after_udp_retirement() {
         assert!(wire.borrow().queues[1].is_empty());
         peer.datagram_close(peer_endpoint).unwrap();
     }
+}
+
+mod tcp_mtu_refusal_cases {
+    include!("stream/mtu_tests.rs");
 }

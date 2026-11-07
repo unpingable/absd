@@ -1,0 +1,15 @@
+# Exact kernel source observation for the composed native installer.
+# Narrow scope: expression validity and declared-licence policy only.
+# No release acceptance or owner licence-HOLD clearance follows.
+repository = "absd-kernel"
+commit = "1a44e3c207e514e1f776f3d745d62eb870d0c608"
+artifact = "kernel-image"
+gate = "PASS"
+inventory_sha256 = "b0a5fa21bad72c0a01082e35f665498aca2cde982be8bd2eabb07b2866456ef9"
+recorded = "2026-11-05T15:51:45.589393+00:00; actual kernel provenance.py full --peer clean platform f5f757cb4e351d87c056f71a7c6b121c4ce11579; evidence archived-occurrence sha256 fac28878e0e6dd1ec9cec7afd4690b4e9a3dc194eb5e3d58d2ac2cd88791aa1c and kernel-full/READINESS.md; scope expression validity and declared-licence policy only; O2-O5, collector completeness and SPDX consistency remain UNVERIFIED; source/binary NOT_READY and owner #121 HOLD unchanged; no release acceptance"
+
+[shared_tools]
+"scripts/provenance.py" = "05d799778a1154a8be2cfb7d7665927de12290f8c2f60e8bc631fc07e14d0a8a"
+"scripts/spdx-check.py" = "c2f2d8e1d7d6af4b1bc0fe6cad0ce2b361a0e53186c087b85cbb6cc746211c93"
+"scripts/provenance-counterexamples.toml" = "39a72947d8a004595bd8892345c9a23fccc327a87ffafcf846639b4c0a1c9f34"
+"scripts/test_provenance.py" = "e21e8e3c5e755e20cdbae61332b478937da32859652ef71500d4d111c6275a40"

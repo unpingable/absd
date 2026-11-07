@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "source_platform_revision": "4a4bae2b5364938b97a953f6427f7f75a5c2188c",
+  "source_kernel_revision": "0f770fe5469861e5d6a55652a2153c75ba834ffe",
+  "source_run": "79354150-4abf-4c18-8c35-25eeeae560df",
+  "source_case": 2,
+  "source_case_verdict": "FAIL",
+  "recorded_date": "2026-10-21",
+  "serial_sha256": "f7aee0776f660e8d0587ee3e927f32036f68a1f2047dc227531cc147d774177b",
+  "qemu_status": 7,
+  "scope": "Actual unsupported-format read-only mount refusal. The original FAIL remains recorded; host regression controls do not replace a fresh qualification run."
+}

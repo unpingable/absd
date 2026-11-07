@@ -901,9 +901,6 @@ class FakeSshd:
             return int(words[2]), b"", b"", 0
         if words[:2] == ["/bin/sshtest", "sleep"]:
             return 0, b"slept\n", b"", int(words[2])
-        if words[:1] == ['"/bin/tcc"']:
-            self.files["/home/operator/agent/t"] = b"\x7fELF"
-            return 0, b"agent-exec tcc ok\n", b"", 0
         return 127, b"", f"absd-sh: {words[0]}: not found\n".encode(), 0
 
     def run(self, text, stdin, timeout):
@@ -1074,11 +1071,15 @@ def self_test(cases_path, scratch):
        [c.requires for c in gated] == [None, 2, 2, None])
 
     calls = load_cases(cases_path)
-    ok("the case file has 12 cases", len({c.case for c in calls}) == 12, sorted({c.case for c in calls}))
-    ok("C12 alone requires candidate 2", {c.case for c in calls if c.requires == 2} == {"C12"})
+    ok("the case file has 11 cases", len({c.case for c in calls}) == 11, sorted({c.case for c in calls}))
+    ok("no case in the case file is gated", [c.id for c in calls if c.requires] == [])
+    # A gated row appended to the real case file, for the runner's gate end to end.
+    gated_calls = load_cases(cases_path, text=pathlib.Path(cases_path).read_text()
+                             + "\n# requires candidate 2\nC12\tsession\t60\t-\trc=0 stdout~^ABSD\tuname\n")
+    ok("the appended C12 alone requires candidate 2", {c.case for c in gated_calls if c.requires == 2} == {"C12"})
     ok("C10 is the host-policy refusal", [c.id for c in calls if c.has("refused")] == ["C10"])
 
-    def run(name, fake, candidate=0, baseline="first"):
+    def run(name, fake, candidate=0, baseline="first", calls=calls):
         receipts = scratch / f"{name}.jsonl"
         lines = []
         summary, good = Runner(fake, calls, receipts, candidate, baseline, out=lines.append, settle_timeout=5).run()
@@ -1090,8 +1091,8 @@ def self_test(cases_path, scratch):
     for line in lines:
         print("    " + line)
     print("    " + summary)
-    ok("fake run: AGENT EXEC OK, C12 skipped", good and summary ==
-       "AGENT EXEC OK calls=11 sessions=16 refused_host=1 refused_guest=3 skipped=1 capacity_equal=true", summary)
+    ok("fake run: AGENT EXEC OK, nothing skipped", good and summary ==
+       "AGENT EXEC OK calls=11 sessions=16 refused_host=1 refused_guest=3 skipped=0 capacity_equal=true", summary)
     by = {r.get("id"): r for r in rows}
     ok("a receipt per call plus the summary", len(rows) == len(calls) + 1 and rows[-1] == {"summary": summary})
     r = by["C1"]
@@ -1113,11 +1114,13 @@ def self_test(cases_path, scratch):
     ok("C11: 4 accepted, 1 refused at the transport", by["C11"]["sessions"] == 4
        and len(by["C11"]["lines"]["conn_refused"]) == 1 and [m["rc"] for m in by["C11"]["members"]].count(255) == 1)
     ok("C7: two different scratch directories", by["C7a"]["scratch"] != by["C7b"]["scratch"])
-    ok("C12 receipt says skipped", by["C12a"]["status"] == "skipped")
 
+    summary, good, rows, _ = run("gated", FakeSshd(), calls=gated_calls)
+    ok("a gated case without its candidate: skipped=1, its receipt says skipped", good and "calls=11 " in summary
+       and "skipped=1" in summary and {r.get("id"): r for r in rows}["C12"]["status"] == "skipped", summary)
     fake = FakeSshd()
-    summary, good, rows, _ = run("candidate2", fake, candidate=2)
-    ok("with candidate 2 the tcc case runs: calls=12", good and "calls=12 " in summary and "skipped=0" in summary, summary)
+    summary, good, rows, _ = run("candidate2", fake, candidate=2, calls=gated_calls)
+    ok("with candidate 2 the gated case runs: calls=12", good and "calls=12 " in summary and "skipped=0" in summary, summary)
     ok("no machine request ever reached the transport", fake.machine == [] and all("reboot" not in t for t in fake.sent))
 
     summary, good, rows, _ = run("leak", FakeSshd(leak=True))

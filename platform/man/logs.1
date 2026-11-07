@@ -1,0 +1,316 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd November 5, 2026
+.Dt LOGS 1
+.Os ABSD
+.Sh NAME
+.Nm logs
+.Nd inspect bounded boot and service history
+.Sh SYNOPSIS
+.Nm
+.Op Fl -volatile
+.Op Fl -list-boots | Fl -sources | Fl -health
+.Op Fl b Ar 0 | -1 | all | boot
+.Op Fl u Ar source
+.Op Fl p Ar 0..7
+.Op Fl -since Ar ticks
+.Op Fl -after Ar sequence
+.Op Fl n Ar count
+.Op Fl f
+.Op Fl -export | Fl -raw-file Ar path
+.Sh DESCRIPTION
+.Nm
+reads the retained journal under
+.Pa /var/log/journal .
+By default it shows the newest 50 records in the newest retained boot.
+.Fl b Cm -1
+selects the previous available boot;
+.Fl b Cm all
+selects both retained boots.
+An unavailable previous boot is reported as
+.Dq no previous boot retained
+with nonzero status; an explicit identity absent from retention is also an error.
+A known selected boot with no records matching the other filters succeeds
+with empty output. Boot aliases resolve before filtering.
+Boot identities are the kernel's 32 lowercase hexadecimal digits.
+.Fl -list-boots
+lists available boot identities, oldest first; an explicit
+.Fl b
+limits the listed identities to that selection.
+.Fl -sources
+lists retained sources for the selected boot and filters.
+.Fl -health
+shows the last published collector PID, monotonic sample tick and persistence counters.
+Current collector liveness, persistence, error and consecutive-unproductive
+count are explicitly unknown. Each field from the old file is prefixed
+.Li sample_ .
+A read-only current-boot kernel-ring scan may display the latest retained
+supervisor count, boot, tick and sequence. This is an observed count, not
+live authority; it may be overwritten or unavailable. A recorded PID is
+shown as a number and a recorded lack of error as
+.Li none ;
+other error detail is preserved and escaped.
+The stored health file and J1 export are unchanged.
+The human values use
+.Li sample_collector_pid=4 ,
+.Li sample_collector_pid=unknown ,
+and
+.Li sample_error=none .
+Every recorded error value is preserved as a whole under
+.Li sample_error ,
+including optional-value wrappers; only the exact recorded
+.Li None
+becomes
+.Li none .
+Unknown or malformed values remain escaped as recorded.
+Unrecognized sample text is escaped verbatim, including its field names.
+This is a retained observation, not proof the collector is alive now.
+If a boot selector is supplied, the selected identity must be retained and
+match the snapshot's own boot; an unavailable matching health snapshot is
+an error rather than a fallback to another boot.
+A protocol refusal of the optional default health sample is shown as
+.Dq Retained sample unavailable
+with an explicit reason, while current health remains unknown and the
+independent kernel observation is still attempted. It does not mean that a
+successfully acquired sample was empty. Actual health-file read errors
+are reported with nonzero status. Neither refusal nor read failure can
+satisfy an explicit boot selection. The independent observation is scoped
+to the current boot; it cannot supply a supervisor observation for a
+selected historical boot.
+.Pp
+.Fl u
+matches an exact trusted source or a service name such as
+.Cm sshd
+or
+.Cm fsd .
+.Fl p
+includes priorities from zero through the given number (zero is most severe).
+Stdout is priority 6, stderr priority 4, and service lifecycle priority 5.
+Known routine SSH authentication, exec-start, successful exit and reclamation
+records use stdout. Nonzero or abnormal exits, refusals and unclassified
+failures remain stderr; a command exit status alone is not a service-health
+verdict.
+.Fl -since
+selects a monotonic tick lower bound within each selected boot.
+.Fl -after
+selects sequences greater than the given value within each boot.
+When producer time is unknown, flag 8589934592 marks collector acquisition
+time (the volatile view uses zero for unknown producer ticks).
+Ticks are not wall-clock seconds and sequences do not establish a perfect
+order between independent kernel and service producers.
+.Fl f
+polls every 250 ticks, prints each newly observed retained sequence once,
+and reports retention gaps when no source/priority filter hides records.
+A blocked reader does not own or stall collection.
+.Fl -export
+prints all selected retained records as ordinary escaped text, suitable for
+redirection, grep, sed and tail.
+.Fl n
+limits the initial recent display, up to 10000 records.
+.Pp
+.Fl -volatile
+acquires data from the independent kernel/service ring without consulting
+persistent history, networking,
+or persistent storage. It includes current-boot service output captured by
+init. It is current-boot only: default,
+.Fl b Cm 0 ,
+.Fl b Cm all
+and the explicit current identity select only this boot.
+Previous or foreign identities fail before output, including with
+.Fl -health ,
+.Fl -sources
+or
+.Fl -list-boots .
+This route has finite ring retention and reports overwritten records.
+The recent-display cap applies only to the initial window and prints an
+explicit truncation notice. Follow streams subsequent records directly;
+export streams the complete initially retained window, reporting cursor gaps.
+Use
+.Xr dmesg 1
+for kernel-oriented inspection.
+.Pp
+Records use the line-oriented J1 format:
+.Dl J1 boot sequence ticks priority source kernel-sequence flags escaped-text
+Source and service/PID/stream metadata come from the kernel and init;
+application text cannot choose them.
+Control bytes, non-ASCII bytes and backslashes are written as
+.Li \exHH .
+The terminal never interprets application escape sequences.
+.Fl -raw-file
+creates a new named file containing decoded retained message bytes, including
+trusted message prefixes and any truncation/suppression notices.
+It refuses to replace an existing file and never emits decoded bytes to the
+terminal. Treat that explicit export as arbitrary application bytes.
+.Sh RETENTION AND FAILURE
+Init supervises a separate non-spawning
+.Pa absd-logd
+collector with a read-only Diagnostics grant and one exclusive private FSD
+channel. Its bounded filesystem requests never share the SSH control channel.
+FSD retains its own local diagnostics and continues serving during collector
+death and backoff.
+Init drains separate managed-service stdout/stderr pipes into the kernel
+ring independently of FSD. Ordinary applications log through stdout/stderr.
+Private console input and credential material are not collector inputs.
+.Pp
+The journal keeps two files for the current boot and two for one previous
+boot, at most 128 KiB per file (512 KiB total payload).
+The existing fsd and sshd text projections each keep their existing two
+64 KiB files. Collector health is a separate small fixed file.
+Each journal message retains at most 320 producer bytes, with explicit
+truncation. The collector keeps at most 64 KiB of recent encoded records
+in memory, at most one quarter per source, and at most 16 distinct sources.
+Six of those entries reserve admission for
+.Ql kernel ,
+.Ql unknown ,
+.Ql collector ,
+.Ql service.sshd ,
+.Ql service.fsd ,
+and
+.Ql service.logd ;
+other typed labels share the remaining ten entries.
+A reserved name appears in the source listing only after a record is retained.
+Unambiguous inferred kernel first-word hints are grouped under
+.Ql kernel ;
+the original hint remains in producer text and the INFERRED flag is retained.
+Damaged LOSS records retain unknown attribution.
+The independent dmesg view still shows the original kernel hint.
+.Pp
+Each source admits 32 records per 1000 ticks; later records in that window
+are suppressed and counted. The next admitted record reports that source's
+suppression, and health includes total loss, rotation and eviction counts.
+.Pp
+A failed append retains ordered pending work in the existing bounded memory
+queue and backs off for 1000 current collector ticks. Idle polls retry too.
+Unacknowledged memory evictions count as unconfirmed sink loss; retry attempts
+do not. The independent volatile route remains available. Full, read-only and unavailable sinks are not
+reported as durable. A damaged FSD mount follows the existing service
+failure and maintenance policy. The collector performs at most eight ring
+reads per pass; ordinary filesystem requests have a 100-tick total transport bound;
+COMMIT and the logger handshake allow 1000 ticks within the caller's remaining
+deadline. A complete
+logd pass has a 4000-tick deadline below the 5000-tick liveness threshold. There is no reader-owned collection queue.
+.Pp
+Init reaps the exact collector process before handing its private channel to
+a successor. It waits 1000 ticks and permits at most four successful crash replacements
+per boot, then reports exhaustion through the independent volatile route.
+Unproductive attempts back off for 1, 2, 4, 8, 16, 30, then 60 seconds, and
+continue retrying at the 60-second cap when storage remains unavailable.
+The count saturates. The first complete notice of a newly acquired and synced
+kernel record starts a productivity interval; only a later new-record sync
+at least 60 seconds afterward in the same child resets the count.
+Collection notices occur at most once per minute after the first.
+READY, heartbeats, lifetime alone and reopening old history are insufficient.
+After initial transitions, retry summaries appear every 60th unproductive
+attempt. Non-75 outcomes and bounded child output remain visible.
+Later exhaustion, quarantine and unconfirmed-child observations replace older
+retry or collection observations; unavailable counts remain unknown. The logger's pre-main VERSION check has a 1000-tick bound;
+only its transport timeout requests transient reattachment. Other clients
+retain the existing startup bound. The logs command defers negotiation until
+filesystem use, with the same mandatory protocol check at the common request
+boundary; changing the startup name cannot bypass it.
+.Fl Fl volatile
+sends no FSD request.
+.Fl Fl health
+uses a checked 1000-tick VERSION probe for the optional retained sample.
+This bounds VERSION only; subsequent ordinary sample I/O may still wait if
+the server stalls after answering VERSION. Use
+.Fl Fl volatile
+for no FSD request.
+Protocol refusal reports that sample unavailable and still permits unknown
+current health and independent kernel supervisor observations. Status 0 for
+this partial diagnostic report does not assert healthy collection or
+persistence. Actual sample file I/O errors remain visible and return status 1;
+ordinary retained-query protocol refusal exits 104 before filesystem use. Unknown child reaping authority stops
+replacement and further raw-handle actions, while unrelated children may
+still be reaped; ambiguous outcomes are reported as unclassified.
+Stale replies and partial frames are discarded at verified quiet boundaries;
+the private logger handshake retires all previous-generation open handles.
+A refused construction creates no process and consumes no crash restart.
+Unknown OPEN, CLOSE or handshake completion, or exhausted logger handles,
+fences further storage operations and ends logd with transient status 75.
+Init reaps that exact child before reconnecting after backoff; these attachment
+retries neither add to nor refund the crash replacement count.
+Orderly drain makes one immediate retry of pending backoff and stops on no
+progress, within its 1000-tick absolute transport deadline.
+No application can obtain that handshake or a writable journal mount.
+Collector restart resumes after the last persisted kernel sequence for this
+boot and declares that unpersisted records may replay. Kernel sequence and
+boot identify such duplicates. Kernel cursor gaps and incomplete trailing
+writes are reported. A partial final record is never displayed as complete.
+Abrupt loss during boot-file rollover may leave only part of the previous
+boot; each surviving record still carries its own boot identity.
+.Sh DURABILITY
+Buffered means available only in the volatile ring or memory. Written means
+accepted by the filesystem; flushed means covered by a successful device
+sync. Health reports written and flushed sequence high-water marks; loss
+counters cover only the named collector generation and reset on restart.
+A high-water mark does not fill gaps. Initial acquisition reports ring records
+already overwritten before the collector started. A timeout leaves completion
+unconfirmed: reopening reconciles complete journal records before retrying.
+The retained health file is a sample, not collector liveness;
+.Fl Fl health
+labels its persistence state at the sample and reports liveness unknown.
+After startup, changed journal data is synced at most once per 1000 ticks.
+Idle collection does not sync or rewrite health merely to advance time.
+Changed health counters produce a separately flushed receipt.
+Orderly shutdown closes the collector control pipe, drains at most 128 ring
+records within a 1000-tick absolute filesystem deadline,
+then attempts one sync and reports flushed, partial, unconfirmed or failed.
+A transport timeout cannot establish a failed commit.
+Block operations retain init's existing finite FSD stop/liveness bounds;
+shutdown does not add an unbounded logging retry loop.
+FSD serves the collector for at most 2000 ticks after SSH control EOF; neither
+waits without a bound for the other. Init reaps the collector before waiting
+for FSD and before granting the guarded finalizer another bounded drain.
+The finalizer observes service outcomes before recording orderly completion.
+.Pp
+An installed writable profile retains selected current/previous-boot records
+through ordinary reboot after successful flushing. This does not promise
+survival of final panic output, abrupt power loss, or failing media.
+Logs are diagnostics, not a tamper-proof authorization ledger.
+.Sh AUTHORITY
+Authenticated operator sessions may read logs only when granted the
+.Pa /var/log
+read-only mount. A session cannot acquire a writable mount overlapping this
+tree, create forged journal records, or remove retained history.
+The dedicated collector writes the journal through FSD; the privileged SSH
+control channel retains its
+legacy log-write authority but sees the journal and health as read-only.
+Destructive retention is not exposed by
+.Nm .
+Deferred protocol negotiation grants no extra filesystem authority.
+The common runtime request boundary still requires checked protocol admission.
+Once loaded, the volatile view sends no FSD request; executable loading may
+itself depend on FSD. Availability of loading a new command during an FSD
+outage is not established by this behavior.
+.Pp
+The volatile reader requires an already-owned read-only Diagnostics capability,
+separate from console input, logging write and machine-control authority.
+.Sh EXIT STATUS
+Zero indicates a successful query, including a valid selection with zero
+filter matches, or a default health response explicitly reporting optional
+sample refusal and unknown current state. An acquired-input error remains a
+failure even if the display pipe also closes. A consumer closing an output
+pipe otherwise ends quietly with
+zero status; this does not assert that the entire history was delivered.
+This applies to every display, including volatile collector health.
+Acquisition errors and explicit file-export errors remain failures, even
+when their error kind is broken pipe.
+Unavailable history or other acquisition/output errors return one;
+invalid arguments return two.
+.Fl h
+and
+.Fl -help
+print usage to standard output and return zero without acquiring history.
+.Sh EXAMPLES
+.Dl logs --list-boots
+.Dl logs -u sshd -p 4 -n 20
+.Dl logs -b -1 --export
+.Dl logs -u fsd -f
+.Dl logs --volatile --health
+.Dl logs --volatile -u sshd -f
+.Dl logs --export > /home/operator/history.txt
+.Sh SEE ALSO
+.Xr dmesg 1 ,
+.Xr health 1 ,
+.Xr shutdown 8 ,
+.Xr reboot 8

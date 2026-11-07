@@ -156,6 +156,16 @@ pub fn bsp_wait_site() -> WaitSite {
 }
 
 pub fn acquire(cpu: u8) {
+    acquire_inner(cpu, None);
+}
+
+/// Uses the same ownership protocol, with a bound only for machine retirement.
+pub fn acquire_for_retirement(start: u64) {
+    acquire_inner(BSP, Some(start));
+}
+
+fn acquire_inner(cpu: u8, retirement_start: Option<u64>) {
+    crate::smp_operator::check_bsp_failure(retirement_start);
     assert_cpu_identity(cpu);
     if !active() {
         assert_eq!(cpu, BSP, "AP cannot enter before kernel serialization");
@@ -174,6 +184,8 @@ pub fn acquire(cpu: u8) {
     let mut attempt = crate::smp_measure::begin();
     let mut wait_start = None;
     loop {
+        crate::smp_operator::check_bsp_failure(retirement_start);
+        crate::smp_operator::check_stop();
         match OWNER.try_acquire(cpu) {
             Ok(_) => break,
             Err(owner) => {
@@ -189,6 +201,7 @@ pub fn acquire(cpu: u8) {
             }
         }
     }
+    crate::smp_operator::check_bsp_failure(retirement_start);
     crate::smp_measure::acquired(cpu, attempt);
     if let Some(start) = wait_start {
         crate::smp_bench::waited(
@@ -281,6 +294,8 @@ pub fn wait_for_irq(site: WaitSite) {
         let ap_before = crate::smp_user::ap_calls();
         crate::smp_startup::snapshot_before_wait(site);
         release(BSP);
+        #[cfg(feature = "smp-operator-controls")]
+        crate::smp_operator::bsp_panic_control();
         crate::smp_user::device_window(site as usize, ap_before);
         unsafe { asm!("sti", "hlt", "cli", options(nomem, nostack)) };
         acquire(BSP);

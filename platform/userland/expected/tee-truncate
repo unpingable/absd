@@ -1,0 +1,17 @@
+status 0
+--- stdout
+line 1.1
+line 2.2
+line 3.3
+line 4.4
+line 5.5
+line 6.6
+--- stderr
+--- files
+file words.txt 54
+line 1.1
+line 2.2
+line 3.3
+line 4.4
+line 5.5
+line 6.6

@@ -480,7 +480,7 @@ fn liveness_cell_role() {
     assert_eq!(parse_startup(&record(&twice, &[]), 5), Err(Malformed));
     // A role this parser does not know is refused, so a child older than
     // its parent fails closed instead of ignoring the handle.
-    let unknown = [(role::STDIN, 1), (19, 2)];
+    let unknown = [(role::STDIN, 1), (20, 2)];
     assert_eq!(parse_startup(&record(&unknown, &[]), 4), Err(Malformed));
 }
 
@@ -638,4 +638,113 @@ fn emit_startup_vectors() {
         ),
     )
     .unwrap();
+}
+
+#[test]
+fn experimental_playback_role_is_opt_in_and_unique() {
+    let roles=[(role::STDIN,1),(role::STDOUT,2),(0xf0,3)];
+    let bytes=record(&roles,&[]);
+    #[cfg(not(feature="native-pcm-experiment"))]
+    assert_eq!(parse_startup(&bytes,5),Err(Malformed));
+    #[cfg(feature="native-pcm-experiment")]
+    {
+        assert_eq!(parse_startup(&bytes,5).unwrap().playback,Some(3));
+        assert_eq!(parse_startup(&record(&[(role::STDIN,1),(0xf0,2),(0xf0,3)],&[]),5),Err(Malformed));
+        assert_eq!(parse_startup(&record(&[(role::STDIN,1),(role::STDOUT,2),(0xf0,2)],&[]),5),Err(Malformed));
+        assert_eq!(parse_startup(&record(&[(role::STDIN,1),(role::STDOUT,2),(0xf0,4)],&[]),5),Err(Malformed));
+    }
+}
+
+#[test]
+fn terminal_metadata_role_is_single_and_optional() {
+    let roles = [(role::STDIN, 1), (role::STDOUT, 2), (role::STDERR, 3), (role::TERMINAL, 4)];
+    assert_eq!(parse_startup(&record(&roles, &[]), 6).unwrap().terminal, Some(4));
+    assert_eq!(parse_startup(&record(&roles[..3], &[]), 5).unwrap().terminal, None);
+    let duplicate = [(role::STDIN, 1), (role::TERMINAL, 2), (role::TERMINAL, 3)];
+    assert_eq!(parse_startup(&record(&duplicate, &[]), 5), Err(Malformed));
+    let mut encoded = [0; MAX_STARTUP];
+    let len = encode_startup(&roles, [].into_iter(), [].into_iter(), b"/", b"terminal-size", 6, &mut encoded).unwrap();
+    assert_eq!(parse_startup(&encoded[..len], 6).unwrap().terminal, Some(4));
+}
+
+#[test]
+fn terminal_startup_shared_golden() {
+    let bytes = include_bytes!("../fixtures/terminal-startup.bin");
+    let startup = parse_startup(bytes, 6).unwrap();
+    assert_eq!(startup.terminal, Some(4));
+    assert_eq!(startup.cwd, b"/");
+    assert_eq!(startup.name, b"terminal-size");
+    let roles = [(1,1), (2,2), (3,3), (21,4)];
+    let mut encoded = [0; MAX_STARTUP];
+    let len = encode_startup(&roles, [].into_iter(), [].into_iter(), b"/", b"terminal-size", 6, &mut encoded).unwrap();
+    assert_eq!(&encoded[..len], bytes);
+}
+
+#[test]
+fn diagnostics_is_an_explicit_single_role_independent_of_stdout_console() {
+    let roles=[(role::STDIN,1),(role::STDOUT,2),(role::STDERR,3),(role::DIAGNOSTICS,4)];
+    let mut bytes=[0;MAX_STARTUP];
+    let len=encode_startup(&roles,[],[],b"/",b"/bin/dmesg",6,&mut bytes).unwrap();
+    let parsed=parse_startup(&bytes[..len],6).unwrap();
+    assert_eq!(parsed.diagnostics,Some(4));
+    assert_eq!(parsed.stdout,Some(2));
+    let duplicated=[(role::STDIN,1),(role::STDOUT,2),(role::DIAGNOSTICS,3),(role::DIAGNOSTICS,4)];
+    assert!(parse_startup(&record(&duplicated,&[]),6).is_err());
+}
+
+#[test]
+fn diagnostics_startup_matches_kernel_encoder_golden() {
+    let hex=include_str!("../../tests/fixtures/diagnostics-startup-v1.hex").trim();
+    let bytes:std::vec::Vec<u8>=(0..hex.len()).step_by(2).map(|i|u8::from_str_radix(&hex[i..i+2],16).unwrap()).collect();
+    let parsed=parse_startup(&bytes,6).unwrap();
+    assert_eq!(parsed.diagnostics,Some(4));
+    assert_eq!(parsed.stdout,Some(2));
+}
+
+#[test]
+fn clock_owner_startup_is_single_explicit_and_matches_kernel_golden() {
+    let hex = include_str!("../../tests/fixtures/clock-owner-startup-v1.hex").trim();
+    let bytes: std::vec::Vec<u8> = (0..hex.len()).step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+    let startup = parse_startup(&bytes, 6).unwrap();
+    assert_eq!(startup.clock_owner, Some(4));
+    assert_eq!(startup.diagnostics, None);
+    assert_eq!(parse_startup(&record(&[(role::STDIN,1),(role::STDOUT,2),(role::STDERR,3)], &[]), 5).unwrap().clock_owner, None);
+    for roles in [
+        [(role::STDIN,1),(role::CLOCK_OWNER,2),(role::CLOCK_OWNER,3)],
+        [(role::STDIN,1),(role::CLOCK_OWNER,2),(role::STDOUT,2)],
+        [(role::STDIN,1),(role::CLOCK_OWNER,6),(role::STDOUT,2)],
+    ] {
+        assert!(parse_startup(&record(&roles, &[]), 6).is_err());
+    }
+}
+
+#[test]
+fn local_terminal_is_explicit_unique_and_never_the_fallback_console() {
+    let roles = [(role::STDIN, 1), (19, 2), (role::STEP, 3)];
+    assert_eq!(parse_startup(&record(&roles, &[]), 5).unwrap().local_terminal, Some(2));
+    let duplicate = [(19, 1), (19, 2), (role::STDIN, 3)];
+    assert_eq!(parse_startup(&record(&duplicate, &[]), 5), Err(Malformed));
+    assert_eq!(parse_startup(&record(&[(19, 2)], &[]), 3), Err(Malformed));
+}
+
+#[test]
+fn local_terminal_shared_startup_vector() {
+    let hex = include_str!("../vectors/local-terminal-startup.hex").trim();
+    let bytes: Vec<u8> = (0..hex.len()).step_by(2).map(|at| u8::from_str_radix(&hex[at..at+2],16).unwrap()).collect();
+    assert_eq!(bytes, record(&[(role::STDIN,1),(role::LOCAL_TERMINAL,2),(role::STEP,3)], &[]));
+    let startup = parse_startup(&bytes, 5).unwrap();
+    assert_eq!(startup.stdin, Some(1));
+    assert_eq!(startup.local_terminal, Some(2));
+    assert_eq!(startup.step, Some(3));
+}
+
+#[test]
+fn twenty_fsd_channels_fit_the_unchanged_sixty_four_handle_startup_vector() {
+    let mut roles=Vec::new();
+    for channel in 0..20u8 {roles.push((role::FS_REQUEST,1+channel*2));roles.push((role::FS_REPLY,2+channel*2));}
+    let encoded=record(&roles,&[]);
+    let parsed=parse_startup(&encoded,42).unwrap();
+    assert_eq!(parsed.channel_count,20);assert_eq!(parsed.channels.get(19).unwrap().reply,40);
+    assert!(parse_startup(&record(&roles,&[]),65).is_err());
 }

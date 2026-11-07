@@ -1,0 +1,29 @@
+.Dd November 5, 2026
+.Dt RMDIR 1
+.Os ABSD
+.Sh NAME
+.Nm rmdir
+.Nd remove empty directories
+.Sh SYNOPSIS
+.Nm
+.Op Fl p
+.Ar directory ...
+.Sh DESCRIPTION
+Remove each named empty directory. Files and nonempty directories are refused.
+With
+.Fl p ,
+remove each directory and then its empty parents, stopping at a failure,
+.Cm . ,
+or the root directory.
+Other operands are still attempted after an error.
+.Sh EXIT STATUS
+Zero if all requested removals succeed, nonzero on error or invalid arguments.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+mkdir /home/operator/empty
+rmdir /home/operator/empty
+.Ed
+.Sh SEE ALSO
+.Xr mkdir 1 ,
+.Xr rm 1 ,
+.Xr sbase 7

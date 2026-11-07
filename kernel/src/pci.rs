@@ -10,13 +10,19 @@
 //! mastering, and a second claim of the same function is refused by name.
 //! DMA is bus-mastering into static, identity-mapped kernel memory only:
 //! no IOMMU is programmed, so no driver ever hands a device a user address.
+//! Bus mastering is set only through `dma::arm` (src/dma.rs), which records
+//! each driver's declared containment state. That is structural for safe
+//! Rust: the configuration ports are reached only through the private
+//! `port` module below, whose one writer takes a `port::Checked` value; a
+//! `Checked` is made either by `port::guarded` (the command dword passes
+//! `dma_policy::guard_command_write`, which never sets Bus Master Enable)
+//! or by `port::armed` from a `dma::Armed` token, which only `dma` can
+//! construct and which names the one function it admits. Code outside this
+//! file can only call `write32` (guarded). What types cannot stop is
+//! `unsafe` port I/O elsewhere naming 0xcf8–0xcff; the source check in
+//! `dma_policy::tests` is a heuristic tripwire for that, not a proof.
 //! INTx stays masked. NVMe/e1000 and the xHCI probe poll; the bounded
 //! `xhci-controller` boot uses one BSP MSI-X vector (xhci_interrupt.rs).
-
-use core::arch::asm;
-
-const ADDRESS: u16 = 0xcf8;
-const DATA: u16 = 0xcfc;
 
 const COMMAND: u8 = 0x04;
 const COMMAND_MEMORY: u16 = 1 << 1;
@@ -26,12 +32,7 @@ const BAR0: u8 = 0x10;
 /// Distinct functions the kernel may own at once.
 const MAX_OWNED: usize = 4;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Function {
-    pub bus: u8,
-    pub device: u8,
-    pub function: u8,
-}
+pub use absd_kernel::pci_selection::Function;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BarError {
@@ -72,38 +73,117 @@ pub fn claim(function: Function, owner: &'static str) -> Result<(), ClaimError> 
     Ok(())
 }
 
-unsafe fn outl(port: u16, value: u32) {
-    unsafe {
-        asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack, preserves_flags));
-    }
-}
+/// Configuration mechanism #1: the only code that names the ports. Its one
+/// writer takes a [`port::Checked`], which only [`port::guarded`] and
+/// [`port::armed`] make (the fields are private to this module).
+mod port {
+    use super::{COMMAND, Function};
+    use core::arch::asm;
 
-unsafe fn inl(port: u16) -> u32 {
-    let value: u32;
-    unsafe {
-        asm!("in eax, dx", in("dx") port, out("eax") value, options(nomem, nostack, preserves_flags));
-    }
-    value
-}
+    const ADDRESS: u16 = 0xcf8;
+    const DATA: u16 = 0xcfc;
 
-fn select(function: Function, offset: u8) {
-    let address = 0x8000_0000
-        | (u32::from(function.bus) << 16)
-        | (u32::from(function.device) << 11)
-        | (u32::from(function.function) << 8)
-        | u32::from(offset & 0xfc);
-    unsafe { outl(ADDRESS, address) };
+    /// A configuration write that may happen: guarded, or armed.
+    pub struct Checked {
+        function: Function,
+        offset: u8,
+        value: u32,
+    }
+
+    /// A write through the shared guard: a command-dword write can keep or
+    /// clear Bus Master Enable but not set it. Returns whether a set was
+    /// refused (written with the bit clear).
+    pub fn guarded(function: Function, offset: u8, value: u32) -> (Checked, bool) {
+        let (value, refused) = if offset & 0xfc == COMMAND {
+            absd_kernel::dma_policy::guard_command_write(read(function, COMMAND) as u16, value)
+        } else {
+            (value, false)
+        };
+        (
+            Checked {
+                function,
+                offset,
+                value,
+            },
+            refused,
+        )
+    }
+
+    /// The command register of the one function `dma::arm` admitted, with
+    /// whatever bits the setter asks for (bus mastering included).
+    pub fn armed(armed: crate::dma::Armed, command: u16) -> Checked {
+        Checked {
+            function: armed.function(),
+            offset: COMMAND,
+            value: u32::from(command),
+        }
+    }
+
+    unsafe fn outl(port: u16, value: u32) {
+        unsafe {
+            asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack, preserves_flags));
+        }
+    }
+
+    unsafe fn inl(port: u16) -> u32 {
+        let value: u32;
+        unsafe {
+            asm!("in eax, dx", in("dx") port, out("eax") value, options(nomem, nostack, preserves_flags));
+        }
+        value
+    }
+
+    fn select(function: Function, offset: u8) {
+        let address = 0x8000_0000
+            | (u32::from(function.bus) << 16)
+            | (u32::from(function.device) << 11)
+            | (u32::from(function.function) << 8)
+            | u32::from(offset & 0xfc);
+        unsafe { outl(ADDRESS, address) };
+    }
+
+    pub fn read(function: Function, offset: u8) -> u32 {
+        select(function, offset);
+        unsafe { inl(DATA) }
+    }
+
+    pub fn write(write: Checked) {
+        crate::survey::forbid("pci configuration write");
+        super::CONFIG_WRITES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        select(write.function, write.offset);
+        unsafe { outl(DATA, write.value) };
+    }
 }
 
 pub fn read32(function: Function, offset: u8) -> u32 {
-    select(function, offset);
-    unsafe { inl(DATA) }
+    port::read(function, offset)
 }
 
+/// Configuration writes this boot, through the one writer: evidence that a
+/// path wrote nothing (the AHCI takeover's eligibility checks).
+static CONFIG_WRITES: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+pub fn config_writes() -> u64 {
+    CONFIG_WRITES.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Writes a configuration dword. A write to the command register can keep
+/// or clear Bus Master Enable but not set it: only `dma::arm` sets it
+/// (through `set_polled_dma`/`set_ide_dma`). A refused set is written
+/// with the bit clear and counted.
 pub fn write32(function: Function, offset: u8, value: u32) {
-    crate::survey::forbid("pci configuration write");
-    select(function, offset);
-    unsafe { outl(DATA, value) };
+    let (write, refused) = port::guarded(function, offset, value);
+    if refused {
+        BUS_MASTER_REFUSED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+    port::write(write);
+}
+
+/// Bus-master sets `write32` refused this boot (none is expected).
+static BUS_MASTER_REFUSED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+pub fn bus_master_refusals() -> u32 {
+    BUS_MASTER_REFUSED.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 /// Every present function in bus/device/function order, until `matches`
@@ -202,7 +282,7 @@ pub fn memory_bar(function: Function, index: u8) -> Result<u64, BarError> {
 /// The number of bytes memory BAR `index` decodes, by the standard sizing
 /// write: all ones, read back, restore, with memory decoding off for the
 /// duration so the BAR never decodes the probe value. Call only after
-/// `claim` and before `enable_polled_dma`.
+/// `claim` and before `dma::arm`.
 pub fn memory_bar_size(function: Function, index: u8) -> Result<u64, BarError> {
     memory_bar(function, index)?;
     let offset = BAR0 + 4 * index;
@@ -219,7 +299,7 @@ pub fn memory_bar_size(function: Function, index: u8) -> Result<u64, BarError> {
         mask = (mask & 0xffff_ffff) | (u64::from(read32(function, offset + 4)) << 32);
         write32(function, offset + 4, high);
     }
-    // As in `enable_polled_dma`: zeros into the status half.
+    // As in `set_polled_dma`: zeros into the status half.
     write32(function, COMMAND, u32::from(command));
     match (!mask).wrapping_add(1) {
         0 => Err(BarError::Unassigned),
@@ -283,11 +363,21 @@ pub fn bus_master(function: Function) -> bool {
 }
 
 /// Enables memory decoding and bus mastering (the controller DMAs queues
-/// and data), and masks legacy INTx: completion is polled.
-pub fn enable_polled_dma(function: Function) {
-    let value = read32(function, COMMAND);
+/// and data), and masks legacy INTx: completion is polled. Only through
+/// `dma::arm`, which holds the containment decision.
+pub fn set_polled_dma(armed: crate::dma::Armed) {
+    let value = read32(armed.function(), COMMAND);
     let command = (value as u16) | COMMAND_MEMORY | COMMAND_BUS_MASTER | COMMAND_INTX_DISABLE;
     // The upper half is the status register; writing its RW1C bits back as
     // read would clear them, so write zeros there.
-    write32(function, COMMAND, u32::from(command));
+    port::write(port::armed(armed, command));
+}
+
+/// Enables assigned I/O decoding and DMA without changing legacy IRQ routing.
+/// The caller owns the function and has stopped both bus-master channels.
+/// Only through `dma::arm_ide`.
+pub fn set_ide_dma(armed: crate::dma::Armed) {
+    let command = command(armed.function()) | 1 | COMMAND_BUS_MASTER;
+    // Zero status half: do not clear unrelated RW1C status.
+    port::write(port::armed(armed, command));
 }

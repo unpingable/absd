@@ -48,6 +48,12 @@ automatically through `build.rs`. Constants both sides depend on live in
 | 30 | `external-workload` | generic multi-start echo fixture; an opt-in build may replace its ELF without adding kernel semantics |
 | 40 | `hostile-probe` | the hostile qualification battery and one hostile act per case; init's `hostile` boot checks every refusal and exception (docs/HOSTILE-USERSPACE.md, `make hostile-test`) |
 
+## Private MWM presentation experiment
+
+With `mwm-experiment`, `scripts/build-user.sh` builds a separate `mwm.elf` and an init coordinator. `make mwm-demo-iso` and `make mwm-fault-iso` select that exact MWM image through `ABSD_EXTERNAL_USER_ELF` into the existing `EXTERNAL_WORKLOAD` slot, and write four-artifact SHA-256 receipts for MWM, init, kernel, and ISO. Neither target launches QEMU. Ordinary builds omit MWM and retain the catalog routing above.
+
+The fixture grants a generation-tagged display handle to one MWM child, uses bounded copied rectangles rather than framebuffer mappings, masks on last writable close, and opens one successor with a new generation. Init and MWM share the existing Console byte stream only for host `GO\n` observation barriers; no raw-input or client-surface protocol is introduced. The calls, records, refusal semantics, and evidence limits are in [`MWM-G1-PRESENTATION.md`](MWM-G1-PRESENTATION.md). This is not supported ABI or a production compositor.
+
 ## External workload boot
 
 `make external-test` boots init in a dedicated mode, copies embedded input
@@ -71,9 +77,63 @@ regular build-time placeholder used by `EXTERNAL_INPUT`.
 the host stream must complete, the selected child must fail, and init must
 still prove a zero-resource baseline before the boot reports failure.
 
+When a worker closes its stdin reader early, init stops writing that pipe and
+drains its independent captured stdout to EOF before collecting the worker's
+actual outcome. Incomplete input still fails, including when the worker exits
+zero. An ordinary terminal input refusal can therefore have a complete output
+frame and a failed boot. Plain external workers report `EXTERNAL WORKLOAD
+OUTCOME pid=... status=...`, as durable workers and readers already do.
+Nonzero worker outcomes and configured readers retain the existing stream
+continuation rules; a replacement never inherits a closed pipe handle.
+
+The kernel's pipe capacity, rights and stream credits are unchanged. The
+ordinary worker deadline still bounds the drain; served workers reuse their
+10,000-tick post-worker output bound after early stdin closure. Deadline or
+output-device failures can still leave a partial capture. If stdout ends first
+with stdin open and incomplete, init ends and reaps the worker before closing
+the input writer: refused enrollment input must never look like ordinary EOF
+to a live reader. Closing the writer after `BrokenPipe` is different: the
+kernel has already established that no input readers remain. No durable
+effects are rolled back by collecting output or reporting failure.
+Readiness observed after an input failure is ignored, so draining a late
+ready marker cannot turn a pre-ready served refusal into a recovery reset.
+Live input still feeds before stdout draining begins; a peer that fills stdout
+before consuming input can reach the existing deadline. This repair starts
+when the input reader closes, not at that earlier duplex-streaming limit.
+
+`make external-input-close-test` runs fifteen native controls using a fixture
+that writes 4,096 deterministic bytes, four times the pipe capacity. It covers
+embedded and live input, exit 96 and exit zero with unconsumed input, complete
+input, output EOF before input completion, and durable reader continuation. A worker that keeps stdout open after closing
+stdin must time out, report its actual forced outcome, reclaim all resources,
+and leave no complete-output footer. That qualification case uses the existing
+`NET_WAIT_TICKS=1000` override on an emulated-NIC durable boot; default deadlines
+remain unchanged.
+The fixture is behind `input-close-fixture` and is absent from normal catalog
+builds. The control runner can target a separate kernel tree with the same
+fixture ELF to demonstrate failure on sealed kernel
+`d208b61bcd4826181bf9f401551ab620d4eabba0`.
+
+Formalization consideration (kernel archived work item): the proposition is that
+reader closure does not discard the independent output pipe, while refusing
+incomplete input never introduces EOF to a live reader. The ordering above and
+actual native controls, including the pre-fix failure and the reader-waits-for-
+EOF control, are sufficient for this repair without a second abstract copy of
+the supervisor. The kill-before-close ordering rests on source inspection;
+the embedded and durable EOF controls observe behavior on their schedules,
+and do not establish that a swapped-order mutant would fail. No such mutant
+has been qualified. This is conditional on existing pipe reference counts,
+handle-right enforcement, scheduling and deadlines; it does not prove output
+completion after arbitrary device failures or unbounded worker output. Process
+and pipe identities remain unchanged until collection; successor workers still
+get fresh pipes. No kernel generation replacement or authority reconstruction
+is introduced. The lane producer owns this consideration, with independent
+Claude semantic/oracle review required before composition; the canonical card
+records the exact resulting source and evidence identities.
+
 One shipped image uses the same stream: the **enrollment build**
-(`make ENROLL_STREAM=1 durable-iso`, configuration decision recorded internally
-on 2026-10-16). The choice is made when the image is built, so no boot option or kernel
+(`make ENROLL_STREAM=1 durable-iso`, owner ruling 2026-10-16 on coordination record
+#31). The choice is made when the image is built, so no boot option or kernel
 ABI selects it, and an ordinary image never reads its durable worker's input
 from the serial line. In an enrollment image, init runs only a plain durable
 boot, with exactly one worker generation and the absd-stream-v1 input. It
@@ -201,7 +261,7 @@ passed them to `spawn_image` (docs/PROCESS-STARTUP.md).
 
 ## Handles
 
-Every process has a table of at most 64 handles. A handle is an opaque
+Every process has a table of at most 128 handles. A handle is an opaque
 64-bit value: its low byte is a slot index and the rest is a tag unique to
 that issue of the slot, so a closed or reaped handle never resolves, and a
 value copied from another process can at most name one of the caller's own
@@ -390,6 +450,25 @@ session over QEMU's serial socket (`scripts/shell-session.py`, needs `python3`),
 sending each command only after the prompt appears; `make shell` boots the
 shell on the current terminal for a human.
 
+For the opt-in x86 USB keyboard, use `shell usb-keyboard` to feed the same
+Console FIFO from one root-port HID boot keyboard. COM1 input remains available.
+`xhci-pci=BB:DD.F` chooses one xHCI controller, for example
+`shell usb-keyboard xhci-pci=00:05.0`. All fields are hexadecimal, with exactly
+two bus digits, two device digits (00–1f), and one function digit (0–7);
+letters may be either case. With no selector, the first xHCI function in
+bus/device/function order remains the default. Each probe logs every
+`XHCI CANDIDATE bdf=...` before it claims anything and reports the selected BDF.
+
+A malformed or repeated selector, a missing BDF, or a BDF of another class
+refuses the USB path before claim, BAR sizing or controller MMIO. Repeated
+values are refused even if identical. Missing and wrong-class refusals also
+print the requested BDF. Serial input continues. No failure of the selected
+controller switches to another controller. The selector also applies to the
+existing `xhci-probe` and `xhci-controller` diagnostic boots; it has no effect
+when no xHCI mode is enabled. Only one controller uses the existing static
+DMA/IRQ pool. See [USB selection and E5 reference](NATIVE-USB-STAGE2.md#explicit-controller-selection-2026-11-03)
+for the reference census, lifecycle boundaries and focused runtime recipe.
+
 ## Memory
 
 Each process reserves 1024 grow-down pages (4 MiB) from `USER_STACK_BASE` to
@@ -420,3 +499,284 @@ anonymous mappings. It grows in bounded chunks, reuses and coalesces freed
 extents, and leaves its mapped chunks to normal process teardown. Kernel calls
 that write an output record require a writable user range: a mapped read-only
 buffer returns `Fault` and remains byte-for-byte unchanged.
+
+## Opt-in QEMU Q35 FADT reset
+
+The default-off `acpi-reset-qemu` kernel feature and the exact
+`acpi-reset-qemu` boot option jointly request a FADT-first reset attempt.
+The option alone or feature alone leaves the legacy reset path selected.
+Discovery validates the required ACPI walk and unique FADT before caching
+an immutable boot-local plan. Only a supported, complete System I/O GAS
+with width 8, offset 0, access size 0 or 1, address `0xcf9`, and reset value
+`0x0f` is accepted. Other descriptions never select FADT-specific I/O. This is a
+QEMU Q35 compatibility profile; physical reset behavior is unqualified.
+
+Discovery never resets the machine. An existing authorized machine reset
+request first completes AP retirement, disables interrupts, then acquires
+the plan. It records `ACPI RESET ATTEMPT`, drains the UART with a finite
+poll bound, and writes the one byte once. If execution continues after the
+finite spin bound, `ACPI RESET RETURNED fallback=legacy` precedes the
+existing legacy reset sequence. Disabled, missing or refused plans report
+`ACPI RESET UNAVAILABLE reason=... fallback=legacy`. A returned attempt is
+not successful reset or rollback. Reset does not require S5 DSDT/PM1
+eligibility and grants no additional machine right.
+
+The operator option policy admits the exact `acpi-reset-qemu` token with
+`smp-operator=2`, `4` or `6`; it does not enable the default-off reset feature.
+FADT+SMP remains NOT ASSESSED and needs separate real retirement/missing-ACK
+and reset evidence. The focused UP consumer and exact runtime controls are in
+[RESET-TEST.md](x86-acpi-20261015/RESET-TEST.md).
+
+<a id="opt-in-two-cpu-operator-boot"></a>
+
+## Opt-in operator boot (2/4/6 CPU candidate)
+
+The `smp-operator` kernel feature and exactly one canonical `smp-operator=N`
+option, where N is 2, 4 or 6, select the candidate QEMU/OVMF operator profile.
+Four/six-CPU support remains a candidate until each count has independent VM
+acceptance; host tests alone do not promote a count. Build with
+`frame-admission-v0,smp-operator`; the final served image uses
+`durable=0 net fsd served smp-operator=2`. The existing Makefile's
+`nvme-write=absd` token is also admitted without changing its storage serial
+check. `acpi`, `acpi-poweroff`, exact `acpi-reset-qemu` and `halt-on-exit`
+are the only other ordinary options. Diagnostic reset/S5 tokens remain rejected.
+Unknown or duplicate options, missing `net fsd served`, malformed
+counts, USB/native-device/RT/migration/qualification options, and conflicting
+qualification (including `spawn-image-rollback-test`), read-only and PCM build
+features refuse. Compiling the feature alone leaves importer and ordinary
+boots UP. The generic `ap-startup` and
+`ap-userspace` compile-time refusals remain.
+
+The launcher owns exactly `-smp N,sockets=1,cores=N,threads=1`, including N=2.
+Before SIPI or MMIO freeze, validated ACPI MADT must describe exactly N
+enabled xAPIC records, IDs 0 through N-1, distinct processor UIDs, BSP ID 0, and a
+LAPIC address matching the APIC MSR. Missing, duplicate, disabled, x2APIC or
+mismatched topology refuses. AP startup and local timer readiness have separate
+bounded waits. The fixed SIPI page remains `0x7000`. Its complete 4 KiB must be type-1
+Multiboot RAM with no reserved-range, kernel, Multiboot-block or module
+overlap; the allocator separately reserves the whole first MiB until shutdown.
+Legacy BIOS boots still require the page below a nonzero EBDA pointer. EFI
+boots may omit that legacy pointer only with exactly one well-formed EFI
+system-table tag, one framed descriptor-version-1 EFI memory-map tag, and no tag 18
+(live boot services). Duplicate, truncated or conflicting handoffs refuse.
+EFI loader/boot-services memory is reusable after ExitBootServices, but is
+never substituted for the Multiboot RAM proof; EFI reserved/runtime overlaps
+still refuse. See [Multiboot2 EFI boot services tag](https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html)
+and [UEFI 2.10 memory use after ExitBootServices](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#memory-type-usage-after-exitbootservices).
+A refusal retains `SMP AP LOW PAGE REFUSED` and adds a preceding
+`SMP AP LOW PAGE DETAIL reason=...` diagnostic. This rule was derived from the
+captured OVMF handoff replayed by `src/ap_page.rs`; a host pass does not by
+itself establish AP startup.
+
+The count is immutable before topology use. Shared-trampoline startup remains
+sequential: each ONLINE fence precedes the next patch. Every admitted AP must
+finish its local calibration and publish READY before native scheduling begins.
+Physical machines, hotplug, migration, RT timing, CPU0 dispatch independence
+(kernel #5), FADT+SMP and lock removal remain NOT ASSESSED. Six vCPUs on a
+four-host-CPU machine establish overcommit behavior, not six-core scaling.
+
+Catalog init, FSD and sshd stay on CPU0. Dynamic `program::IMAGE` tasks use
+APs 1 through N-1 in publication-order round robin only if they are non-RT
+and have no Console, Block, Nic or Machine handles at Created publication.
+BSP-pinned publications do not consume the cursor. N=2 still chooses CPU1.
+Pipe consoles are eligible. The PID and CPU placement
+remain fixed until final slot release; closing a device handle cannot migrate
+a task. Every AP selection and return revalidates current authority. Existing
+spawn-time copied handles are considered before publication; `SYS_TRANSFER`
+still transfers bytes and introduces no live capability-transfer operation.
+The common BKL, task claim epochs, address-space checks, FPU save/restore and
+stop/departure fences remain. PIT time and hardware waiters remain BSP-owned;
+the AP uses a calibrated local timer for ordinary task preemption.
+
+Operator mode creates no synthetic process, shared qualification mapping,
+pressure reservation or private `0x7fff` syscall behavior. The existing served
+userspace drain, FSD sync, and kernel frame/object accounting still decide
+clean termination. Shutdown, reboot and immediate recovery then hold the BSP
+BKL, publish a sticky machine stop, and wait for every attempted AP's terminal ACK, even an AP that never
+published ONLINE. Every retirement entry attempts bounded nonasserting IPI
+delivery to all missing APs; a delivery failure cannot fabricate an ACK. AP
+interrupt, calibration, idle and pre-acquire paths pivot with CLI to CPU-owned
+stack/TSS and boot CR3, mask the timer, verify actual CR3/RSP/TSS/IF and timer mask/count readbacks,
+publish the ACK with Release ordering,
+and halt permanently. BSP observes it with Acquire ordering. No AP lock,
+process-table access, serial output or reap occurs in that park path.
+`SMP RETIREMENT PARKED cpu=N` reports the checked per-CPU departure boundary only;
+immediate recovery still abandons process accounting and does not imply drain
+or sync. Missing ACK prints
+`SMP RETIREMENT REFUSED cpu=N reason=missing-ack` names the first missing
+attempted CPU, then BSP halts with
+interrupts disabled without reset, S5 or successful machine completion.
+
+An operator AP Rust panic or reported kernel exception first publishes sticky
+first-failed raw CPU identity and halts silently, before framebuffer or serial
+diagnostics. Valid Rust identity/refusal backstops use that same path. An
+invalid raw AP ID is reported as 255, never indexed or acknowledged. The two
+pre-Rust damaged-stack assembly exits remain explicit failed local-VM exits. It emits
+no parked ACK and does not release BKL or task resources. The BSP checks this
+failure while acquiring BKL, at fatal reporting entry and during retirement,
+then emits `SMP RETIREMENT REFUSED cpu=N reason=ap-failed` and halts with IF
+clear. Retirement BKL acquisition is also bounded; without a published AP
+failure, expiry emits `SMP RETIREMENT REFUSED cpu=0 reason=lock-timeout` and
+halts. These last-resort records use bounded raw COM1 polls, without BKL or
+framebuffer access. Failure publication is not hardware departure, reclaim or
+transfer evidence; no reset, S5 or success follows it. This covers the admitted
+virtual profile's Rust fatal entries, not arbitrary hardware corruption.
+Healthy peers that observe the failure silently CLI/HLT without PARKED, reclaim
+or authority transfer. This does not promise instantaneous global quiescence.
+
+Normal BSP fatal diagnostics require the first fatal entry and BKL ownership
+by CPU0. An unowned or reentrant BSP fatal instead emits
+`SMP RETIREMENT REFUSED cpu=0 reason=bsp-fatal` through bounded raw COM1
+polls, then halts with interrupts disabled, without reset or reclamation.
+AP failure observed before that BSP decision takes priority and replaces the
+BSP diagnostic with `reason=ap-failed`. The selected raw refusal reason stays
+fixed through output and halt. A BSP fatal refusal does not establish AP
+quiescence or safe resource reclamation. Ordinary retirement does not consume
+the fatal-entry flag and retains its existing parked-ACK fence.
+
+Serial records after `SPAWN EXHAUSTION OK` are machine-readable:
+
+- `SMP OPERATOR PLACE cpu=N pid=N epoch=0`: immutable publication.
+- `SMP OPERATOR TRAP cpu=N pid=N epoch=N`: first actual CPL3 syscall trap,
+  with checked CPU claim and owned CR3.
+- `SMP OPERATOR TIMER cpu=N pid=N epoch=N`: first task-specific CPL3 timer.
+- `SMP OPERATOR DEPART cpu=N pid=N epoch=N`: terminal/stop hardware departure.
+- `SMP OPERATOR TERMINAL cpu=N pid=N epoch=N state=exited|faulted|killed status=N`:
+  terminal accounting before resource teardown. The ordinary outcome and final
+  accounting records establish successful reclamation; this line alone does not.
+
+Beside first TRAP/TIMER and each TERMINAL,
+`SMP-OPERATOR CLOCK kind=TRAP|TIMER|TERMINAL cpu=N pid=N epoch=N tick=N`
+samples `sched::now()` under BKL, the same BSP clock as SYS_TIME/uptime. It
+supports guest-time service-I/O bracketing, not continuous CPU execution or a
+new stable trace ABI. Instrumented SMP observations add serial overhead absent
+from ordinary UP. Summary counters cover every admitted CPU; old two-CPU
+record and fixture counter interfaces remain intact.
+
+The initial allocation-exhaustion probe can reuse PID 1 and therefore emits
+no operator task evidence. Runtime claim epochs may advance between trap,
+timer and terminal records. `SMP OPERATOR SUMMARY` reports syscall counts,
+AP contention and user timer counts at retirement. Native command output over authenticated SSH and
+concurrent independent FSD I/O must be correlated with these records; a
+placement record alone is not proof of AP execution.
+
+For a dedicated negative-control image, add `smp-operator-controls` to the
+features and append exactly one of these options to the same served line.
+Existing AP controls target N-1 (CPU1 at N=2):
+
+- `smp-operator-start-interrupt`: stops AP during local-timer calibration;
+  expect `SMP OPERATOR REFUSED reason=interrupted-start` and a parked ACK,
+  without `SMP OPERATOR READY` or userspace entry.
+- `smp-operator-retire-no-ack`: AP performs the safe pivot but withholds its
+  ACK; request ordinary shutdown/reboot/recovery and require the named
+  missing-ACK refusal, no ACK for that AP or overall summary, and no reset or S5. Earlier healthy
+  APs may have individual PARKED records.
+- `smp-operator-ap-panic-held` or `smp-operator-ap-panic-unheld`: panic once
+  on the first native AP kernel entry, immediately after or before BKL
+  acquisition respectively. The BSP identifies the selected variant with
+  `SMP OPERATOR CONTROL ap-panic=held` or `ap-panic=unheld`. After observing
+  the AP failure, the BSP emits the corresponding
+  `SMP OPERATOR CONTROL ap-panic-consumed=held` or `ap-panic-consumed=unheld`
+  record only if the AP hook atomically consumed that control. Require the
+  final named `ap-failed` refusal, no parked ACK and no reset or success.
+  Arming a control alone is not proof that the AP reached it.
+- `smp-operator-start-missing` (N=4/6): AP1 starts, AP2 is attempted but
+  receives no INIT/SIPI, and AP3+ are never attempted. Require startup-timeout
+  then missing-ACK for CPU2; healthy AP1 may park. No machine success follows.
+- `smp-operator-ap-backstop`: the last AP enters the actual Rust
+  `ap::fail_closed` backstop under BKL; the consumed label is
+  `SMP OPERATOR CONTROL ap-panic-consumed=backstop`, followed by ap-failed.
+- `smp-operator-ap-panic-held-peers` (N=6): AP5 panics under BKL only after
+  two distinct other APs own live Running IMAGE claims with a first user TIMER
+  already observed. It never waits under BKL. Each witness is
+  `SMP OPERATOR CONTROL peer cpu=N pid=N epoch=N`; epoch is the current live
+  claim, which may be newer than the first TIMER epoch. Correlate TIMER and
+  witness by boot/PID/immutable CPU placement. The consumed label is
+  `SMP OPERATOR CONTROL ap-panic-consumed=held-peers`. The controls-only ELF
+  byte `SMP_OPERATOR_PEER_FAILURE_OBSERVED` records each peer's silent abort
+  branch after CLI; it proves neither normal parking nor authority transfer.
+- `smp-operator-bsp-panic-unheld`: after operator readiness, panic once
+  immediately after the BSP releases BKL for an interruptible device wait.
+  The BSP arms the control with `SMP OPERATOR CONTROL bsp-panic=unheld`;
+  this record alone does not prove hook consumption. The raw refusal path
+  emits `SMP OPERATOR CONTROL bsp-panic-consumed=unheld` only after the hook
+  atomically consumed the control. Require the final named `bsp-fatal`
+  refusal, with no parked ACK, reset or success.
+
+A one-vCPU launch of the ordinary two-CPU image is a topology negative control
+and must refuse before any AP start. The controls are refused by ordinary
+operator builds. These are development controls, not alternate acceptance
+criteria or a replacement qualification harness.
+
+Rollback of this candidate is a reboot with the matching prior kernel/image
+pair and its admitted CPU count, or the UP image without an operator count.
+There is no runtime CPU removal, task migration, state export or generation
+replacement protocol here. Placement and claim state remain boot-local native
+state, not a replacement schema; any future replacement must explicitly fence
+APs and reconstruct authority before retirement. Terminal machine ACKs cannot
+serve as task-reclaim or post-effect rollback evidence.
+
+## Private managed-console presentation
+
+Experimental syscall `0x7fc4(console, mode, reserved)` accepts mode 0 (kernel
+presentation) or 1 (managed local presentation), with reserved=0. It requires
+root init (PID1, kernel parent, init program) and a currently owned Console
+WRITE handle; zero, Diagnostics, pipes, read-only and stale handles refuse.
+It grants no input, diagnostic-read, process-control or machine authority.
+Boot defaults to kernel presentation. This is private paired-image machinery,
+not a promoted application ABI.
+
+The ARM64 UART backend has no physical-input/presentation owner. It applies
+the same authority and argument checks, then returns not implemented (-38)
+for a valid presentation request. Ordinary ARM64 diagnostics stay enabled;
+this interface does not establish an ARM64 local console.
+
+Init claims managed presentation before constructing the served local UI,
+and retains it through read-only maintenance. Ordinary kernel diagnostics
+continue into the bounded ring but are not replayed unsolicited to COM1 or
+the framebuffer. Userspace Console writes, including init's selected terminal
+and maintenance rendering, still reach the display and do not feed the ring.
+No text parsing or escape-byte convention chooses this policy.
+
+Claim first bounds and accounts any pending transmit prefix before UI output.
+Init releases presentation for deliberate shutdown/reset; init exit or fault
+also restores kernel presentation. Kernel panic and kernel-exception reporting
+explicitly restore presentation before formatting fatal details. The existing
+lock-independent bounded raw fatal path remains independent of this mode.
+Headless and historical profiles that never claim ownership retain ordinary
+physical diagnostics. The console evidence digest covers presented bytes;
+retained-only kernel records are not silent UART losses.
+
+Local presentation starts only after init publishes the unfiltered worker
+startup prefix, recognizes its complete SSH LISTENING or LOCAL READY line,
+and subsequently drains FSD output to idle at complete-line boundaries. Raw
+FSD startup lines use one bounded Console write per complete line so another
+init record cannot split an anchored recovery witness. Oversize display lines
+are explicitly omitted; the service journal retains their original bytes.
+Physical input before this handoff is discarded except for read-only kernel
+maintenance selection. Maintenance remains available while startup is held.
+An unenrolled LOCAL READY can show the disabled-login view; presentation does
+not grant recovery authority or satisfy the host's network-ready predicate.
+
+After the handoff, ordinary service bytes continue into the journal while
+local display carries the selected terminal. The raw serial worker capture
+is then a startup prefix only: original offsets are preserved, physical
+framing never resumes after an omitted range, and no complete-stream END is
+emitted. Internal byte count/digest still cover all read service bytes. A
+non-local boot retains its full original framing and END contract. The frame
+formatter itself splits both stdout and stderr into at most 96-byte chunks.
+
+This boot-local mode does not establish live replacement. A successor would
+need to quiesce terminal input/output, reconcile the pending transmit prefix,
+validate and reconstruct the owner authority and presentation mode before
+commit, and explicitly retire the old generation. A native Rust layout or
+a numeric PID alone is not an authority-transfer protocol. No such transfer
+or post-effect rollback is qualified here.
+## Ordinary served limits
+
+The ordinary served profile has 32 process slots, 128 pipes and 32 cells.
+A single startup/spawn vector remains limited to 64 handle transfers; the
+per-process table is larger so init can assemble service channels before
+closing its copies. Diagnostic observation query 257 (v1 kind 4) reports the
+actual limits. Existing process rows still use queries 0 through the reported
+process count minus one; kind 3 remains reserved for NIC candidates.

@@ -8,6 +8,7 @@ pub use crate::stream::{
 use smoltcp::wire::Ipv6Address;
 pub mod channel;
 pub mod client;
+pub mod server;
 pub use channel::Channel;
 pub use client::Client;
 #[cfg(test)]
@@ -49,6 +50,8 @@ struct Entry {
     connected: bool,
     write_closed: bool,
     peer_finished: bool,
+    inbound: bool,
+    accepted: bool,
 }
 pub(crate) struct Endpoints {
     instance: u64,
@@ -142,6 +145,8 @@ impl<L: Link> Stack<L> {
             connected: false,
             write_closed: false,
             peer_finished: false,
+            inbound: false,
+            accepted: false,
         };
         let slot = if let Some(slot) = vacant {
             self.ipv6_streams.entries[slot] = entry;
@@ -157,7 +162,8 @@ impl<L: Link> Stack<L> {
         })
     }
     fn ipv6_stream_live(&mut self) -> Result<(), Error> {
-        let result = match self.read_link() {
+        let reading = self.read_link();
+        let result = match reading {
             None => Err(Error::LinkUnknown),
             Some(r) if r.disabled => Err(Error::DeviceFailed),
             Some(r) if !r.link_up => Err(Error::LinkDown),
@@ -166,7 +172,11 @@ impl<L: Link> Stack<L> {
         if result.is_err() {
             self.ipv6_fence();
             self.stream_fence();
-            self.datagram_fence();
+            if let Some(error) = crate::datagram::link_error(reading) {
+                self.datagram_link_fence(error);
+            } else {
+                self.datagram_fence();
+            }
         }
         result
     }
@@ -178,9 +188,15 @@ impl<L: Link> Stack<L> {
         if let Some(error) = entry.error {
             return Err(error);
         }
+        if entry.inbound && !entry.accepted {
+            return Err(Error::Again);
+        }
         Ok(endpoint.slot)
     }
     pub fn ipv6_stream_connect(&mut self, endpoint: Endpoint) -> Result<Status, Error> {
+        if self.ipv6_streams.entry(endpoint)?.inbound {
+            return Err(Error::Invalid);
+        }
         let slot = self.ipv6_stream_checked(endpoint)?;
         if self.ipv6_streams.entries[slot].started.is_none() {
             let grant = self.ipv6_streams.entries[slot].grant;
@@ -288,6 +304,9 @@ impl<L: Link> Stack<L> {
         Ok(())
     }
     fn ipv6_stream_retire(&mut self, endpoint: Endpoint, abort: bool) -> Result<(), Error> {
+        if self.ipv6_streams.entry(endpoint)?.inbound {
+            return self.ipv6_server_retire(endpoint, abort);
+        }
         self.ipv6_streams.entry(endpoint)?;
         let e = &mut self.ipv6_streams.entries[endpoint.slot];
         e.live = false;
@@ -314,8 +333,12 @@ impl<L: Link> Stack<L> {
     }
     /// Local fencing discards queues; it cannot recall externally emitted data.
     pub fn ipv6_stream_fence(&mut self) {
+        self.port.ipv6_server_rules.fill(None);
         self.port.ipv6_tcp_peers.fill(None);
         for e in &mut self.ipv6_streams.entries {
+            if e.inbound {
+                e.error.get_or_insert(Error::Stale);
+            }
             e.live = false;
             if let Some(h) = e.socket.take() {
                 self.sockets.remove(h);
@@ -324,8 +347,12 @@ impl<L: Link> Stack<L> {
         }
     }
     pub(crate) fn ipv6_stream_maintain(&mut self, after_poll: bool) {
+        self.ipv6_server_maintain(after_poll);
         let now = self.port.link.now_ms();
         for (slot, e) in self.ipv6_streams.entries.iter_mut().enumerate() {
+            if e.inbound {
+                continue;
+            }
             let mut aborted_now = false;
             let boundary = if now < e.last_ms {
                 Some(Error::Clock)

@@ -556,7 +556,9 @@ impl<L: Link> Owner<L> {
             stats: Stats::default(),
             // DHCP acquisition grants no inbound application listener.
             server_rules: [None; crate::stream::MAX_ENDPOINTS],
+            ipv6_server_rules: [None; crate::ipv6::stream::MAX_ENDPOINTS],
             feedback: icmp::Feedback::new(mac),
+            tcp_mtu: crate::stream::mtu::Feedback::new(mac),
             ipv6_feedback: ipv6::feedback::Feedback::new(mac),
             // Acquisition has no IPv6 owner configuration or peer grants.
             ipv6_config: None,

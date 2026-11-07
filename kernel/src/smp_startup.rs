@@ -142,17 +142,7 @@ pub fn finish(pid: u64, mapping: (u64, usize, u64)) {
     if crate::smp_app_pressure::startup_mode() {
         finish_multicore(pid);
     }
-    crate::smp_user::startup_stop();
-    let start = unsafe { core::arch::x86_64::_rdtsc() };
-    while !crate::smp_user::startup_quiescent() {
-        assert!(
-            unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start) < 1 << 34,
-            "startup departure fence"
-        );
-        crate::smp_user::idle_wait();
-    }
-    crate::kernel_lock::assert_held(0);
-    crate::smp_user::startup_assert_fence();
+    wait_for_departure();
     unsafe {
         assert_eq!(crate::vm::frames().frames_owned_by(pid as u32), 0);
         assert!(crate::sched::object_tables_empty());
@@ -225,13 +215,16 @@ fn begin_multicore() -> u64 {
     1
 }
 
-fn finish_multicore(pid: u64) -> ! {
-    assert_eq!(pid, 1);
-    crate::smp_app_pressure::app_end();
-    crate::serial::write("SMP STARTUP INTERVAL END phase=device-probe\n");
+fn wait_for_departure() {
     crate::smp_user::startup_stop();
     let start = unsafe { core::arch::x86_64::_rdtsc() };
-    while !crate::smp_user::startup_quiescent() {
+    loop {
+        // An actor can sleep after observing the old stop word. Once every AP
+        // is idle, only this BSP continuation can publish its due wake and IPI.
+        crate::sched::drain_startup();
+        if crate::smp_user::startup_quiescent() {
+            break;
+        }
         assert!(
             unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start) < 1 << 34,
             "startup departure fence"
@@ -240,6 +233,13 @@ fn finish_multicore(pid: u64) -> ! {
     }
     crate::kernel_lock::assert_held(0);
     crate::smp_user::startup_assert_fence();
+}
+
+fn finish_multicore(pid: u64) -> ! {
+    assert_eq!(pid, 1);
+    crate::smp_app_pressure::app_end();
+    crate::serial::write("SMP STARTUP INTERVAL END phase=device-probe\n");
+    wait_for_departure();
     let actors = crate::smp_app_pressure::reservation() as usize;
     let pids = unsafe { *core::ptr::addr_of!(PIDS) };
     assert!(pids[actors..].iter().all(|pid| *pid == 0));

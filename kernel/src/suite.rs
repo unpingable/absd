@@ -36,6 +36,50 @@ const MIN_STRESS_SPAWNS: u64 = 200;
 /// The boot fails if any kernel stack came within this margin of overflow.
 const KERNEL_STACK_MARGIN: u64 = 2048;
 
+// Exact default-suite refusal ledger. Keep workload terms separate: this is
+// independent of the serial counter observed at the end of a boot.
+fn smoke_handle_refusals(reserve: u64) -> u64 {
+    use absd_kernel::syscall::{MAX_PROCESS_SLOTS, MAX_SPAWN_HANDLES};
+    let demonstration = 5 + 2 + 1 + 2; // hello-a, cell, bogus spawn, readonly
+    let multi = 2 + 2 * 2 + 2; // source/escalation, two ordinary children, composition
+    let lifetime = 8 * (1 + 1 + 2 + 1); // escalation, stale close, child rights, holder
+    let capture_and_reap = 3 + 1 + 1 + 3; // capture, napper, killed, FPU/closed
+    let maximum_vector = 2 * MAX_SPAWN_HANDLES as u64;
+    let handle_and_process_rights = 7 + 8;
+    let console_supervision_recovery = 2 + 6 * 2 + 8;
+    let client_reaps =
+        1 + 9 + (MAX_PROCESS_SLOTS as u64 - 2 - reserve) + (MAX_PROCESS_SLOTS as u64 - 3 - reserve);
+    let client_rights = 2 + 9 * 2;
+    let adoption_input_pipe_info = 2 + 3 + 2 + 2;
+    let machine_rights = 10 + 2 * 5;
+    demonstration
+        + multi
+        + lifetime
+        + capture_and_reap
+        + maximum_vector
+        + handle_and_process_rights
+        + console_supervision_recovery
+        + client_reaps
+        + client_rights
+        + adoption_input_pipe_info
+        + machine_rights
+        + smoke_pipe_pressure_handle_refusals()
+}
+
+fn smoke_pipe_pressure_handle_refusals() -> u64 {
+    // All other objects are closed; init retains Console and Machine. The
+    // syscall checks handle vacancy before global object-table availability.
+    if absd_kernel::syscall::MAX_PROCESS_HANDLES - 2 <= absd_kernel::object::MAX_PIPES {
+        3 * 2
+    } else {
+        0
+    }
+}
+
+fn smoke_pipe_pressure_object_refusals() -> u64 {
+    3 * 2 - smoke_pipe_pressure_handle_refusals()
+}
+
 /// Evaluates the whole boot once no process can run. The kernel-owned init
 /// process must have exited cleanly and every process-owned frame must have
 /// been returned.
@@ -46,6 +90,10 @@ pub unsafe fn finish_process_suite() -> ! {
     crate::smp_user::pressure_finish();
 
     unsafe {
+        #[cfg(target_arch = "x86_64")]
+        let operator = crate::smp_operator::enabled();
+        #[cfg(not(target_arch = "x86_64"))]
+        let operator = false;
         crate::sched::flush_rt_trace();
         let stats = stats();
         let frames = vm::frames();
@@ -159,7 +207,9 @@ pub unsafe fn finish_process_suite() -> ! {
                 || allocated != stats.frame_baseline
                 || table.occupied_count() != 0
                 || !object_tables_empty()
-                || (crate::kernel_lock::active() && crate::smp_fixture::wait_cases() != 5)
+                || (crate::kernel_lock::active()
+                    && !operator
+                    && crate::smp_fixture::wait_cases() != 5)
                 || (boot_mode() == BootMode::SmpLifecycle
                     && (crate::smp_fixture::drained() != 4
                         || crate::smp_fixture::stop_trace_count() != 4
@@ -173,6 +223,8 @@ pub unsafe fn finish_process_suite() -> ! {
                 serial::write(" WORKLOAD FAILED\n");
                 crate::exit_qemu(1);
             }
+            #[cfg(target_arch = "x86_64")]
+            crate::smp_operator::retire();
             serial::write(label);
             serial::write(" WORKLOAD OK\n");
             if boot_mode() == BootMode::SmpLifecycle {
@@ -266,16 +318,16 @@ pub unsafe fn finish_process_suite() -> ! {
                 || table.occupied_count() != 0
                 || !object_tables_empty()
                 || stats.faults != 46
-                || stats.kills != 21
+                || stats.kills != 37
                 || stats.preempts < 2
                 || stats.unknown_refusals < 100_004
                 || stats.pointer_refusals != 17
-                || stats.handle_refusals != 33
+                || stats.handle_refusals != 34
                 || stats.wait_refusals != 2
                 || stats.spawn_refusals != 1
                 || stats.map_refusals != 12
                 || stats.cell_refusals != 1
-                || stats.pipe_refusals != 1
+                || stats.pipe_refusals != 0
                 || stats.timeouts != 2
             {
                 serial::write("HOSTILE FAILED\n");
@@ -492,16 +544,22 @@ pub unsafe fn finish_process_suite() -> ! {
             && stats.pipe_waits >= 1
             && stats.pipe_wakeups <= stats.pipe_waits
             && stats.pipe_wakeups + stats.timeouts >= stats.pipe_waits
-            // Pipe-capacity pressure likewise reaches two boundaries in each
-            // of three allocation/free cycles.
-            && stats.pipe_refusals == 3 * 2
+            // Each pipe cycle reaches the first of the handle/object bounds.
+            && stats.pipe_refusals == smoke_pipe_pressure_object_refusals()
             && stats.sleeps >= 1
             && stats.timeouts == 13
             && stats.idle_entries >= 1;
         // stack-grow crosses nine lazy boundaries from the initial two mapped
-        // pages; overflow independently maps every remaining reserved
-        // page before faulting on the permanent guard.
-        let stack = stats.stack_grows == 9 + (USER_STACK_MAX_PAGES - USER_STACK_PAGES) as u64;
+        // pages; overflow independently maps every remaining reserved page
+        // before faulting on the permanent guard. No ordinary program grows
+        // its stack, so the total stays exact (smoke checks the same total).
+        // The terminal-derived audit must also conserve every committed page
+        // and attribute exactly one of each probe.
+        let overflow_pages = (USER_STACK_MAX_PAGES - USER_STACK_PAGES) as u64;
+        let stack = stats.stack_grows == 9 + overflow_pages
+            && stats
+                .stack_growth_audit
+                .passes(stats.stack_grows, stats.spawns, overflow_pages);
         let abi = stats.writes >= 5
             // The fuzz-free suite's one unknown number, and init's call of
             // the retired `stop` (28).
@@ -511,34 +569,53 @@ pub unsafe fn finish_process_suite() -> ! {
             // the pipe-info check adds two bad record pointers and init's
             // frame-stats probe one.
             && stats.pointer_refusals == 4 + 3 + 2 + 1
-            // Handle-capacity pressure adds seven refusals. Process-rights
-            // checks add eight, including three stale handles after reap.
-            // The two child-console probes each refuse one inherited read.
-            // Six supervised workers each prove their
-            // narrowed cell rights and consumed process handle are enforced;
-            // eight recovery workers each prove their consumed process handle;
-            // the surviving-client workload does the same for its client,
-            // nine service workers, fourteen full-capacity fillers, and
-            // thirteen headroom fillers; its client also proves two denied
-            // writes and each worker proves two more;
-            // PID 1 proves an adopted PID is not info/kill authority, then
-            // handle-pressure adoption adds one full duplicate and two
-            // full-table object-creation refusals. The input-stream child
-            // proves its input is read-only and captured console write-only.
-            // The pipe-info check refuses an unknown and a stale handle.
-            // The machine-right check refuses ten attempts in init (a
-            // right outside the kind; stop and restart through the wrong
-            // narrowed copy; recover through the stop-only and the
-            // restart-only copy; stop and restart through the recover-only
-            // copy; recover, and stop, with no handle; stop with the wrong
-            // kind) and five in each of its two probe children (stop,
-            // restart, and recover through init's handle value; recover and
-            // stop through the handle handed to it). Neither the PID nor the
-            // boot mode is consulted, so every refusal is a handle refusal.
+            // The ledger expands every workload and derives filler/vector
+            // counts from their actual bounds; no observed total is copied.
             && stats.handle_refusals
-                == 67 + 7 + 8 + 2 + 6 * 2 + 8 + (37 - 2 * crate::smp_user::pressure_reservation()) + 20 + 2 + 3 + 2 + 2 + 10 + 2 * 5
+                == smoke_handle_refusals(crate::smp_user::pressure_reservation())
             && stats.preempts >= 2;
         if !reclaimed || !bounded || !lifecycle || !stack || !abi {
+            // Which predicate failed, and the stack audit behind `stack`;
+            // printed only on failure so passing serial output is unchanged.
+            serial::write("SUITE PREDICATES");
+            for (name, passed) in [
+                (" reclaimed=", reclaimed),
+                (" bounded=", bounded),
+                (" lifecycle=", lifecycle),
+                (" stack=", stack),
+                (" abi=", abi),
+            ] {
+                serial::write(name);
+                serial::decimal(u64::from(passed));
+            }
+            serial::write(" stack_observed=");
+            serial::decimal(stats.stack_grows);
+            serial::write(" stack_accounted=");
+            serial::decimal(stats.stack_growth_audit.terminal_pages);
+            serial::write("\n");
+            serial::write("STACK AUDIT");
+            for (name, value) in [
+                (" terminals=", stats.stack_growth_audit.terminals),
+                (" ordinary_pages=", stats.stack_growth_audit.ordinary_pages),
+                (" grow_probes=", stats.stack_growth_audit.grow_probes),
+                (
+                    " grow_probe_pages=",
+                    stats.stack_growth_audit.grow_probe_pages,
+                ),
+                (
+                    " overflow_probes=",
+                    stats.stack_growth_audit.overflow_probes,
+                ),
+                (
+                    " overflow_probe_pages=",
+                    stats.stack_growth_audit.overflow_probe_pages,
+                ),
+                (" invalid=", u64::from(stats.stack_growth_audit.invalid)),
+            ] {
+                serial::write(name);
+                serial::decimal(value);
+            }
+            serial::write("\n");
             serial::write("USER PROCESS SUITE FAILED\n");
             crate::exit_qemu(1);
         }

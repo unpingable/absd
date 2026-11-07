@@ -127,12 +127,21 @@ through either spawn ABI.
 ```
 make block-probe-test                  # ATA PIO (the default attach)
 make block-probe-test BLOCK_DEVICE=nvme
+make block-probe-test BLOCK_DEVICE=ahci
 make nvme-test
+make ahci-test
 ```
 
 At every boot the kernel probes NVMe first and falls back to ATA PIO; NVMe is
-written only when the boot names the controller (`nvme-write=SERIAL`). Both
-backends move 1..=8 sectors per command (syscalls 43/44).
+written only when the boot names the controller (`nvme-write=SERIAL`). A boot
+that names a SATA disk (`ahci-disk=SERIAL` read-only, `ahci-write=SERIAL`
+writable) uses that AHCI disk and nothing else
+(docs/hardware/SATA-AHCI-BLOCK.md). Every backend moves 1..=8 sectors per
+command (syscalls 43/44). `block-partition=GUID` makes the selected disk's
+GPT partition with that unique GUID the device: block_info is its length
+and every LBA is relative to its first sector; a partition that cannot be
+validated leaves no device, never the whole disk
+(docs/hardware/GPT-PARTITION.md, `make gpt-partition-test`).
 
 Attaches a zero-filled 2 MiB raw image on the primary IDE channel and runs
 the userspace block probe: sector writes and reads, the device flush, range

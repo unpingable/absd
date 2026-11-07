@@ -18,3 +18,8 @@ absd-release = { path = "../release" }
 # The C kit's entry: route `main` through a C-defined `__absd_program_main`
 # with a NULL-terminated envp. Off for every Rust executable.
 c-entry = []
+
+native-pcm-experiment = ["absd-broker/native-pcm-experiment"]
+
+# Private SSH demo: one exact Doom child may receive the boot grant.
+native-pcm-delegate = ["native-pcm-experiment"]

@@ -1,0 +1,100 @@
+.\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
+.Dd November 5, 2026
+.Dt ABSD-SFTP 8
+.Os ABSD
+.Sh NAME
+.Nm absd-sftp
+.Nd bounded SSH file transfer subsystem
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The SSH server starts
+.Nm
+for an authenticated
+.Li sftp
+subsystem request without a terminal.
+It uses the session's filesystem access and ends when the connection ends.
+It has no separate listener or configuration file.
+Relative paths and the empty path start at
+.Pa /home/operator .
+.Pp
+Run OpenSSH's clients on the client computer, using the same login key,
+host key pinning, and reachable endpoint as the SSH login.
+Replace HOST and PORT below with that endpoint:
+.Bd -literal -offset indent
+$ sftp -P PORT -i operator-key operator@HOST
+sftp> put local.bin /home/operator/remote.bin
+sftp> get /home/operator/remote.bin returned.bin
+sftp> quit
+$ scp -P PORT -i operator-key local.bin operator@HOST:/home/operator/remote.bin
+$ scp -P PORT -i operator-key operator@HOST:/home/operator/remote.bin returned.bin
+.Ed
+.Pp
+For a headless host, use the established authenticated access path.
+A host-local loopback address is usable only on the computer where the
+forwarded port actually listens.
+No terminal should be allocated for file transfers.
+Check important transfers with
+.Xr sha256sum 1 .
+.Ss Supported requests
+SFTP version 3: open, positional read and write, close, file attributes,
+directory open and listing, mkdir, rmdir, remove, rename, and realpath.
+Size-only attribute updates truncate or extend a writable file.
+This includes the final size update used by ordinary modern
+.Nm scp
+when replacing a longer destination with a shorter or empty file.
+Rename refuses an existing destination without replacing it.
+Realpath can resolve a missing final name when its existing parent resolves;
+that response establishes neither existence nor access to the final name.
+.Pp
+Creation permission attributes are advisory.
+Reported mode bits describe object type and readonly state;
+filesystem mounts determine access.
+The session cannot read
+.Pa /ssh
+or write through readonly mounts such as
+.Pa /etc .
+See
+.Xr filesystem 7
+and
+.Xr handles 7 .
+.Ss Limits and refusals
+Requests contain at most 256 KiB; individual reads and writes at most
+64 KiB.
+Write ranges and size updates are limited to 64 MiB.
+Reads may seek beyond that limit and return EOF at the end of the file.
+Paths are UTF-8, at most 4096 bytes, without NUL; components are limited
+by the filesystem to 255 bytes.
+A session holds at most 16 file or directory handles.
+Directory replies carry at most 64 entries.
+.Pp
+APPEND, ownership or permission changes, timestamp preservation,
+link operations, and vendor extensions are unsupported.
+Operations that request unsupported attribute changes are refused before
+applying any size change.
+Preserving modes or times with client
+.Fl p
+options is not supported.
+Recursive clients that request directory-mode restoration also receive
+a refusal for that metadata update.
+Legacy
+.Nm scp
+with
+.Fl O
+is not served.
+Unsupported requests receive an SFTP status; malformed or oversized streams
+may be closed after a refusal.
+.Ss Interrupted uploads
+An interrupted upload can leave a partial destination.
+A successful writable close synchronizes the file before acknowledgment.
+A disconnect ends the worker and releases its filesystem handles;
+it does not make an upload transactional.
+.Sh EXIT STATUS
+.Ex -std
+An invalid protocol stream or filesystem stream error exits 1.
+Unexpected command arguments exit 2.
+.Sh SEE ALSO
+.Xr afterboot 8 ,
+.Xr filesystem 7 ,
+.Xr handles 7 ,
+.Xr sha256sum 1

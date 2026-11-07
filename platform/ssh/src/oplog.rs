@@ -1,123 +1,132 @@
-//! sshd's diagnostics. Every line goes to stderr as before (in a boot,
-//! init relays it to the serial console as framed output); on ABSD it is
-//! also appended to `/var/log/sshd` through the file server's control
-//! channel, stamped with the RTC's UTC second (`absd_fsd::log`: bounded by
-//! rotation to `/var/log/sshd.0`; a refused write drops lines and says how
-//! many). sshd writes it itself: there is no log daemon. Lines wait in
-//! memory until the main loop calls [`flush`]; at most 16
-//! KiB wait (`QUEUE_LIMIT`), and lines beyond that are dropped and
-//! counted.
-
-/// Logs one line (`say!`).
+//! SSH diagnostics use ordinary stdout for known routine information and
+//! stderr for failures and unclassified events. Init captures both streams with its
+//! trusted service/PID label; FSD's collector persists it and maintains the
+//! legacy /var/log/sshd projection. The producer never synchronously opens,
+//! rotates or writes a log through the very service it is diagnosing.
 pub fn line(text: String) {
     eprintln!("{text}");
-    #[cfg(target_os = "absd")]
-    file::queue(&text);
+}
+
+/// Known routine information. Init assigns info priority from stdout;
+/// producer text cannot forge the trusted service/PID metadata.
+pub fn info(text: String) {
+    println!("{text}");
+}
+
+pub fn session_exit(prefix: &str, exit: crate::conn::Exit) {
+    let text = format!("{prefix} session child exited: {exit:?}");
+    match exit {
+        crate::conn::Exit::Code(0) => info(text),
+        _ => line(text),
+    }
+}
+
+/// Reporting only: Ending keeps ownership of wait/kill/release decisions.
+#[cfg_attr(not(target_os = "absd"), allow(dead_code))]
+pub fn ending_result(
+    pid: u32,
+    sent: bool,
+    took: u128,
+    read: i64,
+    result: std::io::Result<std::process::ExitStatus>,
+) {
+    match result {
+        Ok(status) => {
+            let text = format!(
+                "SSH SESSION END pid={pid} sent={} exited=true forced=false ms={took} read={read}",
+                u8::from(sent)
+            );
+            if status.success() {
+                info(text)
+            } else {
+                line(text)
+            }
+        }
+        Err(error) => line(format!(
+            "SSH SESSION END pid={pid} sent={} exited=unknown forced=false ms={took} read={read} wait_error={error}",
+            u8::from(sent)
+        )),
+    }
 }
 
 #[cfg(target_os = "absd")]
-pub use file::{flush, notice, open};
-
+pub fn open() {}
 #[cfg(target_os = "absd")]
-mod file {
-    use std::cell::RefCell;
-    use std::fs::{File, OpenOptions};
-    use std::io::{Seek, SeekFrom, Write};
+pub fn flush() {}
 
-    use absd_fsd::log::{self as policy};
+/// Existing control notices remain for the file-server test controls and
+/// console announcements. They have a finite transport budget; diagnostic
+/// persistence itself never depends on this round trip.
+#[cfg(target_os = "absd")]
+pub fn notice(text: &str) {
     use absd_fsd::proto::{Frame, MAX_NOTICE, op};
+    line(text.to_string());
+    let bytes = &text.as_bytes()[..text.len().min(MAX_NOTICE)];
+    let _ = absd_runtime::fsd::request_on_within(
+        0,
+        Frame::request(op::NOTICE).bytes(bytes).finish(),
+        100,
+    );
+}
 
-    pub const PATH: &str = "/var/log/sshd";
-    const QUEUE_LIMIT: usize = 16 * 1024;
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
 
-    struct Writer {
-        file: Option<File>,
-        size: u64,
-        opened: bool,
-        pending: Vec<u8>,
-        dropped: u64,
-    }
-
-    thread_local! {
-        static WRITER: RefCell<Writer> =
-            const { RefCell::new(Writer { file: None, size: 0, opened: false, pending: Vec::new(), dropped: 0 }) };
-    }
-
-    pub fn queue(text: &str) {
-        let text = text.strip_prefix("sshd: ").unwrap_or(text);
-        let line = policy::line(absd_runtime::wall_clock_seconds().ok(), "sshd", text);
-        WRITER.with_borrow_mut(|w| {
-            if w.pending.len() + line.len() > QUEUE_LIMIT {
-                w.dropped += 1;
-            } else {
-                w.pending.extend_from_slice(&line);
-            }
-        });
-    }
-
-    /// Starts writing the file (after the control channel is known good).
-    pub fn open() {
-        WRITER.with_borrow_mut(|w| w.opened = true);
-        flush();
-    }
-
-    fn reopen(w: &mut Writer, rotate: bool) -> std::io::Result<()> {
-        w.file = None;
-        if rotate {
-            std::fs::rename(PATH, format!("{PATH}.0"))?;
+    #[test]
+    fn captured_actual_reporting_distinguishes_success_failure_and_unknown_wait() {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "oplog::tests::emit_actual_reporting",
+                "--nocapture",
+            ])
+            .env("ABSD_OPLOG_TEST_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        let out = String::from_utf8(result.stdout).unwrap();
+        let err = String::from_utf8(result.stderr).unwrap();
+        for expected in [
+            "routine explicit info",
+            "conn-zero session child exited: Code(0)",
+            "pid=41 sent=1 exited=true",
+        ] {
+            assert!(out.contains(expected), "missing info: {expected}");
+            assert!(!err.contains(expected), "info became warning: {expected}");
         }
-        let mut file = OpenOptions::new().write(true).create(true).open(PATH)?;
-        w.size = file.seek(SeekFrom::End(0))?;
-        w.file = Some(file);
-        Ok(())
-    }
-
-    fn write(w: &mut Writer, bytes: &[u8]) -> std::io::Result<()> {
-        if w.file.is_none() {
-            reopen(w, false)?;
+        for expected in [
+            "unclassified stays warning",
+            "conn-seven session child exited: Code(7)",
+            "conn-abnormal session child exited: Abnormal",
+            "pid=42 sent=1 exited=true",
+            "pid=43 sent=1 exited=unknown",
+            "wait_error=wait refused",
+        ] {
+            assert!(err.contains(expected), "missing warning: {expected}");
+            assert!(!out.contains(expected), "warning became info: {expected}");
         }
-        if policy::must_rotate(w.size, bytes.len()) {
-            reopen(w, true)?;
+    }
+
+    #[test]
+    fn emit_actual_reporting() {
+        if std::env::var_os("ABSD_OPLOG_TEST_CHILD").is_none() {
+            return;
         }
-        let file = w.file.as_mut().expect("opened");
-        file.write_all(bytes)?;
-        w.size += bytes.len() as u64;
-        Ok(())
-    }
-
-    /// Writes what waits. Cheap when nothing does.
-    pub fn flush() {
-        WRITER.with_borrow_mut(|w| {
-            if !w.opened || (w.pending.is_empty() && w.dropped == 0) {
-                return;
-            }
-            let mut out = Vec::new();
-            if w.dropped > 0 {
-                out = policy::line(
-                    absd_runtime::wall_clock_seconds().ok(),
-                    "sshd",
-                    &format!("log: {} lines dropped", w.dropped),
-                );
-            }
-            out.append(&mut w.pending);
-            match write(w, &out) {
-                Ok(()) => w.dropped = 0,
-                Err(error) => {
-                    // Dropped, and counted by line; the file is opened
-                    // again next time.
-                    w.dropped += out.iter().filter(|&&b| b == b'\n').count() as u64;
-                    w.file = None;
-                    eprintln!("sshd: {PATH}: {error}; lines dropped");
-                }
-            }
-        });
-    }
-
-    /// A line for the machine's console, which only the file server has
-    /// (its `NOTICE`, control channel only); logged as well.
-    pub fn notice(text: &str) {
-        super::line(text.to_string());
-        let bytes = &text.as_bytes()[..text.len().min(MAX_NOTICE)];
-        let _ = absd_runtime::fsd::request_on(0, Frame::request(op::NOTICE).bytes(bytes).finish());
+        info("routine explicit info".into());
+        line("unclassified stays warning".into());
+        session_exit("conn-zero", crate::conn::Exit::Code(0));
+        session_exit("conn-seven", crate::conn::Exit::Code(7));
+        session_exit("conn-abnormal", crate::conn::Exit::Abnormal);
+        ending_result(41, true, 2, 0, Ok(std::process::ExitStatus::from_raw(0)));
+        ending_result(
+            42,
+            true,
+            2,
+            0,
+            Ok(std::process::ExitStatus::from_raw(7 << 8)),
+        );
+        ending_result(43, true, 2, 0, Err(std::io::Error::other("wait refused")));
     }
 }

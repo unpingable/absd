@@ -44,11 +44,13 @@ UPDATE = "--update" in sys.argv[1:]
 # Every case's working directory. older.txt is older than words.txt
 # (mtimes set explicitly: test -nt); dir/ is an empty directory.
 FIXTURES = {
+    "toolbox.txt": "abc  123\nété\n".encode(),
     "words.txt": b"b\na\na\nc\nc\nc\n",
     "words2.txt": b"b\na\nx\nc\nc\nc\n",
     "words-short.txt": b"b\na\na\n",
     "lines.txt": b"".join(b"line %d.%d\n" % (i, i) for i in range(1, 7)),
     "nums.txt": b"10\n9\n100\n-3\n9\n",
+    "sort-stock.csv": b"card,12\ncups,48\npens,24\ncard,18\ntape,3\nmarkers,6\n",
     "passwd.txt": b"root:x:0:0:root:/root:/bin/sh\noperator:x:1000:1000:operator:/home/operator:/bin/absd-sh\n"
                   b"daemon:x:1:1:daemon:/:/bin/false\n",
     "bin.dat": bytes(range(0, 40)),
@@ -98,6 +100,10 @@ def probe_rows():
     return rows
 
 
+def tree_directories(work):
+    return {str(p.relative_to(work)) for p in work.rglob("*") if p.is_dir()}
+
+
 def tree_files(work):
     return {str(p.relative_to(work)): p.read_bytes() for p in sorted(work.rglob("*")) if p.is_file()}
 
@@ -107,6 +113,8 @@ def run_case(cid, util, stdin, args):
     if work.exists():
         shutil.rmtree(work)
     (work / "dir").mkdir(parents=True)
+    if util == "rmdir":
+        (work / "empty-tree/child").mkdir(parents=True)
     for name, data in FIXTURES.items():
         (work / name).parent.mkdir(parents=True, exist_ok=True)
         (work / name).write_bytes(data)
@@ -119,7 +127,7 @@ def run_case(cid, util, stdin, args):
     # cports-matrix.py run their Linux twins the same way).
     r = subprocess.run([f"/bin/{util}", *args], executable=str(binary), cwd=work, env={}, input=data,
                        capture_output=True, timeout=30)
-    return format_result(r.returncode, r.stdout, r.stderr, tree_files(work), case_id=cid)
+    return format_result(r.returncode, r.stdout, r.stderr, tree_files(work), case_id=cid, directories=tree_directories(work))
 
 
 def tar_create_contents(data):
@@ -149,7 +157,7 @@ def tar_create_contents(data):
     return (json.dumps(rows,separators=(',',':'))+'\n').encode()
 
 
-def format_result(status, stdout, stderr, after, case_id=None):
+def format_result(status, stdout, stderr, after, case_id=None, directories=None):
     """A case's pin bytes: status, stdout, stderr and, when the case
     created, changed or removed a file of its directory (`after`: every
     file below it, relative name -> bytes), the "--- files" section.
@@ -169,6 +177,12 @@ def format_result(status, stdout, stderr, after, case_id=None):
                 out += b"removed %s\n" % n.encode()
             else:
                 out += b"file %s %d\n" % (n.encode(), len(after[n])) + after[n]
+    # New rmdir cases include directory post-state; legacy file-only cases
+    # keep their existing byte format. Missing observations fail closed.
+    if case_id and case_id.startswith("rmdir-"):
+        if directories is None:
+            raise ValueError("rmdir requires observed directory post-state")
+        out += b"--- directories\n" + b"".join(name.encode() + b"\n" for name in sorted(directories))
     return out
 
 

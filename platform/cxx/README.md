@@ -1,5 +1,7 @@
 # C++0: the bounded C++ runtime for ABSD
 
+For optional C++0 in the staged host SDK, see [the SDK guide](../docs/HOST-SDK.md).
+
 C++0 lets a C++ program be built for ABSD with the C kit
 ([`../c/README.md`](../c/README.md), contract
 [`../docs/C-INTERFACE.md`](../docs/C-INTERFACE.md)): libc++ and libc++abi
@@ -315,7 +317,7 @@ declarations; clang++ predefines `_GNU_SOURCE` for a glibc host) and
 `-DLLVM_ABSD_KIT=1`, which selects the port. Every executable, including
 CMake's configuration probes, is linked by `bin/absd-llvm-link`: the
 `absd-c++` link (ld.lld-17, `absd-c.ld`, crt0, libc++, libc++abi, then the
-kit's group headed by the POSIX adapter, as tcc's share `libc.a` has it)
+kit's group headed by the POSIX adapter)
 with `--icf=all`, refusing any link option it does not know. So a probe
 for a function the kit does not define fails to link and LLVM's
 `config.h` records what the kit really offers. (Clang's driver cannot be

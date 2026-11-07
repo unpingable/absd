@@ -5,6 +5,7 @@ import json
 import math
 import re
 from pathlib import Path
+from kernel_capacities import MAX_PROCESS_SLOTS
 
 U64 = (1 << 64) - 1
 PATHS = ('other', 'getpid', 'cell-read', 'cell-transition', 'cell-wait',
@@ -175,7 +176,7 @@ def check_lines(lines, cpus, leaf=False):
                 need(job in mapping and mapping[job]['pid'] == pid,
                      'supervisor activation does not match publication')
                 slot, gen = num(f, 'slot'), num(f, 'generation')
-                need(slot < 16 and (gen == 0 if cpus == 1 else gen > 0),
+                need(0 <= slot < MAX_PROCESS_SLOTS and (gen == 0 if cpus == 1 else gen > 0),
                      'supervisor slot/generation mismatch')
                 need(pid not in supervisor_gens and (cpus == 1 or gen not in family_generations)
                      and slot not in family_slots,
@@ -193,7 +194,7 @@ def check_lines(lines, cpus, leaf=False):
         need(set(f) == {'job', 'slot', 'pid', 'parent', 'cpu'}, 'native publication fields mismatch')
         job, slot, pid = (num(f, k) for k in ('job', 'slot', 'pid'))
         parent, cpu = num(f, 'parent'), num(f, 'cpu')
-        need(job in range(6) and job not in natives and slot < 16 and pid > 1
+        need(job in range(6) and job not in natives and 0 <= slot < MAX_PROCESS_SLOTS and pid > 1
              and parent == supervisors[job]['pid'] and cpu == job % cpus,
              'native publication identity/parent/placement mismatch')
         natives[job] = {'pid': pid, 'parent': parent, 'slot': slot, 'cpu': cpu, 'publish_i': i}

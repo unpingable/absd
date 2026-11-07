@@ -24,11 +24,22 @@ def git(*args):
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
 
 
+def document_dep_info(directory):
+    """Bind compiler dependency outputs at the successful application build."""
+    files = sorted(directory.glob("*.d"))
+    if not files or not any(p.name.startswith("https_document-") for p in files):
+        raise SystemExit("document build lacks target dependency outputs")
+    if any(p.is_symlink() or not p.is_file() for p in files):
+        raise SystemExit("document dependency output is not a regular file")
+    return {p.name: {"sha256": sha(p), "bytes": p.stat().st_size} for p in files}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--client-only", action="store_true")
     mode.add_argument("--service-only", action="store_true")
+    parser.add_argument("--document-app", action="store_true", help="build the configured document command, without fixture selectors or compiled trust")
     parser.add_argument("--ipv6", action="store_true", help="private static on-link IPv6 actor")
     parser.add_argument("--ipv6-routed", action="store_true", help="private explicit routed IPv6 actor")
     parser.add_argument("--client-receipt", type=Path, help="exact child build receipt for routed service-only mode")
@@ -36,6 +47,10 @@ def main():
     parser.add_argument("--cargo-home", required=True, type=Path)
     parser.add_argument("--receipt", required=True, type=Path)
     args = parser.parse_args()
+    if args.document_app:
+        if args.client_only or args.service_only or args.ipv6 or args.ipv6_routed or args.client_receipt:
+            parser.error("--document-app cannot select a fixture actor")
+        args.client_only = True
     if args.ipv6_routed:
         args.ipv6 = True
     if args.client_receipt is not None and not args.service_only:
@@ -52,22 +67,24 @@ def main():
             transport_profile.update(local="fd00:ab5d:1::15", router="fd00:ab5d:1::2",
                                      peer="fd00:ab5d:2::9", prefix_len=64,
                                      route="explicit exact-peer /128", profile="routed")
-    client_name = "https_get_ipv6" if args.ipv6 else "https_get"
+    client_name = "https_document" if args.document_app else ("https_get_ipv6" if args.ipv6 else "https_get")
     service_name = "tls_ipv6_service_probe" if args.ipv6 else "tls_service_probe"
     output_prefix = "https-ipv6" if args.ipv6 else "https"
     if args.receipt.exists():
         raise SystemExit("build receipt already exists; preserve it and choose a new receipt")
-    root_der = Path(os.environ["ABSD_TLS_ROOT_DER"])
-    if not root_der.is_absolute() or root_der.is_symlink():
-        raise SystemExit("public root must be an absolute regular file")
-    root_der = root_der.resolve()
-    if root_der.parent != ROOT / "fixtures/native-tls/pki" or root_der.suffix != ".der":
-        raise SystemExit("public root must use the declared generated certificate directory")
-    if not root_der.is_file() or not 0 < root_der.stat().st_size <= 4096:
-        raise SystemExit("public root size is invalid")
-    expected_root = os.environ["ABSD_TLS_ROOT_SHA256"]
-    if sha(root_der) != expected_root:
-        raise SystemExit("public root differs from the separately sealed PKI input")
+    root_der = expected_root = None
+    if not args.document_app:
+        root_der = Path(os.environ["ABSD_TLS_ROOT_DER"])
+        if not root_der.is_absolute() or root_der.is_symlink():
+            raise SystemExit("public root must be an absolute regular file")
+        root_der = root_der.resolve()
+        if root_der.parent != ROOT / "fixtures/native-tls/pki" or root_der.suffix != ".der":
+            raise SystemExit("public root must use the declared generated certificate directory")
+        if not root_der.is_file() or not 0 < root_der.stat().st_size <= 4096:
+            raise SystemExit("public root size is invalid")
+        expected_root = os.environ["ABSD_TLS_ROOT_SHA256"]
+        if sha(root_der) != expected_root:
+            raise SystemExit("public root differs from the separately sealed PKI input")
     target = json.loads((ROOT / "targets/x86_64-unknown-absd.json").read_text())
     if target["cpu"] != "x86-64" or target["features"] != "+sse,+sse2":
         raise SystemExit("fixture requires the literal generic x86-64 compile target")
@@ -93,6 +110,10 @@ def main():
                RUSTC=str(ROOT / "scripts/rustc-staged.sh"), RUSTC_BOOTSTRAP="1",
                RUST_TARGET_PATH=str(ROOT / "targets"), CARGO_TARGET_DIR=str(ROOT / "tls/target"),
                ABSD_TLS_ROOT_DER=str(root_der), ABSD_TLS_ROOT_SHA256=expected_root)
+    if args.document_app:
+        for key in ("ABSD_TLS_ROOT_DER", "ABSD_TLS_ROOT_SHA256", "ABSD_TLS_CLIENT_ELF",
+                    "ABSD_TLS_CASE", "ABSD_TLS_UNIX_SECONDS"):
+            env.pop(key, None)
     if args.ipv6:
         # Selection comes only from this explicit private build option, never
         # from an ambient environment value inherited by the builder.
@@ -181,9 +202,11 @@ def main():
                 raise SystemExit("reused child source/profile/root/executable differs")
         outputs[client_name] = {"path": str(client), "sha256": sha(client), "bytes": client.stat().st_size, "reused": True}
     else:
-        client = ROOT / (output_prefix + "-client.elf")
+        client = ROOT / "commands/https-document" if args.document_app else ROOT / (output_prefix + "-client.elf")
+        client.parent.mkdir(parents=True, exist_ok=True)
         build(client_name, client)
-    env["ABSD_TLS_CLIENT_ELF"] = str(client)
+    if not args.document_app:
+        env["ABSD_TLS_CLIENT_ELF"] = str(client)
     if args.ipv6:
         env["ABSD_TLS_IPV6_CLIENT_ELF"] = str(client)
     if not args.client_only:
@@ -192,12 +215,18 @@ def main():
                "source_tree": git("rev-parse", "HEAD^{tree}"), "tracked_dirty": False, "untracked_source": False,
                "service_selectors": {key: env.get(key) for key in ["ABSD_TLS_CASE", "ABSD_TLS_UNIX_SECONDS"]} if not args.client_only else None,
                "reused_client_sha256": outputs[client_name]["sha256"] if args.service_only else None,
-               "root_der": {"path": str(root_der), "sha256": expected_root, "bytes": root_der.stat().st_size, "generated_ignored_input": True},
+               "root_der": None if args.document_app else {"path": str(root_der), "sha256": expected_root, "bytes": root_der.stat().st_size, "generated_ignored_input": True},
                "cargo_lock_sha256": sha(ROOT / "tls/Cargo.lock"), "staged_std_source_sha256": std_hash, "target_sha256": sha(ROOT / "targets/x86_64-unknown-absd.json"),
                "ring_stage": json.loads((stage / "STAGE.json").read_text()), "removed_environment_names": removed,
-               "explicit_environment": {key: env[key] for key in ["CARGO_HOME", "CARGO_TARGET_DIR", "RUSTC", "ABSD_REAL_RUSTC", "ABSD_STAGED_SYSROOT", "RUSTC_BOOTSTRAP", "RUST_TARGET_PATH", "ABSD_PROFILE", "ABSD_TLS_ROOT_DER", "ABSD_TLS_ROOT_SHA256", "ABSD_TLS_CLIENT_ELF", "CC_x86_64_unknown_absd", "AR_x86_64_unknown_absd", "CRATE_CC_NO_DEFAULTS", "CFLAGS_x86_64_unknown_absd"]},
+               "explicit_environment": {key: env[key] for key in ["CARGO_HOME", "CARGO_TARGET_DIR", "RUSTC", "ABSD_REAL_RUSTC", "ABSD_STAGED_SYSROOT", "RUSTC_BOOTSTRAP", "RUST_TARGET_PATH", "ABSD_PROFILE", "ABSD_TLS_ROOT_DER", "ABSD_TLS_ROOT_SHA256", "ABSD_TLS_CLIENT_ELF", "CC_x86_64_unknown_absd", "AR_x86_64_unknown_absd", "CRATE_CC_NO_DEFAULTS", "CFLAGS_x86_64_unknown_absd"] if key in env},
                "native_c_toolchain": c_toolchain,
                "remap_config": remap_config, "outputs": outputs}
+    if args.document_app:
+        receipt["application"] = {"schema": "absd-https-document-build/1", "config": "/etc/https-document.conf",
+                                  "issuer": "/etc/https-issuer.der", "trust": "runtime direct issuer SPKI pin",
+                                  "fixture_selectors": False,
+                                  "target_dep_info": document_dep_info(
+                                      ROOT / "tls/target/x86_64-unknown-absd/release/deps")}
     if args.ipv6:
         receipt["transport_profile"] = transport_profile
         receipt["explicit_environment"].update({

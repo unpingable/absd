@@ -177,11 +177,36 @@ impl FixturePipe {
                         return Err(-110);
                     }
                     let (peer, scope, port) = self.family.peer_text(body).ok_or(-22i64)?;
-                    let extra = if self.family == Family::Ipv6 {
+                    let mut extra = if self.family == Family::Ipv6 {
                         format!(" family=6 scope={scope}")
                     } else {
                         String::new()
                     };
+                    if matches!(
+                        self.case_id,
+                        "Q04"
+                            | "Q06"
+                            | "Q21"
+                            | "Q22"
+                            | "Q23"
+                            | "Q24"
+                            | "Q25"
+                            | "Q26"
+                            | "Q27"
+                            | "Q28"
+                    ) || (self.case_id == "Q17" && self.family == Family::Ipv4)
+                    {
+                        let hash = ring::digest::digest(
+                            &ring::digest::SHA256,
+                            &body[self.family.header()..],
+                        );
+                        let mut text = String::with_capacity(64);
+                        use std::fmt::Write;
+                        for byte in hash.as_ref() {
+                            let _ = write!(text, "{byte:02x}");
+                        }
+                        extra.push_str(&format!(" sha256={text}"));
+                    }
                     println!(
                         "QUIC FIXTURE SEND case={} ordinal={} at_ms={} bytes={} peer_ip={} peer_port={}{}",
                         self.case_id, self.send_requests, now, length, peer, port, extra
@@ -217,15 +242,8 @@ impl FixturePipe {
                     return Err(-22);
                 }
                 if body[1] == d::RECEIVE && body[2] == 0 {
-                    let length = self.family.length(body).ok_or(-22i64)?;
-                    let max_datagram = match self.family {
-                        Family::Ipv4 => d::MAX_DATAGRAM,
-                        Family::Ipv6 => v6::MAX_DATAGRAM,
-                    };
-                    if body.len() != self.family.header() + length
-                        || length > max_datagram
-                        || self.rx_ordinal >= 256
-                    {
+                    let length = self.family.received_length(body).ok_or(-22i64)?;
+                    if self.rx_ordinal >= 256 {
                         return Err(-22);
                     }
                     self.rx_ordinal += 1;
@@ -328,6 +346,7 @@ struct Child {
     pipe: Option<FixturePipe>,
     result_reader: Handle,
     result: Vec<u8>,
+    result_eof: bool,
     killed: bool,
 }
 impl Child {
@@ -363,6 +382,9 @@ impl Child {
         let mut bytes = [0; 1024];
         match absd_runtime::read_within(self.result_reader.0, &mut bytes, 1) {
             Ok(length) => {
+                if length == 0 {
+                    self.result_eof = true;
+                }
                 if self
                     .result
                     .len()
@@ -410,7 +432,19 @@ fn spawn_child(
     let (mut parent_in, child_out) = pipe()?;
     let (result_reader, result_writer) = pipe()?;
     let (startup_reader, startup_writer) = pipe()?;
-    let copies = [
+    // Record startup requires at least five handles. For Q29, replace the
+    // absent protocol writer with an independent read-only zero step cell,
+    // rather than entering the legacy four-handle durable-boot shape.
+    let missing_output_step = if case.missing_output {
+        let raw = syscall(10, 0, 0, 0);
+        if raw < 0 {
+            return Err(format!("startup step cell {raw}"));
+        }
+        Some(Handle(raw as u64))
+    } else {
+        None
+    };
+    let mut copies = vec![
         [startup_reader.0, RIGHT_READ, 0],
         [child_in.0, RIGHT_READ, 0],
         [child_out.0, RIGHT_WRITE, 0],
@@ -419,6 +453,11 @@ fn spawn_child(
         // writer here would keep that pipe alive after NativeTransport drops.
         [result_writer.0, RIGHT_WRITE, 1],
     ];
+    if let Some(step) = &missing_output_step {
+        // STEP names this actual cell, never the absent protocol writer.
+        // The child can read its zero value but cannot transition it.
+        copies[2] = [step.0, RIGHT_READ, 0];
+    }
     let time = if case.missing_time {
         "none".into()
     } else {
@@ -438,6 +477,7 @@ fn spawn_child(
     let roles = if case.missing_output {
         vec![
             (absd_broker::role::STDIN, 1),
+            (absd_broker::role::STEP, 2),
             (absd_broker::role::STDERR, 3),
         ]
     } else {
@@ -489,6 +529,7 @@ fn spawn_child(
         }),
         result_reader,
         result: Vec::new(),
+        result_eof: false,
         killed: false,
     };
     // Parent copies of the child's protocol/result ends must disappear before
@@ -496,6 +537,7 @@ fn spawn_child(
     drop(startup_reader);
     drop(child_in);
     drop(child_out);
+    drop(missing_output_step);
     drop(result_writer);
     absd_runtime::write_within(startup_writer.0, &startup[..length], 1000)
         .map_err(|error| format!("startup write {error}"))?;
@@ -522,6 +564,55 @@ fn census(label: &str) -> Result<absd_runtime::ResourceCensus, String> {
     Ok(resources)
 }
 
+fn expire_grant<L: absd_net::Link>(
+    stack: &mut Stack<L>,
+    channel: &mut OwnedChannel,
+    child: &mut Child,
+    case: Case,
+    observed_ms: u64,
+    expiry_ms: u64,
+) {
+    channel.revoke(stack);
+    drop(child.pipe.take());
+    println!(
+        "QUIC SERVICE GRANT EXPIRED case={} observed_ms={} owner_expiry_ms={} revoked_ms={} pipe_live={} grant_live={} sockets={}",
+        case.id,
+        observed_ms,
+        expiry_ms,
+        absd_runtime::boot_millis(),
+        child.pipe.is_some(),
+        service_lifecycle::LiveGrant::live(channel),
+        stack.socket_count(),
+    );
+}
+
+// Q24 records actual guest nic_info observations, independently of the host
+// QMP acknowledgment. Diagnostic readings grant no endpoint authority.
+fn observe_link<L: absd_net::Link>(
+    stack: &Stack<L>,
+    case: Case,
+    previous: &mut Option<(bool, bool, bool)>,
+) {
+    if case.id != "Q24" {
+        return;
+    }
+    let state = match stack.read_link() {
+        Some(reading) => (true, reading.link_up, reading.disabled),
+        None => (false, false, false),
+    };
+    if *previous != Some(state) {
+        println!(
+            "QUIC FIXTURE LINK case={} at_ms={} present={} link_up={} disabled={}",
+            case.id,
+            absd_runtime::boot_millis(),
+            state.0,
+            state.1,
+            state.2,
+        );
+        *previous = Some(state);
+    }
+}
+
 fn selected_case<L: absd_net::Link>(
     stack: &mut Stack<L>,
     case: Case,
@@ -535,6 +626,11 @@ fn selected_case<L: absd_net::Link>(
     let service_deadline = expiry
         .checked_add(2000)
         .ok_or("service deadline overflow")?;
+    let mut link_observation = None;
+    observe_link(stack, case, &mut link_observation);
+    if case.id == "Q24" && link_observation != Some((true, true, false)) {
+        return Err("Q24 requires actual initial link up".into());
+    }
     let mut channel = OwnedChannel::grant(stack, family, case.local_port)?;
     println!(
         "QUIC SERVICE GRANT case={} before_ms={} constructed_ms={} owner_expiry_ms={} local_port={} peer_port={}",
@@ -548,6 +644,15 @@ fn selected_case<L: absd_net::Link>(
             Family::Ipv6 => IPV6_PEER.port,
         }
     );
+    let observe_filter = case.id == "Q18" && family == Family::Ipv4;
+    if observe_filter {
+        println!(
+            "QUIC SERVICE UDP_FILTER case={} phase=begin dropped={} at_ms={}",
+            case.id,
+            stack.stats().udp_grant_dropped,
+            absd_runtime::boot_millis()
+        );
+    }
     let mut child = match spawn_child(case, family, unix_seconds, expiry) {
         Ok(child) => child,
         Err(error) => {
@@ -570,14 +675,10 @@ fn selected_case<L: absd_net::Link>(
             // dispatch. This observed-clock policy does not retract prior wire effects.
             if !owner_expired && checked >= expiry {
                 owner_expired = true;
-                channel.revoke(stack);
-                drop(child.pipe.take());
-                println!(
-                    "QUIC SERVICE GRANT EXPIRED case={} observed_ms={} owner_expiry_ms={}",
-                    case.id, checked, expiry
-                );
+                expire_grant(stack, &mut channel, &mut child, case, checked, expiry);
             }
             service_lifecycle::poll_if_granted(stack, &channel, queue_held);
+            observe_link(stack, case, &mut link_observation);
             if let Some(pipe) = &mut child.pipe {
                 if !channel.poll(stack, pipe) {
                     drop(child.pipe.take());
@@ -637,13 +738,78 @@ fn selected_case<L: absd_net::Link>(
                 }
             }
             if let Some(record) = child.wait(1)? {
+                let reaped_ms = absd_runtime::boot_millis();
+                observe_link(stack, case, &mut link_observation);
+                let interrupt_reaped_ms = case.interrupt_phase.map(|_| reaped_ms);
+                // A wait can cross the owner deadline after the loop's earlier
+                // clock check. Record the same actual revocation before exit;
+                // never renew the child's operation deadline or dispatch again.
+                if case.id == "Q23" && !owner_expired && reaped_ms >= expiry {
+                    owner_expired = true;
+                    expire_grant(stack, &mut channel, &mut child, case, reaped_ms, expiry);
+                }
                 channel.revoke(stack);
                 drop(child.pipe.take());
                 while child.read_report()? != 0 {}
+                if let Some(reaped_ms) = interrupt_reaped_ms {
+                    println!(
+                        "QUIC CHILD INTERRUPT RETIRED case={} reaped_ms={} retired_ms={} process_handle_live={} pipe_live={} grant_live={} sockets={} result_eof={}",
+                        case.id,
+                        reaped_ms,
+                        absd_runtime::boot_millis(),
+                        child.process.is_some(),
+                        child.pipe.is_some(),
+                        service_lifecycle::LiveGrant::live(&channel),
+                        stack.socket_count(),
+                        child.result_eof,
+                    );
+                    if child.process.is_some()
+                        || child.pipe.is_some()
+                        || service_lifecycle::LiveGrant::live(&channel)
+                        || stack.socket_count() != 0
+                        || !child.result_eof
+                    {
+                        return Err("interrupted child authority or result EOF retained".into());
+                    }
+                }
+                if matches!(
+                    case.id,
+                    "Q23" | "Q24" | "Q25" | "Q26" | "Q27" | "Q28" | "Q29" | "Q30" | "Q31"
+                ) || (case.id == "Q17" && family == Family::Ipv4)
+                {
+                    println!(
+                        "QUIC CHILD AUTHORITY RETIRED case={} reaped_ms={} retired_ms={} process_handle_live={} pipe_live={} grant_live={} sockets={} result_eof={} owner_expired={}",
+                        case.id,
+                        reaped_ms,
+                        absd_runtime::boot_millis(),
+                        child.process.is_some(),
+                        child.pipe.is_some(),
+                        service_lifecycle::LiveGrant::live(&channel),
+                        stack.socket_count(),
+                        child.result_eof,
+                        owner_expired,
+                    );
+                    if child.process.is_some()
+                        || child.pipe.is_some()
+                        || service_lifecycle::LiveGrant::live(&channel)
+                        || stack.socket_count() != 0
+                        || !child.result_eof
+                    {
+                        return Err("child authority or result EOF retained".into());
+                    }
+                }
                 println!(
                     "QUIC CHILD EXIT case={} kind={} status={} killed={}",
                     case.id, record[0], record[1], child.killed
                 );
+                if observe_filter {
+                    println!(
+                        "QUIC SERVICE UDP_FILTER case={} phase=end dropped={} at_ms={}",
+                        case.id,
+                        stack.stats().udp_grant_dropped,
+                        absd_runtime::boot_millis()
+                    );
+                }
                 let text = String::from_utf8_lossy(&child.result);
                 print!(
                     "QUIC CONSUMER case={} begin\n{}QUIC CONSUMER case={} end\n",
@@ -764,6 +930,36 @@ fn run() -> Result<(), String> {
             absd_runtime::sleep_ticks(10);
         }
     }
+    if case.id == "Q20" {
+        let reading = link.read().ok_or("NIC reading unavailable")?;
+        if reading.disabled || !reading.link_up {
+            return Err("NIC link unavailable".into());
+        }
+        // Match the existing IPv6 fixture's bounded pre-grant settling.
+        // No Stack/network poll, grant or child deadline has begun here.
+        let nic_ready = absd_runtime::boot_millis();
+        let ready_after = nic_ready.checked_add(1100).ok_or("NIC setup overflow")?;
+        let setup_deadline = nic_ready.checked_add(3000).ok_or("NIC setup overflow")?;
+        let mut previous = nic_ready;
+        loop {
+            let observed = absd_runtime::boot_millis();
+            if observed < previous || observed >= setup_deadline {
+                return Err("NIC setup clock or deadline".into());
+            }
+            previous = observed;
+            if observed >= ready_after {
+                println!(
+                    "QUIC Q20 RX SETUP case={} nic_ready_ms={} ready_ms={} delta_ms={} continuous_vm_required=1",
+                    case.id,
+                    nic_ready,
+                    observed,
+                    observed - nic_ready
+                );
+                break;
+            }
+            absd_runtime::sleep_ticks(10);
+        }
+    }
     let mut stack =
         Stack::open(link, Config::qemu_user()).map_err(|error| format!("stack {error:?}"))?;
     if family == Family::Ipv6 {
@@ -771,12 +967,16 @@ fn run() -> Result<(), String> {
             .configure_ipv6(v6::Config {
                 address: IPV6_LOCAL,
                 prefix_len: 64,
-                scope: 1,
+                scope: IPV6_PEER.scope,
             })
             .map_err(|error| format!("IPv6 owner configuration {error:?}"))?;
         println!(
-            "QUIC SERVICE FAMILY case={} family=6 scope=1 local_ip=fd00:ab5d::15 peer_ip=fd00:ab5d::2 peer_port=4443",
-            case.id
+            "QUIC SERVICE FAMILY case={} family=6 scope={} local_ip={} peer_ip={} peer_port={}",
+            case.id,
+            IPV6_PEER.scope,
+            std::net::Ipv6Addr::from(IPV6_LOCAL),
+            std::net::Ipv6Addr::from(IPV6_PEER.ip),
+            IPV6_PEER.port
         );
     }
     let result = selected_case(&mut stack, case, family, unix_seconds);

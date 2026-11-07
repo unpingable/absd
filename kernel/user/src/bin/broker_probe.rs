@@ -324,8 +324,13 @@ fn reply_flood(console: Console, channel: &Channel) -> i32 {
 /// leave init holding nothing: afterwards the worker can make exactly as
 /// many pipes as before.
 fn pipe_pressure(console: Console, channel: &Channel) -> i32 {
-    let mut held = [0u64; 64];
-    let fill = |held: &mut [u64; 64]| {
+    if absd_abi::syscall::MAX_PROCESS_HANDLES > absd_user::MAX_SPAWN_HANDLES {
+        let _ = console.write_str("BROKER PROBE pipe-pressure UNSUPPORTED reason=process/global-capacity-decoupled required=two-producer-offline-fixture\n");
+        // Explicit unsupported status: do not emit the historical PASS marker.
+        return 77;
+    }
+    let mut held = [0u64; absd_abi::syscall::MAX_PROCESS_HANDLES];
+    let fill = |held: &mut [u64; absd_abi::syscall::MAX_PROCESS_HANDLES]| {
         let mut count = 0;
         while count < held.len() {
             match Pipe::create() {

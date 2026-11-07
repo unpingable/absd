@@ -8,7 +8,11 @@
 
 mod allocator;
 pub mod broker;
+pub mod civil_clock;
+pub mod kernel_log;
 pub mod ledger;
+#[cfg(feature = "mwm-experiment")]
+pub mod mwm_protocol;
 pub mod semantic_trace;
 
 pub use allocator::MapAllocator;
@@ -47,6 +51,7 @@ pub use absd_abi::syscall::{
     SpawnHandleCopy,
 };
 pub use absd_abi::syscall::{MAX_SPAWN_IMAGE_BYTES, SPAWN_NO_SPAWN};
+pub use absd_abi::syscall::{WAIT_READABLE_MAX, WAIT_READABLE_POLL};
 
 pub use absd_abi::nic::{NIC_FRAME_MAX, NIC_FRAME_MIN, NicInfo};
 
@@ -663,6 +668,22 @@ pub fn pipe_info_raw(handle: u64, record: u64) -> i64 {
     unsafe { syscall3(SYS_PIPE_INFO, handle, record, 0) }
 }
 
+/// Level readiness for up to eleven Pipe/Console READ handles, including EOF.
+/// Zero ticks waits indefinitely; WAIT_READABLE_POLL polls without blocking.
+/// Finite expiry is Error::Timeout. Readiness consumes no bytes and does not
+/// guarantee a later read succeeds. Even an empty set reaches the kernel so
+/// older ABI 1 kernels consistently return Error::NotImplemented.
+pub fn wait_readable(handles: &[u64], ticks: u64) -> Result<u64, Error> {
+    result(unsafe {
+        syscall3(
+            absd_abi::syscall::SYS_WAIT_READABLE,
+            handles.as_ptr() as u64,
+            handles.len() as u64,
+            ticks,
+        )
+    })
+}
+
 /// Handle to the one block storage device. Transfers are whole sectors; the
 /// kernel returns from a write only once the device reported it complete.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -753,6 +774,20 @@ impl Block {
             sectors: (bytes / BLOCK_SECTOR_BYTES) as u64,
         })
     }
+}
+
+/// Private root-init-only physical presentation control. Other Console owners
+/// cannot change it. Kernel retention and userspace Console writes continue.
+pub fn set_console_presentation(console: Console, managed: bool) -> Result<(), Error> {
+    result(unsafe {
+        syscall3(
+            absd_abi::syscall::SYS_CONSOLE_PRESENTATION,
+            console.raw(),
+            u64::from(managed),
+            0,
+        )
+    })
+    .map(|_| ())
 }
 
 /// Abrupt machine stop with `code` through a machine handle holding the

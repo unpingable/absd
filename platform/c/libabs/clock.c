@@ -1,6 +1,6 @@
 /* Clocks and the small OS functions Picolibc may reference (upstream
-   doc/os.md): gettimeofday from the kernel's wall clock (whole seconds;
-   refused honestly when the RTC has no stable reading), times from ticks
+   doc/os.md): gettimeofday from boot-local software civil time (whole seconds;
+   time/read refusals; raw RTC fallback only on civil-info ENOSYS), times from ticks
    (about 1 kHz), clock from the same ticks scaled to CLOCKS_PER_SEC (ruling
    R12, so Picolibc's unscaled clock() never links), getentropy from RDRAND, getpid. sbrk is refused: there
    is no brk and exactly one allocator (malloc.c). isatty is always false:

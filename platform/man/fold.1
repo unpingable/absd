@@ -1,0 +1,56 @@
+.Dd November 3, 2026
+.Dt FOLD 1
+.Os ABSD
+.Sh NAME
+.Nm fold
+.Nd wrap input lines to a selected width
+.Sh SYNOPSIS
+.Nm
+.Op Fl b | Fl c
+.Op Fl s
+.Op Fl w Ar width
+.Op Ar file ...
+.Sh DESCRIPTION
+Copy input to standard output, inserting newlines when the selected
+width would be exceeded.
+The default width is 80 display columns.
+.Fl w Ar width
+selects a positive width.
+.Fl b
+counts bytes instead of display columns.
+.Fl c
+counts characters instead of display columns.
+.Fl s
+prefers a break at a blank within the width.
+Default column accounting handles tabs and carriage returns; it does not
+query a terminal window size.
+.Pp
+Read standard input with no files or a
+.Ql -
+operand; otherwise read the named files in order.
+Open failures are reported and later files are still attempted.
+Input files remain unchanged.
+Byte mode can split multibyte text and is useful when byte positions,
+rather than display layout, are required.
+.Sh EXIT STATUS
+0 on successful processing; nonzero for invalid width/options or
+input/output failure. Diagnostics use standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+fold -w 10 /etc/alpha.txt
+.Ed
+.Sh ABSD PROFILE
+This is the unmodified uutils 0.12.0 utility pinned by the platform build.
+The reference describes selected source-supported options; use
+.Fl Fl help
+for the complete upstream interface.
+File access uses the process's ABSD filesystem view, output uses its
+inherited stream, and the command acquires no additional authority.
+There are no native Unix processes, signals or permission bits underneath
+this port.
+The command matrix exercises the example forms below; other options
+listed here are source-checked, not separately guest-qualified.
+.Sh SEE ALSO
+.Xr head 1 ,
+.Xr cat 1 ,
+.Xr filesystem 7

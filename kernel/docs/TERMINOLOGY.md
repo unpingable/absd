@@ -126,9 +126,16 @@ is materially different, and define it here.
 
 - **Tick:** one PIT interrupt, about 1 ms; `time` counts them since boot.
   Monotonic within a boot; it restarts at every boot.
-- **Wall clock:** `wall_clock` reads the CMOS RTC: whole seconds since the
-  Unix epoch, declared UTC. It is a hardware reading, not a synchronized
-  clock, and it is refused rather than guessed when unreadable.
+- **Raw RTC:** supported `wall_clock` syscall 30 reads CMOS whole Unix
+  seconds, declared UTC and refused when unreadable. It is separate from
+  software civil time and retains its explicit TLS/observation consumers.
+- **Software civil clock:** a boot-local anchor initialized from unverified
+  RTC or unknown, advanced by delivered ticks, and corrected only by its
+  explicit owner. Source, age and synchronization quality remain separate;
+  see [CIVIL-TIME.md](CIVIL-TIME.md). Ordinary fallible date, C and FSD time
+  use it. Only infallible Rust SystemTime uses an epoch-plus-monotonic
+  bootstrap coordinate while no civil value is usable; this is not a date
+  or a source of filesystem timestamps.
 - **Boot identity:** 16 random bytes drawn once per boot (`boot_id`); with
   ticks it names an instant on this boot's clock.
 - **Clock epoch:** a boot identity plus its tick count is one monotonic

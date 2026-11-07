@@ -1,6 +1,6 @@
 # Ports that trip after power settles
 
-B-M1 is admitted under the internal USB tracking record, from `26854f60`, for a kernel
+B-M1 is admitted under USB archived work item, from `26854f60`, for a kernel
 after 8b. It does not change the candidate 11 input. The initial late-trip
 host sequence is red on that production source plus test-only `f5833882`:
 all 32 successors were consumed. Test-only `5c3affa` on rejected `81343e5`

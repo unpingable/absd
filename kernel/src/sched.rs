@@ -11,6 +11,7 @@ use crate::serial;
 #[path = "sched_rt.rs"]
 mod rt_runtime;
 use crate::suite::finish_process_suite;
+use crate::syscalls::wake_readable_waiters;
 use crate::syscalls::{release_object, retain_object, wake_console_readers, wake_nic_receivers};
 use crate::vm;
 
@@ -151,6 +152,8 @@ pub struct RuntimeStats {
     pub console_reads: u64,
     pub console_waits: u64,
     pub stack_grows: u64,
+    /// Independent terminal-derived growth audit; private normal-suite state.
+    pub stack_growth_audit: crate::stack_growth_audit::StackGrowthAudit,
     pub init_status: Option<i32>,
     pub frame_baseline: usize,
     /// Deepest kernel-stack use observed across every released process.
@@ -190,6 +193,7 @@ pub static mut STATS: RuntimeStats = RuntimeStats {
     console_reads: 0,
     console_waits: 0,
     stack_grows: 0,
+    stack_growth_audit: crate::stack_growth_audit::StackGrowthAudit::EMPTY,
     init_status: None,
     frame_baseline: 0,
     kernel_stack_peak: 0,
@@ -279,6 +283,7 @@ pub(crate) unsafe fn spawn_startup_actor_role(role: u64) -> u64 {
 /// success is ended and must reclaim to baseline too. Runs before the first
 /// real spawn.
 pub unsafe fn exhaustion_test(program: usize) -> bool {
+    let stack_audit_before = unsafe { stats().stack_growth_audit };
     let frames = unsafe { vm::frames() };
     let baseline = frames.allocated_frames();
     // Enough for every image page plus page tables and stacks: the bound
@@ -315,6 +320,9 @@ pub unsafe fn exhaustion_test(program: usize) -> bool {
                     stats.init_status = None;
                     stats.spawns -= 1;
                     stats.reaps -= 1;
+                    // The construction probe never ran userspace. Its
+                    // terminal row is diagnostic, not a real suite process.
+                    stats.stack_growth_audit = stack_audit_before;
                 }
                 let reclaimed =
                     frames.allocated_frames() == baseline && table.occupied_count() == 0;
@@ -570,7 +578,7 @@ unsafe fn spawn_from<S: ImageSource + ?Sized>(
     unsafe { spawn_from_budget(program, image, parent, transfers, arg, vector_start, None) }
 }
 
-unsafe fn spawn_from_budget<S: ImageSource + ?Sized>(
+#[rustfmt::skip] unsafe fn spawn_from_budget<S: ImageSource + ?Sized>(
     program: usize,
     image: &S,
     parent: u64,
@@ -622,17 +630,17 @@ unsafe fn spawn_from_budget<S: ImageSource + ?Sized>(
     // Every caller that reaches here holds the spawn right, so the child
     // starts with it; the spawn syscalls clear it when asked.
     process.may_spawn = true;
-    let frames = unsafe { vm::frames() };
+    let frames = unsafe { vm::frames() }; #[cfg(feature = "builder-class-heap")] let budget = crate::builder_heap::construction_budget(budget, parent, program);
     #[cfg(feature = "frame-admission-core")]
     if let Some(total) = budget
         && frames.admit(pid as u32, total).is_err()
     {
-        table.unclaim(index);
+        #[cfg(feature = "builder-class-heap")] crate::builder_heap::construction_refused(frames, pid, parent, budget, "admit"); table.unclaim(index);
         return Err(SpawnError::NoMemory);
     }
     if let Err(error) = unsafe { load_process(frames, process, image, default_console_rights) } {
         unsafe { release_resources(frames, process) };
-        table.unclaim(index);
+        table.unclaim(index); #[cfg(feature = "builder-class-heap")] crate::builder_heap::construction_refused(frames, pid, parent, budget, "construct");
         return Err(error);
     }
     // The kernel's root grant to init also carries the block device in a
@@ -673,12 +681,6 @@ unsafe fn spawn_from_budget<S: ImageSource + ?Sized>(
         process.task.context.set_argument(4, handle);
     }
     let console_index = transfers.iter().position(|transfer| transfer.as_console);
-    if console_index.is_some() {
-        // The transferred console replaces the default one before the
-        // atomic batch insert, making its destination slot available.
-        let default_console = process.task.context.argument(0);
-        let _ = process.handles.close(default_console);
-    }
     let mut requested = [(Object::None, 0); MAX_SPAWN_HANDLES];
     for (slot, transfer) in requested.iter_mut().zip(transfers.iter()) {
         *slot = (transfer.object, transfer.rights);
@@ -686,7 +688,8 @@ unsafe fn spawn_from_budget<S: ImageSource + ?Sized>(
     let mut issued = [0u64; MAX_SPAWN_HANDLES];
     if process
         .handles
-        .insert_batch(
+        .install_spawn_transfers(
+            console_index.map(|_| process.task.context.argument(0)),
             &requested[..transfers.len()],
             &mut issued[..transfers.len()],
         )
@@ -743,7 +746,7 @@ unsafe fn spawn_from_budget<S: ImageSource + ?Sized>(
 
 /// Publishes a completely built child to the scheduler. Syscall callers do
 /// this only after the parent's process handle has been installed.
-pub unsafe fn activate_spawn(pid: u64) {
+#[rustfmt::skip] pub unsafe fn activate_spawn(pid: u64) {
     let table = unsafe { table() };
     let index = table.slot_of(pid).expect("activate unknown spawn");
     let process = &mut table.entries[index];
@@ -751,6 +754,8 @@ pub unsafe fn activate_spawn(pid: u64) {
         panic!("activate pid {pid} outside Created state");
     }
     crate::smp_user::prepare_process(index, process);
+    #[cfg(target_arch = "x86_64")]
+    crate::smp_operator::publish(index, process);
     process.state = ProcessState::Runnable;
     rt_runtime::configure(index, process, process.task.context.argument(2));
     crate::modern_smp::register(
@@ -761,7 +766,7 @@ pub unsafe fn activate_spawn(pid: u64) {
     crate::smp_app_scale::activated(index, process);
     crate::modern_smp::publish(process);
     crate::modern_smp::mutate_publication(process);
-    unsafe { stats().spawns += 1 };
+    unsafe { stats().spawns += 1 }; #[cfg(feature = "builder-class-heap")] crate::builder_heap::published(index, pid, process.parent, process.program);
     serial::write("SPAWN OK pid=");
     serial::decimal(pid);
     serial::write(" parent=");
@@ -924,7 +929,7 @@ unsafe fn populate<S: ImageSource + ?Sized>(
 
 /// Returns every frame a process owns: its address space and kernel stack.
 /// Must not run while that process's CR3 or kernel stack is active.
-unsafe fn release_resources(frames: &mut FrameAllocator, process: &mut Process) {
+#[rustfmt::skip] unsafe fn release_resources(frames: &mut FrameAllocator, process: &mut Process) {
     #[cfg(feature = "frame-admission-v0")]
     {
         process.may_admit_frames = false;
@@ -944,8 +949,10 @@ unsafe fn release_resources(frames: &mut FrameAllocator, process: &mut Process) 
     );
     crate::smp_app_pressure::check_terminal_frames(process, frames);
     crate::smp_user::restore_fixture_page(process);
+    #[cfg(target_arch = "x86_64")]
+    crate::smp_operator::terminal(process);
     rt_runtime::remove(process);
-    let owner = process.pid as u32;
+    let owner = process.pid as u32; #[cfg(feature = "builder-class-heap")] crate::builder_heap::released(frames, owner, if process.task.kernel_stack_base != 0 { unsafe { kernel_stack_used(process.task.kernel_stack_base) } } else { 0 });
     if let Err(error) = unsafe { vm::destroy(frames, &mut process.address_space, owner) } {
         panic!(
             "address-space teardown for pid {} failed: {error:?}",
@@ -972,7 +979,7 @@ unsafe fn release_resources(frames: &mut FrameAllocator, process: &mut Process) 
     frames
         .retire_reservation(owner)
         .expect("reservation retired before frames returned");
-    let remaining = frames.frames_owned_by(owner);
+    let remaining = frames.check_reclaimed(owner);
     if remaining != 0 {
         panic!(
             "pid {} still owns {remaining} frames after release",
@@ -995,6 +1002,9 @@ unsafe fn kernel_stack_used(base: u64) -> u64 {
 
 /// Runs the first runnable process. Never returns.
 pub unsafe fn start() -> ! {
+    absd_kernel::kernel_log::clock_ready();
+    crate::syscalls::initialize_civil_time();
+    serial::write("KLOG userspace handoff retained early message\n");
     unsafe {
         prepare_runnable();
         let Some(index) = next_runnable(MAX_PROCESSES - 1) else {
@@ -1114,6 +1124,8 @@ pub extern "C" fn commit_cpu_switch() -> ! {
             table.entries[current].state = ProcessState::Runnable;
         }
         crate::modern_smp::publish(&table.entries[current]);
+        #[cfg(target_arch = "x86_64")]
+        crate::contain::poll();
         prepare_runnable();
         let Some(next) = next_runnable(current) else {
             idle_loop();
@@ -1151,12 +1163,32 @@ unsafe fn prepare_runnable() {
         if cpu::is_bootstrap_processor() {
             #[cfg(target_arch = "x86_64")]
             crate::xhci::keyboard_progress();
+            wake_readable_waiters();
             wake_console_readers();
             wake_nic_receivers();
         }
         for entry in &table().entries {
             rt_runtime::assert_bridge(entry);
         }
+        // Also reconciles handle retirement and a wake observed while the
+        // waiter still owned its CPU claim before the context switch.
+        // The BSP already scanned above, before consuming Console input.
+        if !cpu::is_bootstrap_processor() {
+            wake_readable_waiters();
+        }
+    }
+}
+
+/// Startup has no BSP userspace scheduler loop to service expired AP sleeps.
+/// Drain only departure and time waits under serialization; device input scans
+/// remain with the ordinary scheduler and the BSP's device continuations.
+pub(crate) fn drain_startup() {
+    assert!(crate::smp_startup::active());
+    assert_eq!(cpu::id(), crate::kernel_lock::BSP);
+    crate::kernel_lock::assert_held(crate::kernel_lock::BSP);
+    unsafe {
+        drain_ap_departures();
+        wake_sleepers();
     }
 }
 
@@ -1243,7 +1275,13 @@ unsafe fn wake_sleepers() {
             panic!("remote stop did not reach departure ACK before PIT deadline");
         }
         let rt_release = entry.wait_kind == WaitKind::RtRelease;
-        let result = if entry.wait_kind == WaitKind::Sleep || rt_release {
+        let result = if entry.wait_kind == WaitKind::Readable {
+            unsafe {
+                stats().timeouts += 1;
+            }
+            absd_kernel::readable_wait::timeout_completion(entry, tick)
+                .expect("readable deadline disagrees with timer scan")
+        } else if entry.wait_kind == WaitKind::Sleep || rt_release {
             0
         } else {
             unsafe {
@@ -1266,6 +1304,8 @@ pub extern "C" fn idle_loop() -> ! {
     unsafe {
         stats().idle_entries += 1;
         loop {
+            #[cfg(target_arch = "x86_64")]
+            crate::contain::poll();
             prepare_runnable();
             crate::smp_user::notify_runnable();
             let table = table();
@@ -1287,6 +1327,10 @@ pub extern "C" fn idle_loop() -> ! {
                 entry.state == ProcessState::Waiting
                     && (entry.wake_at.is_some()
                         || matches!(entry.wait_kind, WaitKind::Console | WaitKind::StopFence)
+                        || (entry.wait_kind == WaitKind::Readable
+                            && entry
+                                .wait_readable
+                                .is_some_and(|wait| wait.has_readable_console(&entry.handles)))
                         || entry.class.rt().is_some())
             }) {
                 #[cfg(target_arch = "x86_64")]
@@ -1320,6 +1364,8 @@ pub(crate) unsafe fn deliver_outcome(child: usize, parent: usize, record: u64) -
         ERROR_FAULT
     };
     table.entries[parent].handles.close_process(child_pid);
+    #[cfg(target_arch = "x86_64")]
+    crate::smp_operator::release(child, &table.entries[child]);
     table.release(child);
     unsafe {
         stats().reaps += 1;
@@ -1417,6 +1463,23 @@ pub(crate) unsafe fn terminate(current: usize) {
         if !table.entries[current].is_terminal() {
             panic!("reap requested for live pid {pid}");
         }
+        // Account committed grow-down mappings before resource destruction
+        // clears the stack bounds. This common path covers exits, faults and
+        // kills; it changes neither mapping nor reclamation accounting.
+        let process = &table.entries[current];
+        let role = if process.program == absd_kernel::program::STACK_GROW as usize {
+            crate::stack_growth_audit::Role::StackGrowProbe
+        } else if process.program == absd_kernel::program::OVERFLOW as usize {
+            crate::stack_growth_audit::Role::OverflowProbe
+        } else {
+            crate::stack_growth_audit::Role::Ordinary
+        };
+        stats().stack_growth_audit.record_stack(
+            role,
+            process.task.user_stack_top,
+            process.task.user_stack_bottom,
+            USER_STACK_PAGES as u64,
+        );
         crate::smp_app_pressure::bsp_before_remove(current, &table.entries[current]);
         crate::smp_app_scale::before_remove(current, &table.entries[current]);
         crate::modern_smp::remove(current);
@@ -1439,6 +1502,8 @@ pub(crate) unsafe fn terminate(current: usize) {
                     continue;
                 }
                 if child.is_terminal() {
+                    #[cfg(target_arch = "x86_64")]
+                    crate::smp_operator::release(index, &table.entries[index]);
                     table.release(index);
                     stats().reaps += 1;
                 } else {
@@ -1454,6 +1519,8 @@ pub(crate) unsafe fn terminate(current: usize) {
                     stats().init_status = Some(-1);
                 }
             }
+            #[cfg(target_arch = "x86_64")]
+            crate::smp_operator::release(current, &table.entries[current]);
             table.release(current);
             stats().reaps += 1;
         } else if let Some(waiter) = table.slot_of(parent) {
@@ -1470,6 +1537,8 @@ pub(crate) unsafe fn terminate(current: usize) {
             }
             // Otherwise the terminal record waits for the parent's `wait`.
         } else {
+            #[cfg(target_arch = "x86_64")]
+            crate::smp_operator::release(current, &table.entries[current]);
             table.release(current);
             stats().reaps += 1;
         }
@@ -1513,6 +1582,48 @@ pub extern "C" fn user_stack_page_fault(
         let Some(page) =
             stack_growth_page(error, address, user_rsp, process.task.user_stack_bottom)
         else {
+            // #115 builder profile only: bounded init copy-fault registers
+            // for native compiler diagnosis; every other build is unchanged.
+            #[cfg(all(target_arch = "x86_64", feature = "builder-profile"))]
+            if process.pid == 1 && address == u64::MAX {
+                let frame = frame_base as *const u64;
+                serial::write("SELFHOST COPY FAULT REGS");
+                for (name, index) in [
+                    (" rdi=", 10),
+                    (" rsi=", 11),
+                    (" rdx=", 12),
+                    (" r8=", 9),
+                    (" rbp=", 4),
+                    (" rsp=", 19),
+                ] {
+                    serial::write(name);
+                    serial::hex(core::ptr::read_volatile(frame.add(index)));
+                }
+                serial::write("\n");
+                let rbp = core::ptr::read_volatile(frame.add(4));
+                let mut words = [0u8; 64];
+                if copy_from_user(&process.address_space, rbp, &mut words).is_ok() {
+                    serial::write("SELFHOST COPY FAULT FRAME");
+                    for word in words.as_chunks::<8>().0 {
+                        serial::write(" ");
+                        serial::hex(u64::from_le_bytes(*word));
+                    }
+                    serial::write("\n");
+                    let caller_rbp = u64::from_le_bytes(words[..8].try_into().unwrap());
+                    if let Some(start) = caller_rbp.checked_sub(0x50) {
+                        let mut saved = [0u8; 80];
+                        if copy_from_user(&process.address_space, start, &mut saved).is_ok() {
+                            serial::write("SELFHOST COPY CALLER SLOTS start=");
+                            serial::hex(start);
+                            for word in saved.as_chunks::<8>().0 {
+                                serial::write(" ");
+                                serial::hex(u64::from_le_bytes(*word));
+                            }
+                            serial::write("\n");
+                        }
+                    }
+                }
+            }
             return 0;
         };
         let owner = process.pid as u32;
@@ -1570,6 +1681,7 @@ pub extern "C" fn user_exception(vector: u64, error: u64, rip: u64) -> ! {
         process.fault_address = address;
         process.fault_error = error;
         stats().faults += 1;
+        serial::presenter_ended(process.pid, process.parent, process.program);
         serial::write("FAULT1 pid=");
         serial::decimal(process.pid);
         serial::write(" kind=");
@@ -1588,6 +1700,16 @@ pub extern "C" fn user_exception(vector: u64, error: u64, rip: u64) -> ! {
         serial::write(" error=");
         serial::hex(error);
         serial::write("\n");
+        // #115 builder profile only: identify the instruction in the exact
+        // retained user ELF without changing the fault disposition.
+        #[cfg(feature = "builder-profile")]
+        {
+            serial::write("USER FAULT PC pid=");
+            serial::decimal(process.pid);
+            serial::write(" pc=");
+            serial::hex(rip);
+            serial::write("\n");
+        }
         reap_current_and_schedule()
     }
 }

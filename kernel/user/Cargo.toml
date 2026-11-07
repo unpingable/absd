@@ -6,6 +6,12 @@ description = "Freestanding ABSD userspace: syscall wrappers and the embedded pr
 
 [features]
 reservation-fixture = []
+input-close-fixture = []
+# Private #96 PCM producers and playback grant in init; selected only by
+# the kernel's native-pcm-experiment build (build.rs, ABSD_USER_NATIVE_PCM).
+native-pcm-experiment = []
+mwm-experiment = []
+mwm-successor = ["mwm-experiment"]
 
 [dependencies]
 absd-abi = { path = "../abi" }
@@ -176,6 +182,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "external_input_close"
+required-features = ["input-close-fixture"]
+test = false
+bench = false
+
+[[bin]]
 name = "block_probe"
 test = false
 bench = false
@@ -275,5 +287,17 @@ bench = false
 [[bin]]
 name = "reservation_supervisor"
 required-features = ["reservation-fixture"]
+test = false
+bench = false
+
+[[bin]]
+name = "mwm"
+required-features = ["mwm-experiment"]
+test = false
+bench = false
+
+[[bin]]
+name = "mwm_successor_producer"
+required-features = ["mwm-successor"]
 test = false
 bench = false

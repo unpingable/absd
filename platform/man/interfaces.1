@@ -1,0 +1,42 @@
+.Dd November 5, 2026
+.Dt INTERFACES 1
+.Os ABSD
+.Sh NAME
+.Nm interfaces
+.Nd inspect current NIC state and enumerated Ethernet controllers
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+Query the kernel directly for selected driver, PCI identity, MAC, current
+carrier and disabled state, acquisition ticks and receive/transmit counters.
+Enumerate Ethernet-class PCI functions, identifying the selected function
+and inactive functions whose admission state is unknown.
+No network or file-server transaction is needed to acquire these facts.
+The command never sends a packet, enables a device or clears quarantine.
+.Pp
+Speed, duplex and physical jack mapping remain unknown when not established.
+Carrier down does not prove a missing cable, and carrier up does not prove
+peer reachability. A failed or disabled reading never preserves an earlier
+up indication. Driver failure reasons remain in
+.Xr dmesg 1 .
+Address and route configuration are separately available from
+.Xr net-status 1 ,
+whose retained sample has an explicit age.
+.Pp
+This development interface requires an inherited read-only diagnostics capability.
+It grants no raw NIC, process-control or machine-control right.
+If the driver cannot supply a counter sample, RX and TX counts are unknown;
+an unavailable sample is not reported as a measurement of zero.
+.Pp
+Device queries require UP/BSP execution.
+On an application processor, the command reports
+.Dq unsupported
+and exits with status 1 without accessing the device.
+The diagnostic grant does not pin all operator commands to the BSP.
+This version makes no SMP interface-availability claim.
+.Sh EXIT STATUS
+0 for complete readout, 1 for an unavailable query, 2 for invalid arguments.
+.Sh SEE ALSO
+.Xr net-status 1 ,
+.Xr sysinfo 1 ,
+.Xr ps 1

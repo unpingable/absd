@@ -12,7 +12,8 @@
 use alloc::format;
 use alloc::vec::Vec;
 
-use absd_fs::{Device, Error, Fs, OpenFlags};
+use absd_fs::{Error, OpenFlags};
+use crate::journal::Store;
 
 use crate::civil::Utc;
 
@@ -22,13 +23,19 @@ pub const LIMIT: u64 = 64 * 1024;
 /// Longest line kept, newline included.
 pub const MAX_LINE: usize = 512;
 
-/// `TIME PROGRAM: TEXT\n`, TIME the RTC's UTC second (`-` when the kernel
-/// refuses a reading). Bytes outside printable ASCII become `?`.
+/// `TIME PROGRAM: TEXT\n`, TIME the boot-local software civil second formatted
+/// as a calendar value (`-` when the fallible clock is unavailable). A value
+/// carries no UTC-accuracy guarantee. Bytes outside printable ASCII become `?`.
 pub fn line(wall: Option<u64>, program: &str, text: &str) -> Vec<u8> {
     let stamp = match wall {
         Some(seconds) => format!("{}", Utc::from_unix(seconds).iso()),
         None => "-".into(),
     };
+    // Even adapter labels cannot introduce terminal controls or extra fields.
+    let tag: Vec<u8> = program.bytes().take(32).map(|b| {
+        if b.is_ascii_alphanumeric() || b"._-".contains(&b) { b } else { b'?' }
+    }).collect();
+    let program = core::str::from_utf8(&tag).unwrap_or("unknown");
     let mut out: Vec<u8> = format!("{stamp} {program}: ").into_bytes();
     out.extend(text.bytes().map(|b| if (0x20..0x7f).contains(&b) || b == b'\t' { b } else { b'?' }));
     out.truncate(MAX_LINE - 1);
@@ -64,7 +71,7 @@ impl LogFile {
         Self { path: path.to_vec(), program, handle: None, size: 0, dropped: 0 }
     }
 
-    fn open<D: Device>(&mut self, fs: &mut Fs<D>) -> Result<u64, Error> {
+    fn open<S: Store>(&mut self, fs: &mut S) -> Result<u64, Error> {
         if let Some(handle) = self.handle {
             return Ok(handle);
         }
@@ -75,7 +82,7 @@ impl LogFile {
         Ok(handle)
     }
 
-    fn rotate<D: Device>(&mut self, fs: &mut Fs<D>) -> Result<(), Error> {
+    fn rotate<S: Store>(&mut self, fs: &mut S) -> Result<(), Error> {
         if let Some(handle) = self.handle.take() {
             fs.close(handle)?;
         }
@@ -86,7 +93,7 @@ impl LogFile {
         Ok(())
     }
 
-    fn write<D: Device>(&mut self, fs: &mut Fs<D>, bytes: &[u8]) -> Result<(), Error> {
+    fn write<S: Store>(&mut self, fs: &mut S, bytes: &[u8]) -> Result<(), Error> {
         let handle = self.open(fs)?;
         if must_rotate(self.size, bytes.len()) {
             self.rotate(fs)?;
@@ -94,23 +101,28 @@ impl LogFile {
         let handle = self.handle.unwrap_or(handle);
         let written = fs.write_at(handle, self.size, bytes)?;
         self.size += written as u64;
+        if written != bytes.len() { return Err(Error::NoSpace); }
         Ok(())
     }
 
     /// Appends one line; `Err` when it was dropped. The caller commits
     /// (the file server's idle commit covers it). `wall` stamps the
     /// dropped-lines note like any other line.
-    pub fn append<D: Device>(&mut self, fs: &mut Fs<D>, wall: Option<u64>, text: &[u8]) -> Result<(), Error> {
+    pub fn append<S: Store>(&mut self, fs: &mut S, wall: Option<u64>, text: &[u8]) -> Result<(), Error> {
+        if text.len() > MAX_LINE {
+            self.dropped = self.dropped.saturating_add(1);
+            return Err(Error::Invalid);
+        }
         if self.dropped > 0 {
             let note = line(wall, self.program, &format!("log: {} lines dropped", self.dropped));
             if let Err(error) = self.write(fs, &note) {
-                self.dropped += 1;
+                self.dropped = self.dropped.saturating_add(1);
                 return Err(error);
             }
             self.dropped = 0;
         }
         self.write(fs, text).inspect_err(|_| {
-            self.dropped += 1;
+            self.dropped = self.dropped.saturating_add(1);
             // Start from a fresh open next time (the handle may be gone
             // with a poisoned mount).
             if let Some(handle) = self.handle.take() {
@@ -203,4 +215,61 @@ fn parse_recovery(rest: &str) -> Option<Generation> {
         streak: streak.parse().ok()?,
         previous: PREVIOUS.into_iter().find(|&name| name == previous)?,
     })
+}
+
+/// Line-oriented compatibility view of trusted kernel service chunks. The J1
+/// journal remains authoritative for PID/stream metadata and exact bytes.
+#[derive(Default)]
+pub struct LegacyProjection {
+    key: Option<(u64, u8)>,
+    pending: Vec<u8>,
+}
+impl LegacyProjection {
+    pub fn push(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        let Some(rest) = chunk.strip_prefix(b"pid=") else {
+            return out;
+        };
+        let Some(at) = rest.iter().position(|b| *b == b' ') else {
+            return out;
+        };
+        let Some(pid) = core::str::from_utf8(&rest[..at])
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|p| *p > 0)
+        else {
+            return out;
+        };
+        let rest = &rest[at + 1..];
+        let (stream, body) = if let Some(body) = rest.strip_prefix(b"stream=stdout ") {
+            (1, body)
+        } else if let Some(body) = rest.strip_prefix(b"stream=stderr ") {
+            (2, body)
+        } else {
+            return out;
+        };
+        if self.key != Some((pid, stream)) {
+            if !self.pending.is_empty() {
+                if let Some((old, kind)) = self.key {
+                    let mut line = format!(
+                        "pid={old} stream={} partial: ",
+                        if kind == 1 { "stdout" } else { "stderr" }
+                    )
+                    .into_bytes();
+                    line.append(&mut self.pending);
+                    out.push(line);
+                }
+            }
+            self.key = Some((pid, stream));
+        }
+        for &b in body.iter().take(MAX_LINE) {
+            if b == b'\n' || self.pending.len() >= 400 {
+                out.push(core::mem::take(&mut self.pending));
+            }
+            if b != b'\n' {
+                self.pending.push(b);
+            }
+        }
+        out
+    }
 }

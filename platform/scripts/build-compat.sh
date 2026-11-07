@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds the source-portability probe (docs/COMPATIBILITY-LEDGER.md) from the
-# trees scripts/stage-compat.sh stages:
+# worktree-specific sibling trees scripts/stage-compat.sh stages:
 #   compat-commands/<bin>  each "run" program for ABSD, stripped (it travels
 #                          into the guest filesystem through init's pipe);
 #   compat-linux/<bin>     the same program for Linux from the unmodified
@@ -16,7 +16,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 toolchain=${ABSD_RUST_TOOLCHAIN:-$HOME/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu}
 sysroot=$root/.staged-sysroot
-stage=$(dirname "$root")/absd-std-staged-compat
+stage=${root}.staged-compat
 test -d "$sysroot/lib/rustlib/src/rust/library"
 "$root/scripts/stage-compat.sh"
 # As in prepare-and-build.sh: build-std fingerprints do not notice a

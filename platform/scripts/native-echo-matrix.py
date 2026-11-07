@@ -32,6 +32,23 @@ UNRUN = ["native malformed/wrong-peer/type/code/id/sequence/body/epoch/nonce/che
          "native queue/slot exhaustion, interruption, frame timeout and uncertain pipe effects",
          "native absent peer, deadline/boot rewind/link/device loss and queued retirement",
          "live SSH coexistence, hardware DMA, physical clock/wire RTT accuracy or authentication"]
+BOUNDARY_PROFILE = "ipv4-echo-boundary-v1"
+BOUNDARY_UNRUN = [UNRUN[0],
+                  "native packet queue exhaustion",
+                  "native queued or connected-data interruption, reply stall and uncertain pipe effects",
+                  "native absent peer, frame expiry, clock rewind, link/device loss and wire replay",
+                  "live SSH coexistence, full memory restoration, hardware DMA or physical timing"]
+BOUNDARY_CTORS = (
+    ("unspecified", 2, 0), ("loopback", 2, 0), ("multicast", 2, 0),
+    ("local", 2, 0), ("subnet", 2, 0), ("broadcast", 2, 0), ("off-link", 2, 0),
+    ("expired", 1, 0), ("too-long", 1, 0), ("entropy-error", 13, 0),
+    ("entropy-zero", 13, 0), ("second-grant", 3, 1), ("closed-stale", 4, 0),
+)
+BOUNDARY_REQUESTS = tuple(bytes.fromhex(value) for value in (
+    "00010000c0000201", "017f0000c0000201", "01010100c0000201",
+    "01010001c0000201", "01010000c0000202", "01020000c0000202",
+    "01030000c0000202",
+))
 
 
 def identity(label, data):
@@ -140,7 +157,117 @@ def native_output(raw, exit_status):
             "output": output, "NIC_counters": counters}
 
 
-def inspect(path, observation):
+def boundary_fields(line, kind, keys):
+    prefix = "ECHO BOUNDARY " + kind + " v=1 "
+    assert line.startswith(prefix) and line.endswith("\n"), "boundary record " + kind
+    tokens = line[len(prefix):-1].split(" ")
+    assert all(re.fullmatch(r"[a-z_]+=[A-Za-z0-9_.:-]+", token) for token in tokens), "boundary field syntax"
+    pairs = [token.split("=", 1) for token in tokens]
+    fields = dict(pairs)
+    assert len(fields) == len(pairs) and set(fields) == set(keys), "boundary field set " + kind
+    return fields
+
+
+def boundary_number(fields, key):
+    value = fields[key]
+    assert re.fullmatch(r"0|[1-9][0-9]*", value), "boundary decimal " + key
+    number = int(value)
+    assert number < 2 ** 64, "boundary integer range"
+    return number
+
+
+def native_boundary_output(raw, exit_status):
+    # Validate the unchanged positive result against the original raw bytes.
+    # Boundary records and the terminal digest are additional predicates; no
+    # output is trimmed, rewritten or re-framed for the positive evaluator.
+    observation = native_output(raw, exit_status)
+    output = observation["output"]
+    lines = output.splitlines(keepends=True)
+    assert len(lines) == 29 and all(line.endswith("\n") for line in lines), "complete boundary record order/count"
+    assert lines[27].startswith("PING peer=") and lines[28] == "PING DONE child=exited sockets=0 requests=1\n"
+    begin = boundary_fields(lines[0], "BEGIN", ("start_ms", "until_ms", "negative_until_ms"))
+    start, until, negative_until = (boundary_number(begin, key) for key in ("start_ms", "until_ms", "negative_until_ms"))
+    assert until - start == 20_000 and 0 < negative_until - start <= 8_000, "original whole/negative bounds"
+    constructors = []
+    for line, (name, code, sockets) in zip(lines[1:14], BOUNDARY_CTORS):
+        fields = boundary_fields(line, "CTOR", ("case", "code", "sockets"))
+        assert fields == {"case": name, "code": str(code), "sockets": str(sockets)}, "constructor result/order"
+        constructors.append(fields)
+
+    def census(line, label):
+        fields = boundary_fields(line, "CENSUS", ("label", "processes", "handles", "pipes", "cells", "frames"))
+        assert fields.pop("label") == label, "census role/order"
+        return {key: boundary_number(fields, key) for key in fields}
+
+    before = census(lines[14], "before-negative")
+    assert before["processes"] > 0 and before["handles"] > 0 and before["frames"] > 0
+    bootstrap = boundary_fields(lines[15], "BOOTSTRAP", ("bytes", "hex"))
+    expected_bootstrap = b"\x01\xc0\x00\x02\x01" + negative_until.to_bytes(8, "big")
+    assert bootstrap == {"bytes": "13", "hex": expected_bootstrap.hex()}, "exact original negative bootstrap"
+    prefix = boundary_fields(lines[16], "PREFIX", ("before_ms", "read_before_ms", "read_ms", "bytes", "hex", "sockets"))
+    pre_read, read_before, read = (boundary_number(prefix, key) for key in ("before_ms", "read_before_ms", "read_ms"))
+    assert prefix["bytes"] == "1" and prefix["hex"] == "00" and prefix["sockets"] == "1", "actual single partial byte and reserved socket"
+    killed = boundary_fields(lines[17], "KILL", ("before_ms", "code", "at_ms"))
+    assert killed["code"] == "0", "exact child kill result"
+    kill_before = boundary_number(killed, "before_ms")
+    kill_at = boundary_number(killed, "at_ms")
+    reaped = boundary_fields(lines[18], "REAP", ("before_ms", "kind", "status", "at_ms"))
+    assert reaped["kind"] == "3" and reaped["status"] == "0", "actual killed-child reap"
+    reap_before = boundary_number(reaped, "before_ms")
+    reap_at = boundary_number(reaped, "at_ms")
+    eof = boundary_fields(lines[19], "EOF", ("before_ms", "at_ms", "bytes"))
+    assert eof["bytes"] == "0", "actual request EOF read"
+    eof_before, eof_at = (boundary_number(eof, key) for key in ("before_ms", "at_ms"))
+    ledger = boundary_fields(lines[20], "LEDGER", ("read_bytes", "read_hex", "written_bytes", "written_hex", "link_sends"))
+    expected_read = b"".join(BOUNDARY_REQUESTS) + b"\x00"
+    expected_written = b"".join(bytes([1, request[1], 1 if index < 4 else 2, 0]) + bytes(44)
+                                for index, request in enumerate(BOUNDARY_REQUESTS))
+    assert ledger == {"read_bytes": "57", "read_hex": expected_read.hex(),
+                      "written_bytes": "336", "written_hex": expected_written.hex(), "link_sends": "0"}, "exact actual request/reply ledger and zero delegated sends"
+    retired = boundary_fields(lines[21], "RETIRED", ("at_ms", "request_eof", "result_eof", "channel", "sockets", "fallback", "stale_code"))
+    assert {key: value for key, value in retired.items() if key != "at_ms"} == {
+        "request_eof": "1", "result_eof": "1", "channel": "0", "sockets": "0", "fallback": "0", "stale_code": "4"}, "EOF-caused authority retirement"
+    retire_at = boundary_number(retired, "at_ms")
+    assert start <= pre_read <= read_before <= read <= kill_before <= kill_at <= reap_before <= reap_at <= eof_before <= eof_at <= retire_at < min(pre_read + 250, negative_until), "EOF retirement before original frame/grant expiry"
+    after_negative = census(lines[22], "after-negative")
+    positive = boundary_fields(lines[23], "POSITIVE", ("start_ms", "until_ms", "fresh", "sockets"))
+    positive_start, positive_until = (boundary_number(positive, key) for key in ("start_ms", "until_ms"))
+    assert positive["fresh"] == "1" and positive["sockets"] == "1", "fresh positive authority"
+    assert retire_at <= positive_start < positive_until <= until and positive_until - positive_start <= 8_000, "separate original positive bounds"
+    positive_reap = boundary_fields(lines[24], "POSITIVE-REAP", ("kind", "status", "request_eof", "result_eof", "at_ms"))
+    assert {key: value for key, value in positive_reap.items() if key != "at_ms"} == {
+        "kind": "1", "status": "0", "request_eof": "1", "result_eof": "1"}, "natural positive child and EOF"
+    positive_at = boundary_number(positive_reap, "at_ms")
+    after_positive = census(lines[25], "after-positive")
+    done = boundary_fields(lines[26], "DONE", ("objects_restored", "sockets", "at_ms"))
+    assert done["objects_restored"] == "1" and done["sockets"] == "0"
+    done_at = boundary_number(done, "at_ms")
+    assert positive_start <= positive_at < positive_until and positive_at <= done_at < until, "terminal observations within original bounds"
+    for key in ("processes", "handles", "pipes", "cells"):
+        assert before[key] == after_negative[key] == after_positive[key], "owned resource restoration " + key
+
+    # Check the complete terminal stream, not just the decoded semantic rows.
+    encoded = output.encode("utf-8")
+    ends = re.findall(rb"(?m)^EXTERNAL OUTPUT END bytes=(\d+) digest=([0-9a-f]{8})\n", raw)
+    digest = 0x811c9dc5
+    for byte in encoded:
+        digest = ((digest ^ byte) * 0x01000193) & 0xffffffff
+    assert len(ends) == raw.count(b"EXTERNAL OUTPUT END ") == 1, "one native output END"
+    assert int(ends[0][0]) == len(encoded) and int(ends[0][1], 16) == digest, "complete native output digest"
+    assert raw.count(b"USER EXIT pid=2 status=0\n") == 1
+    assert raw.count(b"DURABLE WORKER OUTCOME generation=1 pid=2 status=0\n") == 1
+    children = re.findall(rb"(?m)^SPAWN OK pid=(\d+) parent=2 program=", raw)
+    assert len(children) == len(set(children)) == 2, "exact two children"
+    assert raw.count(b"USER EXIT pid=" + children[1] + b" status=0\n") == 1, "positive child normal exit"
+    observation["boundary"] = {"constructors": constructors, "prefix": prefix, "kill": killed,
+        "reap": reaped, "eof": eof, "ledger": ledger, "retirement": retired, "positive": positive,
+        "positive_reap": positive_reap, "before": before, "after_negative": after_negative,
+        "after_positive": after_positive, "done": done,
+        "frame_accounting": "Observed frame counts only; no equality or full memory restoration claim."}
+    return observation
+
+
+def inspect(path, observation, *, directional=False):
     capture, frames = packet_records(path)
     requests, replies, arp, census = [], [], [], []
     for index, timestamp, frame in frames:
@@ -157,7 +284,11 @@ def inspect(path, observation):
             assert (sender, target) == ((GUEST, HOST) if outgoing else (HOST, GUEST)), "unrelated ARP tuple"
             peer_mac = HOST_MAC if outgoing else GUEST_MAC
             if operation == 1:
-                assert target_mac in (b"\xff" * 6, peer_mac) and target_hw == b"\0" * 6, "ARP request destination"
+                if directional and outgoing:
+                    # The accepted pinned-smoltcp path broadcasts both fields.
+                    assert target_mac == target_hw == b"\xff" * 6, "guest ARP request destination/target hardware"
+                else:
+                    assert target_mac in (b"\xff" * 6, peer_mac) and target_hw == b"\0" * 6, "ARP request destination"
             else:
                 assert operation == 2 and target_mac == target_hw == peer_mac, "ARP reply destination"
             row["kind"] = "arp-request" if operation == 1 else "arp-reply"
@@ -226,12 +357,17 @@ def run(args, work):
         return processes[name]
 
     try:
-        buffers = {name: read_bound(path, MAX_ELF) for name, path in
-                   (("kernel", args.kernel_elf), ("parent", args.elf), ("child", args.client_elf))}
+        input_paths = [("kernel", args.kernel_elf), ("parent", args.elf),
+                       ("child", args.client_elf)]
+        if args.profile == BOUNDARY_PROFILE:
+            input_paths.append(("boundary_child", args.boundary_client_elf))
+        buffers = {name: read_bound(path, MAX_ELF) for name, path in input_paths}
         assert all(data.startswith(b"\x7fELF") and len(data) >= 64 for data in buffers.values()), "ELF input magic/size"
         assert buffers["parent"].count(buffers["child"]) == 1 and buffers["kernel"].count(buffers["parent"]) == 1 and buffers["kernel"].count(buffers["child"]) == 1, "exact unique child/parent/kernel embedding"
-        inputs = {name: identity(path, buffers[name]) for name, path in
-                  (("kernel", args.kernel_elf), ("parent", args.elf), ("child", args.client_elf))}
+        if args.profile == BOUNDARY_PROFILE:
+            assert buffers["boundary_child"] != buffers["child"], "distinct negative and positive consumers"
+            assert buffers["parent"].count(buffers["boundary_child"]) == 1 and buffers["kernel"].count(buffers["boundary_child"]) == 1, "exact unique boundary child embedding"
+        inputs = {name: identity(path, buffers[name]) for name, path in input_paths}
         tree = work / "iso-tree/boot/grub"
         tree.mkdir(parents=True)
         (tree.parent / "absd-kernel").write_bytes(buffers["kernel"])
@@ -292,7 +428,8 @@ def run(args, work):
                    "-object", f"filter-dump,id=cap0,netdev=n0,file={capture}"])
         iso_identity = identity(iso, read_bound(iso, bounds[iso]))
         qemu = start("qemu", command)
-        write(work / "LAUNCH.json", {"schema": "absd-native-echo-launch/1", "namespace": namespace,
+        launch_schema = "absd-native-echo-boundary-launch/1" if args.profile == BOUNDARY_PROFILE else "absd-native-echo-launch/1"
+        write(work / "LAUNCH.json", {"schema": launch_schema, "profile": args.profile, "namespace": namespace,
               "tap": tap, "qemu_pid_and_pgid": qemu.pid, "iso_builder_pid_and_pgid": builder.pid,
               "QEMU_command": command, "inputs": inputs, "ISO": iso_identity,
               "runner": identity(__file__, read_bound(__file__, MAX_LOG)), "Linux_peer": peer,
@@ -304,16 +441,22 @@ def run(args, work):
             time.sleep(0.05)
         left(args.timeout)
         raw_serial = read_bound(serial, MAX_LOG)
-        observation = native_output(raw_serial, qemu.returncode)
-        captured = inspect(capture, observation)
-        result = {"disposition": "PASS", "scope": "one fixed native ICMP Echo request and independent Linux-kernel reply",
-                  "observation": observation, "capture_result": captured, "unrun": UNRUN,
+        observation = (native_boundary_output(raw_serial, qemu.returncode)
+                       if args.profile == BOUNDARY_PROFILE else native_output(raw_serial, qemu.returncode))
+        captured = inspect(capture, observation, directional=args.profile == BOUNDARY_PROFILE)
+        scope = ("native constructor and fixed IPC refusals, one-slot exhaustion, actual partial-request child kill/reap and EOF retirement, then fresh Linux-kernel Echo"
+                 if args.profile == BOUNDARY_PROFILE else "one fixed native ICMP Echo request and independent Linux-kernel reply")
+        result = {"disposition": "PASS", "scope": scope,
+                  "profile": args.profile, "observation": observation, "capture_result": captured,
+                  "unrun": BOUNDARY_UNRUN if args.profile == BOUNDARY_PROFILE else UNRUN,
                   "evaluated_artifacts": {"native-echo.iso": iso_identity,
                       "iso-tree/boot/absd-kernel": inputs["kernel"],
                       "iso-tree/boot/grub/grub.cfg": identity(tree / "grub.cfg", boot_config),
                       "native-echo.serial.log": identity(serial, raw_serial),
                       "native-echo.pcap": captured["capture"]},
-                  "limits": "Scheduled boot-domain RTT/deadlines and captured order only; no physical accuracy, authenticated identity, future reachability, hardware transfer or native negative-case claim. Non-atomic I/O can retain an already-submitted first effect."}
+                  "limits": ("Finite native IPC/constructor negatives and measured EOF retirement only; malformed wire replies, replay, physical accuracy, authenticated identity, future reachability, hardware transfer and full memory restoration remain unqualified. Non-atomic I/O can retain an already-submitted first effect."
+                             if args.profile == BOUNDARY_PROFILE else
+                             "Scheduled boot-domain RTT/deadlines and captured order only; no physical accuracy, authenticated identity, future reachability, hardware transfer or native negative-case claim. Non-atomic I/O can retain an already-submitted first effect.")}
         left(args.timeout)
         return result
     finally:
@@ -379,8 +522,12 @@ def main():
     parser.add_argument("--kernel-elf", type=Path, required=True)
     parser.add_argument("--elf", type=Path, required=True, help="echo-service-probe.elf embedded in kernel")
     parser.add_argument("--client-elf", type=Path, required=True, help="ping-once.elf embedded in parent")
+    parser.add_argument("--profile", choices=("positive-v1", BOUNDARY_PROFILE), default="positive-v1")
+    parser.add_argument("--boundary-client-elf", type=Path, help="negative child embedded in the boundary parent")
     parser.add_argument("--timeout", type=int, default=120, help="outer wall timeout, setup through evidence inspection")
     args = parser.parse_args()
+    if (args.profile == BOUNDARY_PROFILE) != (args.boundary_client_elf is not None):
+        parser.error("--boundary-client-elf is required exactly for the boundary profile")
     if not 10 <= args.timeout <= 180:
         parser.error("timeout must be 10..180 seconds")
     work = args.work.resolve()
@@ -391,6 +538,8 @@ def main():
 
     signal.signal(signal.SIGTERM, stopped)
     signal.signal(signal.SIGINT, stopped)
+    schema = "absd-native-echo-boundary-proof/1" if args.profile == BOUNDARY_PROFILE else "absd-native-echo-proof/1"
+    unrun = BOUNDARY_UNRUN if args.profile == BOUNDARY_PROFILE else UNRUN
     try:
         result = run(args, work)
         artifacts = {}
@@ -406,9 +555,9 @@ def main():
                 assert all(artifacts[name][key] == expected[key] for key in ("bytes", "sha256")), "boot/evaluated artifact changed before final seal: " + name
         result["artifacts"] = artifacts
     except BaseException as error:
-        write(work / "RESULT.json", {"schema": "absd-native-echo-proof/1", "disposition": "FAIL", "error": repr(error), "unrun": UNRUN})
+        write(work / "RESULT.json", {"schema": schema, "profile": args.profile, "disposition": "FAIL", "error": repr(error), "unrun": unrun})
         raise
-    write(work / "RESULT.json", {"schema": "absd-native-echo-proof/1", **result})
+    write(work / "RESULT.json", {"schema": schema, **result})
     print("NATIVE ECHO PROOF PASS")
 
 

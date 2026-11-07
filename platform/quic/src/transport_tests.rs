@@ -529,3 +529,359 @@ fn ipv6_error_shape_and_receive_count_are_checked_before_consumption() {
     );
     assert_eq!(native.metrics.received, 0);
 }
+
+// These controls exercise only the IPv4 framed reply codec and pipe retirement.
+// A literal status reply does not establish an ICMP match or NIC submission.
+mod ipv4_feedback_reply_controls {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct Trace {
+        requests: Vec<Vec<u8>>,
+        reads: Vec<(usize, usize)>,
+        writes: Vec<(usize, usize)>,
+        drops: usize,
+        unread_reply_bytes: usize,
+        partial_request_bytes: usize,
+    }
+
+    // Separate from the existing Script: replies include their literal framing
+    // and all twelve v1 header bytes, including detail and reserved fields.
+    struct ReplyPipe {
+        request: Vec<u8>,
+        output: VecDeque<u8>,
+        replies: VecDeque<Vec<u8>>,
+        trace: Rc<RefCell<Trace>>,
+        now: u64,
+    }
+
+    impl ReplyPipe {
+        fn new(replies: Vec<Vec<u8>>) -> Self {
+            assert!(!replies.is_empty() && replies.len() <= 2);
+            assert!(replies.iter().all(|reply| reply.len() == 14));
+            Self {
+                request: Vec::new(),
+                output: VecDeque::new(),
+                replies: replies.into(),
+                trace: Rc::new(RefCell::new(Trace::default())),
+                now: 1,
+            }
+        }
+    }
+
+    impl Pipe for ReplyPipe {
+        fn now_ms(&self) -> u64 {
+            self.now
+        }
+        fn read(&mut self, bytes: &mut [u8]) -> Result<Option<usize>, i64> {
+            self.now += 1; // Even missing output reaches the existing 250ms bound.
+            let count = bytes.len().min(3).min(self.output.len());
+            self.trace.borrow_mut().reads.push((bytes.len(), count));
+            if count == 0 {
+                return Ok(None);
+            }
+            for byte in &mut bytes[..count] {
+                *byte = self.output.pop_front().unwrap();
+            }
+            Ok(Some(count))
+        }
+        fn write(&mut self, bytes: &[u8]) -> Result<Option<usize>, i64> {
+            self.now += 1;
+            let count = bytes.len().min(7);
+            self.trace.borrow_mut().writes.push((bytes.len(), count));
+            self.request.extend_from_slice(&bytes[..count]);
+            assert!(self.request.len() <= 1214);
+            if self.request.len() >= 2 {
+                let wanted = 2 + u16::from_be_bytes([self.request[0], self.request[1]]) as usize;
+                assert!((14..=1214).contains(&wanted) && self.request.len() <= wanted);
+                if self.request.len() == wanted {
+                    self.trace
+                        .borrow_mut()
+                        .requests
+                        .push(std::mem::take(&mut self.request));
+                    self.output.extend(
+                        self.replies
+                            .pop_front()
+                            .expect("unexpected extra native request"),
+                    );
+                }
+            }
+            Ok(Some(count))
+        }
+    }
+
+    impl Drop for ReplyPipe {
+        fn drop(&mut self) {
+            let mut trace = self.trace.borrow_mut();
+            trace.drops += 1;
+            trace.unread_reply_bytes = self.output.len();
+            trace.partial_request_bytes = self.request.len();
+        }
+    }
+
+    fn reply(opcode: u8, status: u8, detail: u16) -> Vec<u8> {
+        let [high, low] = detail.to_be_bytes();
+        vec![0, 12, 1, opcode, status, 0, 0, 0, 0, 0, 0, 0, high, low]
+    }
+
+    fn transport(replies: Vec<Vec<u8>>) -> (NativeTransport<ReplyPipe>, Rc<RefCell<Trace>>) {
+        let pipe = ReplyPipe::new(replies);
+        let trace = pipe.trace.clone();
+        (NativeTransport::new(pipe, PEER, 1000, || false), trace)
+    }
+
+    fn invoke(native: &mut NativeTransport<ReplyPipe>, opcode: u8) -> Result<(), Failure> {
+        if opcode == d::SEND {
+            native.send(&[0x5a; 1200]).map(|_| ())
+        } else {
+            assert_eq!(opcode, d::RECEIVE);
+            native.receive(&mut [0; d::MAX_DATAGRAM]).map(|_| ())
+        }
+    }
+
+    fn request_is_literal(trace: &Trace, index: usize, opcode: u8) {
+        let request = &trace.requests[index];
+        if opcode == d::SEND {
+            assert_eq!(request.len(), 1214);
+            assert_eq!(
+                &request[..14],
+                &[0x04, 0xbc, 1, 1, 0, 0, 10, 0, 2, 2, 0x11, 0x5b, 0x04, 0xb0]
+            );
+            assert_eq!(&request[14..], &[0x5a; 1200]);
+        } else {
+            assert_eq!(request, &[0, 12, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0x05, 0xc0]);
+        }
+    }
+
+    fn terminal(
+        native: &mut NativeTransport<ReplyPipe>,
+        trace: &Rc<RefCell<Trace>>,
+        failure: Failure,
+        unknown_send: bool,
+    ) {
+        assert_eq!(native.failure, Some(failure));
+        assert!(native.metrics.pipe_fenced);
+        assert_eq!(native.metrics.unknown_send, unknown_send);
+        assert!(
+            native
+                .metrics
+                .fence_ms
+                .is_some_and(|at| (1..1000).contains(&at))
+        );
+        let io = {
+            let trace = trace.borrow();
+            assert_eq!(trace.drops, 1);
+            assert_eq!(trace.unread_reply_bytes, 0);
+            assert_eq!(trace.partial_request_bytes, 0);
+            assert!(
+                trace
+                    .reads
+                    .iter()
+                    .any(|&(wanted, count)| count > 0 && count < wanted)
+            );
+            assert!(
+                trace
+                    .writes
+                    .iter()
+                    .any(|&(wanted, count)| count > 0 && count < wanted)
+            );
+            assert!(
+                trace
+                    .reads
+                    .iter()
+                    .all(|&(_, count)| (1..=3).contains(&count))
+            );
+            assert!(
+                trace
+                    .writes
+                    .iter()
+                    .all(|&(_, count)| (1..=7).contains(&count))
+            );
+            (trace.requests.len(), trace.reads.len(), trace.writes.len())
+        };
+        let counts = (
+            native.metrics.send_calls,
+            native.metrics.send_accepted,
+            native.metrics.send_bytes,
+            native.metrics.receive_calls,
+            native.metrics.received,
+            native.metrics.receive_bytes,
+        );
+        assert_eq!(native.metrics.close_calls, 0);
+        assert_eq!(native.send(b"must-not-retry"), Err(Failure::Fenced));
+        assert_eq!(
+            native.receive(&mut [0; d::MAX_DATAGRAM]),
+            Err(Failure::Fenced)
+        );
+        assert_eq!(native.close(), Err(Failure::Fenced));
+        let trace = trace.borrow();
+        assert_eq!(
+            (trace.requests.len(), trace.reads.len(), trace.writes.len()),
+            io
+        );
+        assert_eq!(trace.drops, 1);
+        assert_eq!(native.failure, Some(failure));
+        assert_eq!(
+            (
+                native.metrics.send_calls,
+                native.metrics.send_accepted,
+                native.metrics.send_bytes,
+                native.metrics.receive_calls,
+                native.metrics.received,
+                native.metrics.receive_bytes,
+            ),
+            counts
+        );
+        assert_eq!(native.metrics.sends_after_fence, 1);
+        assert_eq!(native.metrics.close_calls, 1);
+        assert!(!native.metrics.close_accepted);
+    }
+
+    #[test]
+    fn fragmentation_send_details_are_typed_and_never_accepted_or_retried() {
+        // 1228/1499 are codec-valid. A literal reply proves no native matcher
+        // event: equal/larger-than-quoted MTUs can be refused by that matcher.
+        for mtu in [0, 576, 1227, 1228, 1499] {
+            let (mut native, trace) = transport(vec![reply(d::SEND, 14, mtu)]);
+            let failure =
+                Failure::Native(d::Error::Icmp(absd_net::icmp::Error::FragmentationNeeded {
+                    mtu,
+                }));
+            assert_eq!(invoke(&mut native, d::SEND), Err(failure));
+            assert_eq!(native.metrics.send_calls, 1);
+            assert_eq!(native.metrics.send_accepted, 0);
+            assert_eq!(native.metrics.send_bytes, 0);
+            assert_eq!(native.metrics.receive_calls, 0);
+            request_is_literal(&trace.borrow(), 0, d::SEND);
+            terminal(&mut native, &trace, failure, false);
+        }
+    }
+
+    #[test]
+    fn fragmentation_receive_preserves_the_prior_locally_accepted_send() {
+        for mtu in [0, 576, 1227, 1228, 1499] {
+            let (mut native, trace) =
+                transport(vec![reply(d::SEND, 0, 0), reply(d::RECEIVE, 14, mtu)]);
+            assert_eq!(native.send(&[0x5a; 1200]), Ok(true));
+            assert_eq!(trace.borrow().drops, 0);
+            let failure =
+                Failure::Native(d::Error::Icmp(absd_net::icmp::Error::FragmentationNeeded {
+                    mtu,
+                }));
+            assert_eq!(invoke(&mut native, d::RECEIVE), Err(failure));
+            assert_eq!(native.metrics.send_calls, 1);
+            assert_eq!(native.metrics.send_accepted, 1);
+            assert_eq!(native.metrics.send_bytes, 1200);
+            assert_eq!(native.metrics.receive_calls, 1);
+            assert_eq!(native.metrics.received, 0);
+            assert_eq!(native.metrics.receive_bytes, 0);
+            request_is_literal(&trace.borrow(), 0, d::SEND);
+            request_is_literal(&trace.borrow(), 1, d::RECEIVE);
+            terminal(&mut native, &trace, failure, false);
+        }
+    }
+
+    #[test]
+    fn fragmentation_outside_zero_or_codec_range_refuses_both_opcodes() {
+        for mtu in [1, 575, 1500, u16::MAX] {
+            for opcode in [d::SEND, d::RECEIVE] {
+                let (mut native, trace) = transport(vec![reply(opcode, 14, mtu)]);
+                assert_eq!(invoke(&mut native, opcode), Err(Failure::Malformed));
+                assert_eq!(native.metrics.send_accepted, 0);
+                assert_eq!(native.metrics.received, 0);
+                request_is_literal(&trace.borrow(), 0, opcode);
+                terminal(&mut native, &trace, Failure::Malformed, opcode == d::SEND);
+            }
+        }
+    }
+
+    #[test]
+    fn path_mtu_send_uses_exact_maximum_below_actual_twelve_hundred_bytes() {
+        for maximum in [548, 1199] {
+            let (mut native, trace) = transport(vec![reply(d::SEND, 15, maximum)]);
+            let failure = Failure::Native(d::Error::PathMtu {
+                maximum: maximum as usize,
+            });
+            assert_eq!(invoke(&mut native, d::SEND), Err(failure));
+            assert_eq!(native.metrics.send_calls, 1);
+            assert_eq!(native.metrics.send_accepted, 0);
+            assert_eq!(native.metrics.send_bytes, 0);
+            assert_eq!(native.metrics.receive_calls, 0);
+            request_is_literal(&trace.borrow(), 0, d::SEND);
+            terminal(&mut native, &trace, failure, false);
+        }
+    }
+
+    #[test]
+    fn path_mtu_send_refuses_zero_below_minimum_and_nonreducing_maximum() {
+        for maximum in [0, 547, 1200, 1201, 1472, u16::MAX] {
+            let (mut native, trace) = transport(vec![reply(d::SEND, 15, maximum)]);
+            assert_eq!(invoke(&mut native, d::SEND), Err(Failure::Malformed));
+            assert_eq!(native.metrics.send_accepted, 0);
+            request_is_literal(&trace.borrow(), 0, d::SEND);
+            terminal(&mut native, &trace, Failure::Malformed, true);
+        }
+    }
+
+    #[test]
+    fn path_mtu_is_not_a_receive_status_even_with_send_valid_detail() {
+        for maximum in [0, 548, 1199] {
+            let (mut native, trace) = transport(vec![reply(d::RECEIVE, 15, maximum)]);
+            assert_eq!(invoke(&mut native, d::RECEIVE), Err(Failure::Malformed));
+            assert_eq!(native.metrics.receive_calls, 1);
+            assert_eq!(native.metrics.received, 0);
+            assert_eq!(native.metrics.send_calls, 0);
+            request_is_literal(&trace.borrow(), 0, d::RECEIVE);
+            terminal(&mut native, &trace, Failure::Malformed, false);
+        }
+    }
+
+    #[test]
+    fn feedback_error_envelope_refuses_peer_fields_and_unrelated_status_detail() {
+        for (opcode, status, detail) in [
+            (d::SEND, 14, 576),
+            (d::RECEIVE, 14, 576),
+            (d::SEND, 15, 548),
+        ] {
+            for offset in 6..12 {
+                let mut response = reply(opcode, status, detail);
+                response[offset] = 1;
+                let (mut native, trace) = transport(vec![response]);
+                assert_eq!(invoke(&mut native, opcode), Err(Failure::Malformed));
+                assert_eq!(native.metrics.send_accepted, 0);
+                assert_eq!(native.metrics.received, 0);
+                terminal(&mut native, &trace, Failure::Malformed, opcode == d::SEND);
+            }
+        }
+        for opcode in [d::SEND, d::RECEIVE] {
+            let (mut native, trace) = transport(vec![reply(opcode, 9, 576)]);
+            assert_eq!(invoke(&mut native, opcode), Err(Failure::Malformed));
+            terminal(&mut native, &trace, Failure::Malformed, opcode == d::SEND);
+        }
+    }
+
+    #[test]
+    fn feedback_wrong_version_opcode_or_nonzero_reserved_is_framing_failure() {
+        for (opcode, status, detail) in [
+            (d::SEND, 14, 576),
+            (d::RECEIVE, 14, 576),
+            (d::SEND, 15, 548),
+        ] {
+            for offset in [2, 3, 5] {
+                let mut response = reply(opcode, status, detail);
+                response[offset] ^= 1;
+                let (mut native, trace) = transport(vec![response]);
+                assert_eq!(invoke(&mut native, opcode), Err(Failure::Unknown(-22)));
+                assert_eq!(native.metrics.send_accepted, 0);
+                assert_eq!(native.metrics.received, 0);
+                terminal(
+                    &mut native,
+                    &trace,
+                    Failure::Unknown(-22),
+                    opcode == d::SEND,
+                );
+            }
+        }
+    }
+}

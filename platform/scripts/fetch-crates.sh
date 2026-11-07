@@ -22,7 +22,7 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 toolchain=${ABSD_RUST_TOOLCHAIN:-$HOME/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu}
 sysroot=$root/.staged-sysroot
 cache=${CARGO_HOME:-$HOME/.cargo}/registry/cache/index.crates.io-1949cf8c6b5b557f
-compat=$(dirname "$root")/absd-std-staged-compat
+compat=${root}.staged-compat
 
 die() { echo "fetch-crates: $*" >&2; exit 1; }
 

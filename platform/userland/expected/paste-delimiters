@@ -1,0 +1,9 @@
+status 0
+--- stdout
+b,b:b
+a,a:a
+a,a:x
+c,:c
+c,:c
+c,:c
+--- stderr

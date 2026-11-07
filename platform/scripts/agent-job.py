@@ -1314,7 +1314,7 @@ class FakeGuest:
     for the session shell, kill on client drop, and the quiescent census.
     Faults: `late_write` (commands outlive a dropped session),
     `handle_leak` (one handle per session), `ro_writes` (ro is ignored),
-    `tcc` (a /bin/tcc exists), `spawn_leak` (a nested shell may spawn),
+    `spawn_leak` (a nested shell may spawn),
     `forced_end` (sshd reports a forced session end), `bin_writable` (/bin
     is mounted read-write), `nofs_reads` (nofs is ignored), `no_release`
     (a session whose text contains this string is never released),
@@ -1325,7 +1325,7 @@ class FakeGuest:
 
     BOOT = "fedcba9876543210fedcba9876543210"
 
-    def __init__(self, tscale, late_write=False, handle_leak=False, ro_writes=False, tcc=False, spawn_leak=False,
+    def __init__(self, tscale, late_write=False, handle_leak=False, ro_writes=False, spawn_leak=False,
                  forced_end=False, bin_writable=False, nofs_reads=False, no_release=None, rendezvous=None,
                  refuse_conn=None):
         self.refuse_conn = refuse_conn
@@ -1345,8 +1345,6 @@ class FakeGuest:
                      "/var/log"}
         self.files = {f"/bin/{n}": f"ELF:{n}".encode() for n in
                       ("cat", "ls", "mkdir", "echo", "printenv", "sshtest", "absd-sh", "man", "uname")}
-        if tcc:
-            self.files["/bin/tcc"] = b"ELF:tcc"
         self.files["/share/man/whatis"] = b"cat(1) - copy\n"
         self.files["/etc/motd"] = b"Welcome\n"
         self.census()
@@ -1609,9 +1607,6 @@ class FakeJob:
             self.emit("stderr", f"{name}: {msg}\n".encode())
             return 1
 
-        if g.files[prog].startswith(b"\x7fELF-fake"):
-            write(b"agent-exec tcc ok\n")
-            return 0
         if name == "cat":
             if not args:
                 write(stdin)
@@ -1651,15 +1646,6 @@ class FakeJob:
             write((" ".join(args) + "\n").encode())
             return 0
         if name == "printenv":
-            return 0
-        if name == "tcc":
-            src, dst = args[0], args[args.index("-o") + 1]
-            for path, w in ((src, False), (dst, True)):
-                why = g.access(auth, sid, path, w)
-                if why:
-                    return fail(f"{path}: {why}")
-            with g.lock:
-                g.files[dst] = b"\x7fELF-fake\n" + g.files[src]
             return 0
         if name == "absd-sh" and args[:1] == ["-c"]:
             return self.shell_line(args[1], pid, depth=2)
@@ -1771,12 +1757,15 @@ def self_test(jobs_dir, scratch):
     ok("the job line routes through absd-sh with its narrowing words",
        r["line"].startswith('ro "/bin/cat" ') and ' nofs "/bin/printenv" > ' in r["line"])
 
-    good, lines, rec = run("compile-skip", jobs_dir / "compile-run.json", FakeGuest(tscale))
-    ok("compile-run is skipped without candidate 2", good and lines[-1].startswith("AGENT JOB SKIPPED job=compile-run"),
-       lines)
-    good, lines, rec = run("compile", jobs_dir / "compile-run.json", FakeGuest(tscale, tcc=True), candidate=2)
-    ok("compile-run with candidate 2: complete, 2 artifacts", good and lines[-1].startswith(
-        "AGENT JOB OK job=compile-run outcome=complete expected=complete artifacts=2 "), lines)
+    # The read-only analysis renamed and gated on candidate 2, for the runner's gate.
+    gated = load_job(dict(json.loads((jobs_dir / "readonly-analysis.json").read_text()), job="gated-analysis",
+                          requires="candidate-2"), jobs_dir, "gated-analysis")
+    good, lines, rec = run("gated-skip", [gated], FakeGuest(tscale))
+    ok("a job gated on candidate 2 is skipped without it", good
+       and lines[-1].startswith("AGENT JOB SKIPPED job=gated-analysis"), lines)
+    good, lines, rec = run("gated", [gated], FakeGuest(tscale), candidate=2)
+    ok("the gated job with candidate 2: complete, 4 artifacts", good and lines[-1].startswith(
+        "AGENT JOB OK job=gated-analysis outcome=complete expected=complete artifacts=4 "), lines)
 
     guest = FakeGuest(tscale)
     good, lines, rec = run("misbehaving", jobs_dir / "misbehaving.json", guest)
@@ -1984,10 +1973,11 @@ def self_test(jobs_dir, scratch):
        and all(value(rr["trusted"])["census"]["scope"] == "job" for rr in receipts.values()), rows[:2])
 
     lines = []
-    good = run_workers(FakeGuest(tscale, tcc=True), scratch / "three.jsonl",
-                       [load_jobs(jobs_dir / f) for f in ("compile-run.json", "readonly-analysis.json", "misbehaving.json")],
+    good = run_workers(FakeGuest(tscale), scratch / "three.jsonl",
+                       [(None, [gated])] + [load_jobs(jobs_dir / f) for f in ("readonly-analysis.json", "misbehaving.json")],
                        candidate=2, tscale=tscale, settle_timeout=3, out=lines.append, step=0.01)
-    ok("job mode: the three example job files as concurrent workers, misbehaving set included, all as expected",
+    ok("job mode: the two example job files and the gated job as concurrent workers, misbehaving set included, "
+       "all as expected",
        good and "AGENT JOB SET OK set=misbehaving worker=misbehaving jobs=11 " in "\n".join(lines)
        and lines[-1].startswith("AGENT JOB QUIESCENT OK workers=3 "), [x for x in lines if "FAILED" in x] or lines[-1])
 

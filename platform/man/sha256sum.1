@@ -1,0 +1,55 @@
+.Dd November 3, 2026
+.Dt SHA256SUM 1
+.Os ABSD
+.Sh NAME
+.Nm sha256sum
+.Nd compute or check SHA-256 file digests
+.Sh SYNOPSIS
+.Nm
+.Op Ar file ...
+.Nm
+.Fl c Ar list
+.Sh DESCRIPTION
+Print a lowercase hexadecimal SHA-256 digest, two spaces, and a file name
+for each input.
+No operands reads standard input, labelled
+.Ql - ;
+an explicit
+.Ql -
+also reads standard input.
+.Pp
+.Fl c Ar list
+reads a UTF-8 list file.
+Each nonempty line must contain a 64-character expected digest, two spaces,
+and the exact file name.
+The expected digest is compared without letter case.
+Relative names resolve from the working directory, not the list's directory.
+Print
+.Ql name: OK
+or
+.Ql name: FAILED ;
+continue after malformed lines, mismatches and unreadable files.
+An empty list succeeds without checking anything.
+GNU binary-marker and escaped-name list forms are not implemented.
+.Pp
+Only a first
+.Fl c
+selects check mode and requires exactly one list operand.
+Other dash-leading arguments except
+.Ql -
+are usage errors; there is no
+.Ql --
+terminator.
+The command reads visible files, never changes them, and provides byte
+consistency rather than proof of origin.
+.Sh EXIT STATUS
+0 after successful hashing, or when all nonempty list entries match;
+1 for a mismatch, malformed list or input error; 2 for usage.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+sha256sum /home/operator/document
+sha256sum -c /home/operator/SHA256SUMS
+.Ed
+.Sh SEE ALSO
+.Xr cat 1 ,
+.Xr filesystem 7

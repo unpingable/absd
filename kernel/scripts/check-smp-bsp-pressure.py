@@ -6,6 +6,7 @@ import importlib.util
 import re
 import sys
 from pathlib import Path
+from kernel_capacities import MAX_PROCESS_SLOTS
 
 
 sys.dont_write_bytecode = True
@@ -21,6 +22,12 @@ check_placement = _app.check_placement
 
 MAX_OUTPUT_BYTES = 1 << 20
 U64_MAX = (1 << 64) - 1
+
+
+# The suite's terminal frame summary. The boot-time whole-RAM disclosure
+# (`FRAMES TRACKED usable=...`, src/whole_ram.rs) shares the `FRAMES ` prefix
+# but is not a summary; matching it broke the terminal-summary chronology.
+FRAME_SUMMARY = 'FRAMES baseline='
 
 
 def check_timer_calibration(lines, cpus, calibrated_index):
@@ -263,7 +270,7 @@ def check_lines(lines, cpus, mode, expected_peak=None):
          and number(refusal_summary.get('kinds'), 'refusal histogram kinds') == len(refusal_rows)
          and number(refusal_summary.get('events'), 'refusal histogram events') == refusal_total,
          'BSP refusal histogram bounded count/kinds/event sum mismatch')
-    terminal_prefixes = ('FRAMES ', 'DURABLE status=', 'EXTERNAL status=')
+    terminal_prefixes = (FRAME_SUMMARY, 'DURABLE status=', 'EXTERNAL status=')
     terminal_indices = [i for i, line in enumerate(lines)
                         if line.startswith(terminal_prefixes)]
     need(terminal_indices and bsp_summary_index < refusal_summary_index < min(terminal_indices)
@@ -333,7 +340,7 @@ def check_lines(lines, cpus, mode, expected_peak=None):
         number(f.get('seq'), 'first user-entry sequence')
         slot = number(f.get('slot'), 'first user-entry slot')
         epoch = number(f.get('epoch'), 'first user-entry epoch')
-        need(0 <= slot < 16 and epoch > 0,
+        need(0 <= slot < MAX_PROCESS_SLOTS and epoch > 0,
              'first user-entry slot/epoch is outside the live task range')
         need(calibrated_index < index and 0 <= cpu < cpus and cpu not in trap_cpus,
              'first user-entry CPU missing/duplicate or predates calibration')
@@ -394,15 +401,15 @@ def check_lines(lines, cpus, mode, expected_peak=None):
          and number(sf.get('calls'), 'BSP init syscall count') > 0,
          'BSP init terminal summary identity/accounting mismatch')
     peak = number(sf.get('peak-slots'), 'BSP init peak process slots')
-    need(reserved + 1 <= peak <= 16,
+    need(reserved + 1 <= peak <= MAX_PROCESS_SLOTS,
          'BSP init peak process occupancy falls outside the reserved process-table bound')
     if mode == 'suite':
-        need(peak == 16, 'suite process pressure did not reach the exact 16-slot peak')
+        need(peak == MAX_PROCESS_SLOTS, 'suite process pressure did not reach the exact process-table peak')
     if expected_peak is not None:
         need(peak == expected_peak,
              f'BSP workload peak process occupancy mismatch: expected {expected_peak}, got {peak}')
 
-    frame_rows = selected(lines, 'FRAMES ')
+    frame_rows = selected(lines, FRAME_SUMMARY)
     frame_bounds = selected(lines, 'SMP BSP FRAME BOUND ')
     if mode == 'suite':
         need(len(frame_rows) == len(frame_bounds) == 1,
@@ -431,7 +438,7 @@ def check_lines(lines, cpus, mode, expected_peak=None):
              'suite frame allocation did not return to zero baseline')
         need(number(fr['peak'], 'FRAMES peak') >= 0,
              'suite frame allocation peak is negative')
-        ordinary_slots = 16 - reserved
+        ordinary_slots = MAX_PROCESS_SLOTS - reserved
         ordinary_bound = ordinary_slots * 24 + 8192
         total_bound = ordinary_bound + 33 * reserved
         need(fb == {'reserved': str(reserved), 'actor-frames': str(33 * reserved),
@@ -758,7 +765,7 @@ def negative_controls(lines, cpus, mode, expected_peak):
         return rows
 
     def negative_frame_peak(rows):
-        i = first(rows, 'FRAMES ')
+        i = first(rows, FRAME_SUMMARY)
         rows[i] = re.sub(r'(?<![A-Za-z0-9_-])peak=\d+', 'peak=-1', rows[i], count=1)
         i = first(rows, 'SMP BSP FRAME BOUND ')
         rows[i] = re.sub(r'peak=\d+', 'peak=-1', rows[i], count=1)
@@ -768,7 +775,7 @@ def negative_controls(lines, cpus, mode, expected_peak):
         rows.pop(first(rows, 'SMP BSP FRAME BOUND ')); return rows
 
     def nonzero_final_frames(rows):
-        i = first(rows, 'FRAMES ')
+        i = first(rows, FRAME_SUMMARY)
         rows[i] = re.sub(r'final=\d+', 'final=1', rows[i], count=1)
         return rows
 
@@ -834,7 +841,7 @@ def negative_controls(lines, cpus, mode, expected_peak):
     else:
         def unexpected_frame_bound(rows):
             actor_frames = 33 * (2 * (cpus - 1))
-            ordinary_slots = 16 - 2 * (cpus - 1)
+            ordinary_slots = MAX_PROCESS_SLOTS - 2 * (cpus - 1)
             ordinary_bound = ordinary_slots * 24 + 8192
             frame_row = (f'SMP BSP FRAME BOUND reserved={2 * (cpus - 1)} '
                          f'actor-frames={actor_frames} ordinary-slots={ordinary_slots} '

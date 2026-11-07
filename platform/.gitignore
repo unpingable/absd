@@ -1,5 +1,6 @@
 /target/
 /.staged-sysroot/
+/.staged-sysroot
 /probe.elf
 /pulse-std.elf
 /exit-std.elf
@@ -37,6 +38,7 @@
 /nightshift-ag-resolver-short-ttl.elf
 /ssh/target/
 /sshd.elf
+/absd-sftp.elf
 /sshd-regenerate.elf
 /.ssh-work/
 /commands/
@@ -45,6 +47,7 @@
 /.exec-work/
 /sshtest.elf
 /sh-launch.elf
+/absd-logd.elf
 /sh/target/
 /.sh-work/
 /netd-probe.elf
@@ -77,6 +80,8 @@
 /.observe-work/
 /.contain-build/
 /.contain-work/
+/.fence-build/
+/.fence-work/
 /c/absd-c/tree/
 /ssh/tree/
 /.agent-exec-work/
@@ -108,3 +113,10 @@
 /fixtures/native-quic/pki/*.der
 /quic-client.elf
 /quic-service-probe.elf
+
+/.staged-ssh/
+/target-terminal-host/
+/target-terminal-native/
+
+/.logging-target-host/
+/.logging-target-native/

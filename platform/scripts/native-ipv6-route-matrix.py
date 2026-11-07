@@ -77,7 +77,7 @@ def write(path, value):
 
 
 # Load the exact accepted helper buffer once, without rewriting its source,
-# globals, profiles or classifier. Guest execution requires a dedicated VM.
+# globals, profiles or classifier. Neither this file nor its tests runs on build_host.
 _helper_path = ROOT / "scripts" / HELPER
 _helper_bytes = bounded(_helper_path, MAX_LOG)
 assert digest(_helper_bytes)["sha256"] == HELPER_HASH, "accepted helper changed"

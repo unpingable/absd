@@ -1,0 +1,32 @@
+# The disk installer's pinned tools and boot files (scripts/install_disk.py,
+# docs/INSTALL-DISK.md). The layout itself (ESP 256 MiB at LBA 2048, the
+# 2 GiB ABSD partition after it, the ABSD type GUID) is fixed in the
+# installer; this file holds what shapes the ESP's bytes.
+
+[grub]
+modules = "part_gpt fat normal configfile search search_fs_uuid multiboot2 all_video gfxterm echo halt"
+# Embedded in BOOTX64.EFI: find the ESP by its FAT serial, read its config.
+early_cfg = """search --no-floppy --fs-uuid --set=root {fat_uuid}
+configfile /BOOT/GRUB.CFG
+"""
+config = """insmod all_video
+set gfxmode=1024x768,auto
+set gfxpayload=keep
+set default=0
+set timeout=5
+menuentry 'ABSD' --id absd {{
+    {kernel_line}
+    boot
+}}
+"""
+
+[pins]
+# Checked before the target is opened; a host with another version of any
+# of these is refused. They write the GPT (gdisk), the FAT (dosfstools,
+# mtools) and the EFI loader (grub-*).
+[pins.packages]
+dosfstools = "4.2-1.1build1"
+gdisk = "1.0.10-1build1"
+grub-common = "2.12-1ubuntu7.3"
+grub-efi-amd64-bin = "2.12-1ubuntu7.3"
+mtools = "4.0.43-1build1"

@@ -25,7 +25,7 @@ class Fake:
         self.t=types.SimpleNamespace(boots=1,all_images=lambda:0,system_objects=self.system_objects)
         self.cases=[c for c in cp.load_cases(self.repo/'cports/cases.tsv') if c.name in cw.EXCL[:3]]
         self.first={};self.a17={'denied':None};self.a17_printed=False;self.steps=0;self.speedtest_limit=False
-        self.n=0;self.pin=set()
+        self.n=0;self.pin=set();self.fenced=None
     def system_objects(self):return [(p,False,False,7,hashlib.sha256(v).hexdigest()) for p,v in sorted(self.files.items())]
     def objects(self):return {o[0]:o for o in self.system_objects()}
     def linux_dir(self,cwd):return self.work/'linux'/cwd
@@ -226,16 +226,22 @@ class Cases(unittest.TestCase):
         for name in ['restart_rounds','restart_repeat',
                      'run_shell_case','judge','judge_limit_prefix','limit_case','timed_out','check_outputs']:
             self.assertEqual(body(old,name),body(new,name),name)
-        # Only restart-local session accounting changes in cut(); preserve
-        # the original stop, replay and resource assertions byte-for-AST.
-        cut = next(n for n in ast.walk(new) if isinstance(n, ast.FunctionDef) and n.name == 'cut')
-        resets = [n for n in cut.body if isinstance(n, ast.Assign)
-                  and isinstance(n.targets[0], ast.Attribute) and n.targets[0].attr == 'connections'
-                  and isinstance(n.targets[0].value, ast.Name) and n.targets[0].value.id == 'self']
-        self.assertEqual(len(resets), 1)
-        self.assertEqual(ast.literal_eval(resets[0].value), 0)
-        cut.body.remove(resets[0])
-        self.assertEqual(body(old, 'cut'), body(new, 'cut'))
+        # cut(): the stop, the copy and its CPORTS CUT line stay frozen
+        # byte-for-AST. Under the owner's storage fence (coordination record #63 (b))
+        # the writable restart that followed is replaced by the strict cold
+        # refusal: cut() never calls self.t.start and refuses through
+        # storage_fence_guest.refused_cold_boot as plain fsd (served=False).
+        def fn(tree, name):return next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+        old_cut, cut = fn(old, 'cut'), fn(new, 'cut')
+        dump = lambda nodes: [ast.dump(n, include_attributes=False) for n in nodes]
+        self.assertEqual(dump(old_cut.body[2:10]), dump(cut.body[1:9]))
+        calls = [ast.unparse(n.func) for n in ast.walk(cut) if isinstance(n, ast.Call)]
+        self.assertNotIn('self.t.start', calls)
+        self.assertIn('self.t.start', [ast.unparse(n.func) for n in ast.walk(old_cut) if isinstance(n, ast.Call)])
+        refusals = [n for n in ast.walk(cut) if isinstance(n, ast.Call)
+                    and ast.unparse(n.func) == 'fence_guest.refused_cold_boot']
+        self.assertEqual(len(refusals), 1)
+        self.assertEqual({k.arg: ast.unparse(k.value) for k in refusals[0].keywords}, {'served': 'False'})
     def test_expected_timeout_is_attempted_kept_and_reset(self):
         m=self.fixture();m.cases=[c for c in cp.load_cases(m.repo/'cports/cases.tsv') if c.name=='sqlite.speedtest1-20']
         (m.work/'linux/speedtest').mkdir();attempts=[]

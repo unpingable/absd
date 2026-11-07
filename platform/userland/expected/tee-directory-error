@@ -1,0 +1,10 @@
+status 1
+--- stdout
+b
+a
+a
+c
+c
+c
+--- stderr
+/bin/tee: open dir: Is a directory

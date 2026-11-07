@@ -63,19 +63,16 @@ class Rehearsal:
 
     def verify_end(self, state):
         expected = {self.prefix: True, self.prefix + '/in.txt': False}
-        if any(c.id == 'C12a' for c in self.calls):
-            expected.update({self.prefix + '/t.c': False, self.prefix + '/t': False})
         extra = {p: v for p, v in state.items() if p not in self.initial}
         wb.require(set(extra) == set(expected), 'fixed-case effect inventory differs')
         wb.require({p: v for p, v in state.items() if p in self.initial} == self.initial,
                    'fixed-case changed an initial logical object')
         for p, directory in expected.items():
             wb.require(extra[p][0] == directory and not extra[p][1], 'generated object kind/authority differs')
-        for cid, name in (('C3b', 'in.txt'), ('C12a', 't.c')):
-            c = next((c for c in self.calls if c.id == cid), None)
-            if c:
-                wb.require(extra[self.prefix + '/' + name][2] == self.ae.sha256(c.stdin),
-                           'generated input content differs')
+        c = next((c for c in self.calls if c.id == 'C3b'), None)
+        if c:
+            wb.require(extra[self.prefix + '/in.txt'][2] == self.ae.sha256(c.stdin),
+                       'generated input content differs')
         return state
 
     def reset(self):

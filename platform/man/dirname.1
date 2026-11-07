@@ -1,0 +1,44 @@
+.Dd November 5, 2026
+.Dt DIRNAME 1
+.Os ABSD
+.Sh NAME
+.Nm dirname
+.Nd print the directory component of a path string
+.Sh SYNOPSIS
+.Nm
+.Ar path
+.Sh DESCRIPTION
+Print the parent directory of
+.Ar path ,
+followed by a newline.
+Trailing slashes are ignored before finding the last component.
+A path without a directory component, including an empty string, produces
+a single period;
+the root path produces
+.Ql / .
+The path need not exist: no file is opened.
+Quote a path containing spaces and use
+.Ql --
+before an operand beginning with a dash.
+.Sh UNSUPPORTED ON ABSD
+This is the unmodified sbase 0.1 utility from the pinned archive, using
+Picolibc's path-string operation.
+It takes exactly one operand; GNU multiple-operand and NUL-output options
+are not provided.
+It uses the inherited output stream and acquires no additional authority.
+Host reference cases and ABSD ELF checks are distinct from guest execution;
+see
+.Xr sbase 7 .
+.Sh EXIT STATUS
+0 on success; nonzero for invalid options, missing or extra operands,
+or output errors.
+Diagnostics use standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+dirname /home/operator/notes.txt
+dirname "two words/notes.txt"
+.Ed
+.Sh SEE ALSO
+.Xr basename 1 ,
+.Xr filesystem 7 ,
+.Xr sbase 7

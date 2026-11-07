@@ -694,7 +694,9 @@ fn release_with_already_absent_scratch_completes_successfully() {
 fn a_session_mount_list_naming_the_recovery_state_is_refused_at_bind() {
     let disk = image();
     let mut server = server(&disk);
-    for state in [b"/var/state".as_slice(), b"/var/state/recovery", b"/var/state/facts", b"/var/state.new", b"/var"] {
+    for state in [b"/var/state".as_slice(), b"/var/state/recovery", b"/var/state/facts", b"/var/state.new",
+        b"/var/recovery.guard", b"/var/recovery.guard/child", b"/var/recovery.resume",
+        b"/var/recovery.resume/x", b"/var"] {
         let mut mounts = session_mounts(b"one");
         mounts.push(Mount::new(state, false));
         let frame = Frame::request(op::BIND).u8(1).u8(0).mounts(&mounts).finish();
@@ -1084,7 +1086,8 @@ fn a_child_binding_only_narrows_the_session() {
     );
     // The recovery state and anything above it is never a session path,
     // however it is asked for.
-    for state in [b"/var/state".as_slice(), b"/var/state/facts", b"/var/state.new", b"/var"] {
+    for state in [b"/var/state".as_slice(), b"/var/state/facts", b"/var/state.new",
+        b"/var/recovery.guard", b"/var/recovery.guard/child", b"/var"] {
         assert_eq!(h.status(1, list(&[Mount::new(state, false)])), status::INVALID, "{}", core::str::from_utf8(state).unwrap());
     }
     // A spare still held by an earlier child's tree is refused.
@@ -1109,6 +1112,64 @@ fn a_child_binding_only_narrows_the_session() {
     );
     assert_eq!(h.open(3, 1, b"/home/operator/a"), status::DENIED);
     assert_eq!(h.open(4, 1, b"/home/operator/sub/f"), status::DENIED);
+}
+
+#[test]
+fn the_idle_commit_is_timed_from_the_first_pending_change_and_commit_restarts_it() {
+    // P0's probe (src/bin/fsd_probe.rs `recovery-pending-observed`) relies
+    // on this: its session's own log line starts the idle window, so an
+    // overwrite soon after is committed with it early; a COMMIT first makes
+    // the overwrite start a full window of its own.
+    let disk = image();
+    let mut h = Harness::new(&disk);
+    assert_eq!(h.bind(1, &[], &session_mounts(b"s1")), 0);
+    let handle = h.open(1, 2 | 8, b"/home/operator/f");
+    assert_eq!(
+        h.status(1, Frame::request(op::CLOSE).u64(handle as u64).finish()),
+        0
+    );
+    let committed_size = |disk: &Disk| {
+        Fs::mount(disk.clone(), false)
+            .unwrap()
+            .stat(b"/home/operator/f")
+            .unwrap()
+            .size
+    };
+    let write_at = |h: &mut Harness, offset: u64| {
+        let handle = h.open(1, 2, b"/home/operator/f");
+        let write = Frame::request(op::WRITE_AT)
+            .u64(handle as u64)
+            .u64(offset)
+            .bytes(b"abcd")
+            .finish();
+        assert_eq!(h.status(1, write), 4);
+    };
+    let commit = |h: &mut Harness| {
+        let (code, _) = h.call(1, Frame::request(op::COMMIT).finish());
+        assert_eq!(code, 0);
+    };
+    let window = crate::server::COMMIT_TICKS;
+    // Without a commit: an earlier pending change at `start`, the write a
+    // little later; the idle commit at `start + window` takes the write too.
+    let start = h.now;
+    h.server.note_write(start);
+    h.now = start + window - 50;
+    write_at(&mut h, 0);
+    assert_eq!(committed_size(&disk), 0);
+    assert!(h.server.idle_commit(start + window).unwrap());
+    assert_eq!(committed_size(&disk), 4);
+    // With a commit first: the write starts its own window.
+    commit(&mut h);
+    let start = h.now;
+    h.server.note_write(start);
+    h.now = start + window - 50;
+    commit(&mut h);
+    write_at(&mut h, 4);
+    assert!(!h.server.idle_commit(start + window).unwrap());
+    assert!(!h.server.idle_commit(h.now + window - 1).unwrap());
+    assert_eq!(committed_size(&disk), 4);
+    assert!(h.server.idle_commit(h.now + window).unwrap());
+    assert_eq!(committed_size(&disk), 8);
 }
 
 #[test]
@@ -1387,6 +1448,7 @@ fn logs_are_bounded_by_rotation_and_count_dropped_lines() {
         b"1970-01-01T00:00:00Z fsd: ready\n"
     );
     assert_eq!(line(None, "sshd", "a\x07b"), b"- sshd: a?b\n");
+    assert_eq!(line(None, "evil\x1b\n: kernel", "text"), b"- evil????kernel: text\n");
     assert_eq!(line(None, "sshd", &"x".repeat(2000)).len(), MAX_LINE);
     assert!(
         !must_rotate(0, 100) && !must_rotate(LIMIT - 100, 100) && must_rotate(LIMIT - 100, 101)
@@ -2371,6 +2433,25 @@ fn version_answers_on_every_channel_with_the_compiled_identity() {
 }
 
 #[test]
+fn the_handshake_bound_covers_the_file_servers_own_startup() {
+    use crate::version::{ANSWER_TICKS, Refusal, TIMEOUT, check};
+    // Clients start together with the file server and their request waits
+    // in the channel until the server's loop takes it, so the bound is a
+    // bound on the server's startup: the kernel bounds one wedged device
+    // operation at 20_000 ticks (ata POLL_LIMIT) and the startup is several
+    // operations; a storage latency episode stretched a 0.6 s startup to
+    // 11_168 ms (acceptance-7, 2026-10-31) and the former 5000-tick bound
+    // refused the served worker pre-ready. Sixty seconds, no less.
+    assert!(ANSWER_TICKS >= 60_000, "handshake bound shrank below the file server's startup allowance");
+    assert!(ANSWER_TICKS >= 3 * 20_000);
+    assert!(ANSWER_TICKS > 5 * 11_168);
+    // The kernel's timeout code still reads as the one-line no_answer refusal.
+    assert_eq!(check(Err(TIMEOUT), false), Err(Refusal::NoAnswer));
+    assert_eq!(check(Err(TIMEOUT), true), Err(Refusal::NoAnswer));
+    assert_eq!(Refusal::NoAnswer.line(), "FSD PROTOCOL REFUSED reason=no_answer");
+}
+
+#[test]
 fn the_client_check_refuses_every_wrong_answer_with_one_line() {
     use crate::version::{Refusal, check};
     let answer = |protocol: u32, release: &[u8]| {
@@ -2599,4 +2680,97 @@ fn health_reads_this_boots_recovery_line_and_nothing_else() {
     let foreign = log(&[("sshd", &format!("started: boot {b}, uptime 1 ms")), ("sshd", "FSD RECOVERY seq=1 streak=0 previous=none")]);
     assert_eq!(generation(b"", &foreign, &b), Err(Unknown::NoBootLine));
     assert_eq!(generation(b"", format!("started: boot {b}, x\n").as_bytes(), &b), Err(Unknown::NoBootLine));
+}
+
+#[test]
+fn civil_correction_generation_invalidates_the_real_filesystem_clock_cache() {
+    let disk=image();let mut h=Harness::new(&disk);
+    h.server.observe_clock_generation(1);h.server.clock(1000,||Some(1_800_000_000));
+    h.server.fs.mkdir(b"/before").unwrap();assert_eq!(h.server.fs.stat(b"/before").unwrap().mtime,1_800_000_000);
+    h.server.clock(1001,||Some(100));h.server.fs.mkdir(b"/cached").unwrap();assert_eq!(h.server.fs.stat(b"/cached").unwrap().mtime,1_800_000_000);
+    h.server.observe_clock_generation(2);h.server.clock(1002,||Some(100));
+    h.server.fs.mkdir(b"/after").unwrap();assert_eq!(h.server.fs.stat(b"/after").unwrap().mtime,100);
+    h.server.forget_clock();h.server.clock(1003,||None);h.server.fs.mkdir(b"/unknown").unwrap();assert_eq!(h.server.fs.stat(b"/unknown").unwrap().mtime,0);
+}
+
+#[test]
+fn journal_read_write_and_retention_authority_are_distinct() {
+    let disk = image();
+    let mut h = Harness::new(&disk);
+    assert_eq!(h.bind(1, &[], &[Mount::new(b"/var/log", true)]), status::INVALID);
+    assert_eq!(h.bind(1, &[], &[Mount::new(b"/var", true)]), status::INVALID);
+    assert_eq!(h.bind(1, &[], &[Mount::new(b"/var/log", false)]), 0);
+    assert_eq!(h.write_file(1, b"/var/log/forged", b"kernel authentication accepted"), status::READ_ONLY);
+    assert_eq!(h.path_op(1, op::UNLINK, b"/var/log/journal/current"), status::READ_ONLY);
+    assert_eq!(h.bind(2, &[], &[Mount::new(b"/home/operator", false)]), 0);
+    assert_eq!(h.open(2, 1, b"/var/log/journal/current"), status::NOT_FOUND);
+}
+
+#[test]
+fn dedicated_logger_channel_restarts_retire_opens_and_refuse_other_authority() {
+    use crate::journal::{Journal,Store};
+    use crate::journal_rpc::RpcStore;
+    let disk=image();let mut h=Harness::new(&disk);
+    h.server.fs.mkdir(b"/var").unwrap();h.server.fs.mkdir(b"/var/log").unwrap();
+    assert!(h.server.attach_logger(6));
+    assert!(!h.server.attach_logger(0));assert!(!h.server.attach_logger(6));
+    assert_eq!(h.status(0,Frame::request(op::LOGGER_BEGIN).finish()),status::DENIED);
+    assert_eq!(h.bind(1,&[],&[Mount::new(b"/var/log",false)]),0);
+    assert_eq!(h.status(1,Frame::request(op::LOGGER_BEGIN).finish()),status::DENIED);
+    assert_eq!(h.status(6,Frame::request(op::BIND).u8(2).u8(0).mounts(&[]).finish()),status::DENIED);
+    assert_eq!(h.open(6,2,b"/ssh/host_ed25519_seed"),status::NOT_FOUND);
+    assert_eq!(h.open(6,2,b"/var/log/fsd"),status::NOT_FOUND);
+    assert_eq!(h.open(6,10,b"/var/log/not-a-journal-file"),status::NOT_FOUND);
+    let boot=*b"0123456789abcdef0123456789abcdef";
+    {
+        let mut rpc=RpcStore::new(|frame|Ok(h.call(6,frame)));
+        rpc.begin().unwrap();
+        let mut j=Journal::new(boot);j.open(&mut rpc).unwrap();
+        let r=j.capture(1,"service.sshd",3,Some(9),0,b"before collector crash").unwrap();j.persist(&mut rpc,&r);j.sync(&mut rpc).unwrap();
+        // Leave live file handles, just as a dying process does.
+    }
+    assert!(h.server.capacity().1>0);
+    {
+        let mut rpc=RpcStore::new(|frame|Ok(h.call(6,frame)));
+        rpc.begin().unwrap();let mut j=Journal::new(boot);j.open(&mut rpc).unwrap();assert_eq!(j.resumed_kernel,Some(9));
+        let r=j.capture(2,"service.sshd",3,Some(10),0,b"after collector restart").unwrap();j.persist(&mut rpc,&r);j.sync(&mut rpc).unwrap();
+    }
+    assert_eq!(h.write_file(1,b"/var/log/journal/current",b"forged"),status::READ_ONLY);
+    assert!(h.read_all(1,b"/var/log/journal/current").unwrap().windows(23).any(|w|w==b"after collector restart"));
+}
+
+#[test]
+fn logger_handoff_drops_partial_old_request_and_ignores_old_replies() {
+    let disk=image();let mut h=Harness::new(&disk);h.server.fs.mkdir(b"/var").unwrap();h.server.fs.mkdir(b"/var/log").unwrap();
+    assert!(h.server.attach_logger(6));
+    let old_seq=(100u64<<32)|7;let new_seq=(101u64<<32)|1;
+    let mut old=Frame::request(op::WRITE_AT).u64(999).u64(0).bytes(b"not a completed old request").finish();proto::stamp_seq(&mut old,old_seq);
+    let mut hello=Frame::request(op::LOGGER_BEGIN).finish();proto::stamp_seq(&mut hello,new_seq);
+    let mut inbox=Inbox::new();inbox.push(&old[..proto::HEADER+3]);inbox.push(&hello);assert_eq!(inbox.take(),Taken::Nothing);inbox.idle();
+    let Taken::Frame{seq,body}=inbox.take()else{panic!("new logger hello not recovered")};assert_eq!(seq,new_seq);
+    let mut answer=h.server.dispatch(6,&body,&quiet,1);proto::stamp_seq(&mut answer,seq);
+    let mut stale=Frame::reply(123).bytes(b"old reply").finish();proto::stamp_seq(&mut stale,old_seq);
+    let mut replies=Inbox::new();replies.push(&stale);replies.push(&answer);
+    let body=replies.take_for(new_seq).unwrap();assert_eq!(i64::from_le_bytes(body[..8].try_into().unwrap()),0);
+    // Also recover a reader that died in a reply header, at the real
+    // bounded transport's quiet/resynchronization boundary.
+    let mut partial=Frame::reply(0).bytes(&[b'x';100]).finish();proto::stamp_seq(&mut partial,old_seq);
+    let mut replies=Inbox::new();replies.push(&partial[..proto::HEADER+3]);replies.push(&answer);assert!(replies.take_for(new_seq).is_none());replies.idle();assert!(replies.take_for(new_seq).is_some());
+}
+
+#[test]
+fn six_shell_groups_bind_all_eighteen_session_channels_without_touching_logger() {
+    let disk=image();let fs=Fs::mount(disk,true).unwrap();
+    let mut h=Harness{server:Server::new(fs,19,vec![Mount::new(b"/ssh",false),Mount::new(b"/bin",false)]),pipes:quiet,now:1};
+    assert!(h.server.attach_logger(19));assert_eq!(h.server.channels(),20);
+    for primary in [7u8,10,13,16,1,4] {
+        let name=format!("session-{primary}");
+        assert_eq!(h.bind(primary,&[primary+1,primary+2],&session_mounts(name.as_bytes())),0);
+    }
+    assert_eq!(h.server.capacity().0,6);
+    assert_eq!(h.bind(19,&[],&session_mounts(b"logger-must-stay-private")),status::BUSY);
+    assert_eq!(h.bind(7,&[8,9],&session_mounts(b"already-bound")),status::BUSY);
+    assert!(h.status(CONTROL,Frame::request(op::RELEASE).u8(7).finish())>=0);
+    assert_eq!(h.bind(7,&[8,9],&session_mounts(b"replacement")),0);
+    assert_eq!(h.server.capacity().0,6);
 }

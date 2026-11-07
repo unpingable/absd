@@ -35,9 +35,9 @@ staged_bytes=$(find "$stage/lib/rustlib/src/rust/library" -type f -printf '%s\n'
     awk '{total += $1} END {print total}')
 staged_symlinks=$(find "$stage/lib/rustlib/src/rust/library" -type l | wc -l)
 test "$staged_hash" = \
-    c35493ccdf6cb87a81767902413ad4487caa1bff401d5ccecb1cce9e7a18760c
+    3961aa8abb13677871f3febc67b5d651da0cd195fd1711abccf288f0164f940c
 test "$staged_files" -eq 2251
-test "$staged_bytes" -eq 45920288
+test "$staged_bytes" -eq 45920276
 test "$staged_symlinks" -eq 0
 test -z "$(find "$stage" \( -name '*.rej' -o -name '*.orig' \) -print -quit)"
 

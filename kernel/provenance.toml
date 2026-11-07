@@ -14,6 +14,7 @@ version = 1
 [[files]]
 path = [
     ".gitignore",
+    ".gitattributes",
     "AGENTS.md",
     "Cargo.toml",
     "HANDOFF.md",
@@ -86,4 +87,45 @@ first-party-portion = "Apache-2.0"
 in-artifacts = ["kernel-image"]
 binary-actions = ["Reproduce Intel's BSD-3-Clause notice (the header of src/i219.rs) with any image that contains the driver."]
 
+# coordination record #109 (docs/RTL8125.md). src/rtl8125.rs carries Kevin Lo's ISC
+# notices and adapts register definitions and sequences from OpenBSD rge(4).
+# rtl8125_pci.rs and rtl8125_device.rs follow this kernel's I219 backend and
+# contain no rge code, so they are first-party under the src/** rule. Linux
+# r8169 (GPL) was not consulted. The MAC loopback field is from the RTL8169
+# family's register description, not from rge.
+[[files]]
+path = "src/rtl8125.rs"
+class = "adapted"
+origin = "OpenBSD sys/dev/pci/if_rge.c v1.48 and if_rgereg.h v1.20 (both 2026/10/27, kevlo); sha256 0ad25a8b67b57d0a99bb90d1dbc515e74527a6072fca8a0b4bf7c2c0f1c3cfc3 and 199a6dff6d3be21dabcb8ed91cd3cab149ba93fa2e50e5ec0d2e865011144436"
+upstream-license = "ISC"
+upstream-notice = "Copyright (c) 2019, 2020, 2023-2026 Kevin Lo <kevlo@openbsd.org> (if_rge.c); Copyright (c) 2019, 2020, 2025, 2026 Kevin Lo (if_rgereg.h). (the header of src/rtl8125.rs)"
+license = "ISC"
+first-party-portion = "Apache-2.0"
+in-artifacts = ["kernel-image"]
+binary-actions = ["Reproduce Kevin Lo's ISC notice (the header of src/rtl8125.rs) with any image that contains the driver."]
+notice-files = ["LICENSES/ISC.txt"]
+
 # REUSE-IgnoreEnd
+
+# REUSE-IgnoreStart: the notice quoted below is upstream's, not this file's.
+
+# Verbatim copyright property of the Unifont 15.1.01 compiled font, as in the
+# platform repository. The owner's election applies to this font, not its GPL
+# utility source or docs.
+[[files]]
+path = "provenance/boot-font/unifont-15.1.01.NOTICE"
+class = "imported"
+origin = "GNU Unifont 15.1.01 font/precompiled/unifont-15.1.01.bdf.gz, COPYRIGHT property; matches its PCF copyright"
+license = "OFL-1.1"
+decision = "Owner, 2026-10-19: elect OFL-1.1 for the exact RC1 font after source-version, COPYING, compiled copyright and byte-identical font reconstruction checks; carried into the kernel repository 2026-10-29 after the host font was verified identical. Font notice data only; not a licence election for Unifont programs or documentation."
+notice-files = ["LICENSES/OFL-1.1.txt"]
+
+# REUSE-IgnoreEnd
+
+[[files]]
+path = "tests/fixtures/terminal-startup.bin"
+class = "generated"
+kind = "generated"
+generator = "first-party startup encoder, checked by scripts/fixtures/terminal-startup.rs and platform broker terminal_startup_shared_golden"
+origin = "Synthetic role21 startup record shared with platform broker/fixtures/terminal-startup.bin; no executable or external data"
+license = "Apache-2.0"

@@ -1,5 +1,42 @@
 # Base userland: sbase and bounded Toybox ports on the C kit
 
+The third #53 slice packages pinned unmodified sbase rmdir and paste.
+They use existing filesystem and stream adapters;
+no kernel ABI or authority change is required. Host cases and manual pages
+cover ordinary use and errors. Guest behavior remains unverified until the
+candidate has its own SSH evidence. true and false already exist as shell
+builtins and are not duplicated.
+
+The second #53 slice adds the unmodified pinned sbase `tee.c` and `sleep.c`
+to the same pipeline. `tee` captures a stream to files while retaining
+stdout, including append and partial-output errors. Its `-i` option is
+explicitly refused by the existing signal adapter before opening files;
+that native outcome is declared in `divergences.tsv`. `sleep` accepts one
+unsigned whole-second duration and uses the existing C-kit kernel delay.
+Fractional durations and suffixes are not supported. Their source manuals,
+host golden cases and actual SSH checks define this bounded profile.
+
+The maintained operator-task inventory is [TOOLBOX.md](TOOLBOX.md) (#53).
+The November 5 toolbox addition builds the unmodified pinned sbase 0.1
+`tr.c` and `dirname.c` through this same pipeline, with installed names
+`tr` and `dirname`. They need no adapter, runtime, kernel or shell change.
+Their manuals describe input/output, error status and supported forms;
+`cases.tsv` covers translation, deletion, squeezing, complement, UTF-8,
+character classes, empty input, invalid arguments, and path-string cases.
+The original port tables below describe earlier work; canonical current
+membership and exact installed bytes are in `PORTS.tsv`. New ports remain
+guest-unverified until the #53 SSH evidence is recorded; adding a name to
+the catalog or passing the host checks does not establish guest behavior.
+
+The pinned, unmodified sbase 0.1 `sort` captures global ordering flags when
+each `-k` is parsed. Put `-n` before the key (`sort -n -t , -k 2,2 FILE`),
+or specify numeric ordering in the key (`sort -t , -k 2,2n FILE`). A later
+`-n` does not update an earlier key and can yield lexical ordering with
+status 0. This upstream behavior was reproduced in a fresh unmodified
+Linux build and the ABSD operator trial; `man/sort.1` documents it and
+`cases.tsv` retains both numeric forms and the named upstream limitation.
+No ABSD adapter change or port rebuild is implied by this documentation.
+
 Familiar text and file tools for ABSD, built from
 [sbase](https://core.suckless.org/sbase/) (MIT) through the C application kit
 (`c/`, `docs/C-INTERFACE.md`) and the POSIX adapter (`c/posix/`). This is a
@@ -15,6 +52,30 @@ do on ABSD is unverified until the guest qualification (T5).
 
 The following original T2/T3 tables describe sbase. The Toybox pipeline
 addition and its separate qualification limits are recorded at the end.
+
+
+Each successful `build-userland.sh` run writes `BUILT-FROM.json` in its output
+and a `.built-from.json` receipt beside each ABSD ELF. Schema version 1 records
+the platform commit and dirty state, kit commit and dirty state, kit `libabs.a`
+SHA256, and the individual ELF SHA256. The builder captures the kit before
+linking and compares it again after both clean rounds and the host gates.
+`install-userland-ports.sh` verifies each receipt against the current platform,
+kit and ELF before writing installed files. `build-ports.sh` checks existing C
+outputs before its Rust builds. Rebuild older outputs without these receipts.
+The diagnostic `--print` option proposes digest rows without installing them.
+
+A checkout with unreadable or broken `.git` metadata refuses; only an exported
+source directory without its own `.git` uses `commit none`. That snapshot
+convention has no Git revision identity. Git source overrides must be unset.
+Known checkouts require clean kit and source records. `ABSD_ALLOW_MODIFIED=1`
+permits development builds and prints `DIRTY development_opt_in=1`; it never
+waives commit, archive or ELF identity mismatches. These local receipts compare
+state at acquisition points. Shared build directories still require serialized
+writers; the receipts do not lock a kit or establish arbitrary source histories.
+The current schema is version 2: it also records the POSIX adapter archive and
+the installed C-port digests. Archive hashes describe observed build context;
+they do not prove which archive bytes a linker consumed. No stronger archive
+consumption claim or linker snapshot is introduced here.
 
 ## Ported (T2, T3)
 
@@ -50,6 +111,18 @@ with the kit, the adapter, a patch or the pin; record the new rows
 The image's command list is `scripts/operator_image.py` PORTS, which the
 operator image, a release (`scripts/release.py`) and the operator matrix
 read; it must name the nine for the image to carry them.
+
+At seal, `c_kit_source.py` reads each C port once, verifies that buffer against
+the canonical stripped digest and length, and publishes that same buffer
+before the receipt. Publication uses exclusive temporary files in a private
+directory. The seal describes this observation; it does not prevent later
+changes to the shared directory. The operator image, command matrix and
+Userland matrix use the shared verified-read helper to check both the receipt
+and canonical pins on the exact buffers they install. All three retain bytes
+in memory; none streams a subsequently reopened C-port path. The Userland
+matrix also checks those buffers against its own checkout's table when the
+built platform is another tree. A self-consistent receipt cannot substitute
+for canonical pins. Missing or partial receipts refuse consumption.
 
 Names. None of the nine is a native command (`cat ls cp mv rm mkdir head
 tail wc echo pwd printenv uname sha256sum stat df sync man date uptime
@@ -208,9 +281,7 @@ left-behind scratch file is counted). Not run, with reasons printed:
 ^C for `printf`, `test` and `find` (they read no input) and exhaustion (the
 cports harness has no such scenario). The demo rehearsal follows the
 record's T5 list: `ed` writes `hello.c` with no scratch file left, `od -t
-x1`, `cmp`, `grep`, an empty `find . -name 'ed.*'`, `tcc` only if
-`/bin/tcc` exists (else `USERLAND DEMO TCC NOT_RUN reason=no /bin/tcc`),
-`rm`, `man sbase` with the licence, and `/bin` naming the nine, with the
+x1`, `cmp`, `grep`, an empty `find . -name 'ed.*'`, `rm`, `man sbase` with the licence, and `/bin` naming the nine, with the
 census equal around it.
 
 Not established by this runner: the record's T5 bullets 1-2 (`/bin` holds

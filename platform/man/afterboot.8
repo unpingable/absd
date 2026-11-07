@@ -1,5 +1,5 @@
 .\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
-.Dd October 8, 2026
+.Dd November 6, 2026
 .Dt AFTERBOOT 8
 .Os ABSD
 .Sh NAME
@@ -8,13 +8,39 @@
 .Sh DESCRIPTION
 This page is for the operator of an ABSD system: how to get the operator
 image, boot it, check it, and look after it, and what it cannot do yet.
-It describes the qualified system (see
-.Xr intro 1 ,
-.Sx QUALIFICATION ) :
-a served
+It describes the served
 .Ql net fsd
-boot under QEMU, whose file server holds the disk and whose SSH server is
-the only way in.
+operator composition, whose file server holds the disk and whose session
+service provides SSH and two enrolled local text sessions.
+Local login and init's read-only kernel maintenance do not require networking;
+see
+.Xr local-console 7 .
+Exact-image qualification and hardware limitations are separate from the
+facilities described here (see
+.Xr intro 1 ,
+.Sx QUALIFICATION ) .
+.Ss Downloaded preview
+If you started a downloaded preview with
+.Nm absd-try ,
+you have already booted the machine and enrolled your SSH key.
+The
+.Pa QUICKSTART.md
+in your downloaded release files on the host explains how to start it again.
+.Pp
+To stop cleanly, run
+.Ic shutdown
+in this session and wait for the machine to halt.
+Ctrl-C in the host's
+.Nm absd-try
+also requests a clean shutdown.
+If it cannot confirm shutdown, it leaves the machine running and prints
+instructions for trying again.
+A second Ctrl-C while it is waiting forces a stop; the next boot may need recovery.
+.Pp
+After a clean halt, start the same machine directory again with
+.Nm absd-try .
+Files saved in your home directory remain for the next boot.
+Do not create a replacement machine just to restart it.
 .Ss Build the image
 The operator image is built on a Linux host from the ABSD platform
 repository and a checkout of the ABSD kernel at the commit the platform's
@@ -24,16 +50,26 @@ names:
 $ ssh-keygen -t ed25519 -f operator-key
 $ ABSD_KERNEL_RUN=/path/to/kernel-checkout \e
     scripts/build-operator-image.sh \e
-    --authorized-keys operator-key.pub [--etc DIR] OUT
+    --authorized-keys operator-key.pub [--etc DIR] [--disk-profile 128m|2g] OUT
 .Ed
 .Pp
 It builds the platform, then writes
 .Pa OUT/absd-operator.iso
 (GRUB, the kernel, init, the file server, and the SSH server),
 .Pa OUT/absd-operator.img
-(a 64 MiB disk), and
+(a 128 MiB disk by default), and
 .Pa OUT/MANIFEST
 (the two commits and the SHA-256 of every file installed).
+For a larger fresh disk, select
+.Ql --disk-profile 2g :
+2 GiB of device space, with a 1 GiB filesystem region.
+The default
+.Ql 128m
+profile has a 64 MiB filesystem region.
+Filesystem metadata and installed files use part of each region.
+The profile applies only to fresh construction; it does not grow an existing disk.
+Host inspection and recovery read the whole disk into memory, and backup or
+restore may allocate a full copy even when the input file is sparse.
 The disk holds every command under
 .Pa /bin ,
 this manual under
@@ -76,8 +112,54 @@ A
 .Xr reboot 8
 boots the same image again within the same run.
 Without RDRAND the SSH server refuses to start
-.Pq Ql sshd: entropy: ...
-and the boot fails.
+.Pq Ql sshd: entropy: ... .
+When FSD and local enrollment remain usable, SSH-specific startup failures
+can leave the local-only service available; otherwise see the maintenance
+and recovery policy below.
+The script holds
+.Pa OUT/recovery/lock
+for its run, keeps the previous console as
+.Pa OUT/console-<time>.log ,
+and runs the recovery precheck before QEMU starts
+.Pq status 7 when it refuses .
+.Ss Recover after an unclean stop
+A machine that stopped without
+.Xr shutdown 8
+or
+.Xr reboot 8
+(power loss, a killed QEMU, a fault after readiness) is refused on its
+next boot:
+.Bd -literal -offset indent
+RECOVERY WRITABLE REFUSED reason=storage_fence previous=failed fence=none
+.Ed
+.Pp
+with status 7 and nothing written.
+The only way back to writable service on the same image is the explicit
+operator act, on the host, with the machine stopped:
+.Bd -literal -offset indent
+$ python3 -I scripts/release.py backup --target OUT BACKUP
+$ python3 -I scripts/release.py recover --target OUT --status
+$ python3 -I scripts/release.py recover --target OUT \e
+    --attest-sole-instance --accept-committed-state --reason "why"
+$ scripts/boot-operator.sh OUT 2222            # another terminal
+$ python3 -I scripts/release.py recover --target OUT --wait-ready --id ID
+.Ed
+.Pp
+The act records what it saw (the committed state, its file identity and
+content hash, the reason) under
+.Pa OUT/recovery/
+and writes one record on the disk; the next served boot admits exactly that
+state, consumes the record as its first write, and reports
+.Ql RECOVERY WRITABLE RESUMED id=... .
+Synced files are exact; a file that was being overwritten may hold a mix
+of old and new sectors; unsynced growth is lost.
+.Ql recover --revoke
+withdraws a pending authorization; every other host tool refuses
+.Ql recovery_pending
+while one is on the disk.
+The procedure, every refusal and its action, and the limits are in the
+operator runbook, section 9a, and in
+.Pa docs/WRITABLE-ENTRY.md .
 .Ss Check the host key
 The SSH server prints its host key's fingerprint on the console at every
 start, in plain text, in the form
@@ -176,7 +258,9 @@ This manual
 .Pq Pa /share/man .
 Read-only.
 .It Pa /var/log
-The logs and retained owner network sample; see
+The bounded boot/service history and retained owner network sample; see
+.Xr logs 1
+and
 .Xr net-status 1 .
 Read-only.
 .It Pa /ssh
@@ -218,48 +302,107 @@ replaces its namesake whole, in one commit; everything else on the disk
 is kept.
 .Fl -authorized-keys Ar KEYS
 replaces the keys the same way.
+.Pp
+This is for an
+.Ar OUT
+made by
+.Ql build-operator-image.sh ;
+its
+.Pa MANIFEST
+then names the new digests.
+Before the image is touched, the command refuses an
+.Ar OUT
+without a
+.Pa MANIFEST ,
+a malformed one, or a left-over
+.Pa MANIFEST.new .
+It also refuses a replacement path that is a directory, files the
+filesystem has no room for, and a kernel build that fails.
+A machine installed with
+.Ql scripts/release.py install
+(its
+.Ar OUT
+holds
+.Pa TARGET
+or
+.Pa RELEASES )
+is refused the same way.
+Change its configuration with
+.Ql scripts/release.py reconfigure ,
+which writes with the selected release's own importer and records a
+receipt and a ledger line (docs/OPERATOR-RUNBOOK.md, section 13).
+Earlier versions of this command imported the files into such a machine
+and then failed; it also used to mark the guard dirty before these checks.
+.Pp
+If the importer boot fails, the disk's guard stays dirty, and the files
+before the failing one may already be replaced; every later write and
+boot refuses until the disk is recovered offline.
+If the image took the files but
+.Pa MANIFEST
+could not be written, the command says so; run it again once the fault is
+fixed.
 .Ss Logs
-The file server writes
-.Pa /var/log/fsd
-and the SSH server
-.Pa /var/log/sshd ,
-each itself; there is no log daemon.
-Every line begins with the time, UTC, from the real-time clock:
+.Xr dmesg 1
+reads the current boot's bounded volatile kernel ring.
+.Xr logs 1
+reads retained boot and service records, follows new records and exports
+an escaped record stream.
+.Pp
+Legacy text lines use UTC software civil collection time; typed retained
+records keep their original boot/tick identity. Clock events explain civil
+corrections, and no current anchor is applied retroactively to old records:
 .Bd -literal -offset indent
-absd$ tail -n 3 /var/log/sshd
-2026-09-27T05:34:12Z sshd: conn 7: authenticated
+absd$ logs --list-boots
+absd$ logs -u sshd -n 20
+absd$ logs -u fsd -f
+absd$ logs -b -1 --export > /home/operator/previous-boot.txt
 .Ed
 .Pp
+A dedicated collector persists kernel and managed-service stdout, stderr
+and lifecycle records with boot, source and sequence attribution.
+Init captures service output into the kernel ring independently of FSD.
+The journal retains the current and one previous boot within fixed bounds;
+loss, truncation, suppression and persistence failures are explicit.
+Use
+.Ql logs --health
+for collector state, and
+.Ql logs --volatile
+for the independent ring view when persistent history is unavailable.
+Follow remains foreground work; Ctrl-C ends it.
+.Pp
+The existing
 .Pa /var/log/fsd
-begins each boot with
-.Ql fsd: started: boot ID ,
-the identity
-.Xr uptime 1
-prints, and then records how the previous generation ended
-.Pq Ql FSD RECOVERY ;
-.Xr health 1
-reads that line for this boot.
-When a log would grow past 64 KiB it is renamed to
-.Pa NAME.0 ,
-replacing the older one, and started again: each log keeps at most
-128 KiB, the newest lines.
-If the filesystem refuses a write (it is full), the line is lost and the
-next line written says how many were.
-The lines still go to the console as well.
-Init's lines, and every line before the file server starts, are on the
-console only: init has no file server channel.
-Per-command lines of the file server
-.Pq Ql FSD DERIVE
-are on the console only.
+and
+.Pa /var/log/sshd
+text projections remain available for commands such as
+.Ql tail -n 3 /var/log/sshd .
 There is no
-.Ql tail -f .
+.Ql tail -f ;
+use
+.Ql logs -f
+for the journal instead.
+A retained record is not proof that its condition is still active.
+Successful flushing is required for persistence across reboot; final fault
+output, complete history and abrupt power-loss durability are not guaranteed.
+See
+.Xr logs 1
+for exact retention, authority, gap and shutdown semantics.
 .Ss Copying files
-There is no
+OpenSSH's
+.Nm sftp
+and default modern
 .Nm scp
-or
-.Nm sftp :
-the SSH server runs no subsystems.
-Use a command with a redirection:
+use
+.Xr absd-sftp 8 .
+Use the same client-visible SSH endpoint, key, and host key pinning.
+Relative SFTP paths start in
+.Pa /home/operator .
+Metadata preservation and legacy
+.Nm scp
+with
+.Fl O
+are unsupported; the subsystem manual names its other bounds.
+The command-and-redirection transport also remains available from the client:
 .Bd -literal -offset indent
 $ ssh -p 2222 operator@127.0.0.1 'cat > /home/operator/f' < f
 $ ssh -p 2222 operator@127.0.0.1 'cat >> /home/operator/f' < more
@@ -283,7 +426,11 @@ is run by
 .Xr absd-sh 1
 .Po
 .Ql absd-sh -c
-.Pc ;
+.Pc ,
+and so is a command whose program is a path other than
+.Pa /bin/ Ns Ar name
+(an uploaded program:
+.Ql ssh host /home/operator/prog in.txt ) ;
 any other command runs directly.
 Paths are absolute, or relative to
 .Pa / ,
@@ -314,8 +461,16 @@ After a commit the file survives the machine stopping abruptly; see
 .Xr filesystem 7 .
 .Ss Time
 .Xr date 1
-reads the real-time clock: UTC, whole seconds, never set or corrected by
-ABSD.
+reads the boot-local software civil clock in UTC, to whole seconds.
+Use date --status to inspect its source, age, staleness and last failure.
+The initial RTC source is unverified. Enrolled/authenticated shells may use
+clock set UNIX_SECONDS to assert civil time, and clock sync to request a
+bounded configured unauthenticated network estimate; see
+.Xr clock 1
+and
+.Xr time.conf 5 .
+Corrections do not write the RTC, survive reboot, alter monotonic deadlines,
+or establish TLS validation trust.
 .Xr uptime 1
 counts kernel ticks since boot and names the boot.
 A file records one time, its modification time
@@ -327,7 +482,7 @@ minute (or -). No command sets it.
 .It
 Four accepted SSH connections at once, the default and the most
 .Xr sshd.conf 5
-admits (what the kernel's 48 pipes serve), counting unauthenticated ones.
+admits, counting unauthenticated ones. Local-console reservations are separate.
 A further completed TCP connection is promptly closed without an SSH
 session slot, file-server binding, or banner. The console records
 .Ql SSH GLOBAL REFUSED ... limit=4 .
@@ -339,13 +494,12 @@ while global slots remain. A further one is closed with
 An authenticated connection still counts toward the global four.
 This source limit applies after TCP accept, not to the SYN/listener backlog.
 .It
-Sixteen processes in the whole system, including init, the file server,
-and the SSH server.
+Thirty-two process slots in the current served profile, including init, the
+file server, the session service and the log collector when enabled.
 .It
-Sixty-four handles per process, 32 live cells, and 48 live pipes in the
-whole system. The default, non-served boot suite exercises full-table
-refusal, release, and reuse for process, handle, cell, and pipe tables;
-the served-boot max-four case exercises its SSH limit separately.
+128 handles per process, 32 live cells and 128 live pipes in the
+current served profile. These are separate limits: one process can reach
+its handle bound before exhausting the global pipe table.
 Printed limits and occupancy counts alone do not show that every table
 was exhausted in a served boot.
 .It
@@ -354,19 +508,28 @@ Commands cannot start programs; only a session's shell can
 When a session ends, its shell ends the commands it started.
 If the SSH server has to kill the shell instead
 .Pq Ql SSH SESSION END ... forced=true ,
-those commands can outlive the session, and a
+those commands can outlive the session. A
 .Xr shutdown 8
-or
+that finds them after its wait bound stops with a named failure; a post-ready
 .Xr reboot 8
-then stops the machine rather than halting or restarting it.
+can escalate to a whole-machine recovery reset instead of a clean restart.
+Neither outcome proves process-tree reclamation or sync of unfinished writes.
 .It
-Eleven file server channels: one control channel and ten client slots
-shared by sessions and the commands they run; see
+Twenty file-server channels in this boot: one worker control channel,
+one private logger channel, and eighteen channels reserved for ordinary
+sessions. Two local shells reserve six channels and four SSH shells reserve
+twelve, with one primary channel and two command spares per shell.
+These reservations do not add process slots or guarantee capacity for every
+concurrent command. See
 .Xr absd-sh 1 .
 .It
-One CPU for served/user execution, one network card, one disk.
-CPU 1 is reserved for separate kernel-only fixtures; served boot with
-that AP option is refused.
+One CPU by default, one selected network card and one disk.
+The host's ABSD_OPERATOR_CPUS setting can select candidate two-, four-
+or six-CPU operator profiles with a matching image and launcher.
+They are separate from kernel-only AP fixtures; a result for one profile
+does not qualify another. See the platform
+.Pa docs/OPERATOR-RUNBOOK.md
+for construction and exact-profile evidence requirements.
 .El
 .Ss How the boot ends
 The boot runs until the operator asks for
@@ -377,18 +540,36 @@ from
 .Ql ssh host shutdown
 or from an interactive shell; every session is told and ends, and the file
 server commits everything before the machine halts or restarts.
-Stopping QEMU otherwise is an abrupt stop: anything not yet committed may
-be lost, and the next boot finds the last commit.
+Stopping QEMU otherwise is an abrupt stop: anything not successfully
+synced may be lost or partially written, and a dirty writable image may
+refuse its next boot until offline recovery.
+.Pp
+Essential session-service or FSD failure triggers init's bounded cleanup.
+After readiness, the advertised recovery budget may permit a visible
+whole-machine reset of the same selected image. This does not replace a
+service in place or guarantee that writable startup will succeed.
+Before readiness, on unknown or exhausted budget, or when reset is refused,
+a local-enabled image holds read-only kernel maintenance. An external
+operator reboot is required to leave that held state; dirty-image recovery
+remains a separate host-side act. The headless profile can stop instead.
+The log collector alone has a bounded process-restart policy;
+see
+.Xr logs 1 .
 .Ss What you cannot do yet
 .Bl -bullet -compact
 .It
 Change the configuration from a session, or without a reboot.
 .It
-Follow a log as it grows, or send logs elsewhere.
+Run a remote syslog service or automatic log forwarding.
+Use
+.Xr logs 1
+for foreground follow or explicit export instead.
 .It
-See or stop processes of other sessions
-.Pf ( Xr ps 1
-lists only your own session).
+Control arbitrary processes of other sessions.
+.Ql ps -A
+provides read-only system-wide snapshots; the bare
+.Xr ps 1
+builtin remains session-scoped.
 .It
 Add users; there is one operator.
 .El
@@ -397,26 +578,32 @@ On the console
 .Pq Pa OUT/console.log :
 .Bl -tag -width Ds
 .It Ql sshd: /etc/FILE: line N: REASON; fix the file ...; sshd is not running
-a malformed configuration file; the boot fails.
-Fix it with
+SSH configuration was refused; a local-only service may remain available
+when its enrollment and filesystem are usable.
+Fix the halted image with
 .Fl -reconfigure .
 .It Ql FSD FAILED mount: ...
 the file server refused the disk (a damaged or foreign filesystem).
-Nothing was changed; the boot fails.
-There is no repair tool; see
+The filesystem is unavailable to sessions; local-enabled init can retain
+read-only kernel maintenance. There is no on-box repair tool; see
 .Xr filesystem 7 .
 .El
 .Pp
-The SSH server's other lines reach the console inside init's hex-framed
-output records
-.Pq Ql EXTERNAL OUTPUT CHUNK ... data=HEX ,
-the qualification format; read them in
-.Pa /var/log/sshd
-instead.
+Read service output with
+.Xr logs 1
+and kernel diagnostics with
+.Xr dmesg 1 .
+Init suppresses asynchronous physical-console replay in the local-enabled
+served image so it does not overwrite the command being entered.
+Some headless or qualification modes also emit init's hex-framed
+.Ql EXTERNAL OUTPUT CHUNK ... data=HEX
+records; do not treat their absence on a managed terminal as missing capture.
 .Sh SEE ALSO
 .Xr absd-sh 1 ,
 .Xr date 1 ,
+.Xr dmesg 1 ,
 .Xr health 1 ,
+.Xr logs 1 ,
 .Xr intro 1 ,
 .Xr man 1 ,
 .Xr release 1 ,
@@ -427,11 +614,14 @@ instead.
 .Xr sshd.conf 5 ,
 .Xr filesystem 7 ,
 .Xr handles 7 ,
+.Xr local-console 7 ,
 .Xr process 7 ,
 .Xr reboot 8 ,
 .Xr shutdown 8
 .Sh CAVEATS
-The operator image has run only under QEMU.
+The facilities above do not establish qualification of a physical image,
+NIC, display, keyboard or writable device. Consult the exact-image evidence;
+serial QEMU operation does not establish physical console usability.
 The seed in
 .Pa /ssh
 is an ordinary file to anyone with the image.

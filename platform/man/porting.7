@@ -1,0 +1,141 @@
+.Dd November 5, 2026
+.Dt PORTING 7
+.Os ABSD
+.Sh NAME
+.Nm porting
+.Nd host cross-development for the bounded native C interface
+.Sh DESCRIPTION
+ABSD applications are static x86-64 ABSD ELF executables, not Linux
+binaries.
+The delivered C interface uses the native runtime, Picolibc 1.8.12, and the
+C kit's descriptor adapter over explicit handles.
+An executable receives only the startup record's arguments, environment,
+working directory, streams and filesystem binding.
+Paths and C descriptors do not confer ambient authority.
+See
+.Xr handles 7
+and
+.Xr process 7 .
+.Pp
+Development runs on an Ubuntu 24.04 x86-64 host using the matching staged
+SDK and host clang/LLVM prerequisites.
+There is no compiler, assembler, linker, development-header or library
+installation in the operator image.
+No tested general Rust application recipe is supplied here.
+The SDK is a local engineering candidate: full archive/header licence
+qualification and public distribution remain owner-held.
+Do not infer a download or stable ABI promise from this reference.
+.Ss Input, output and status
+Use main's argc/argv or open named files for C input.
+The cited #121 SDK examples exercise arguments and named files, not C
+standard input.
+At the descriptor layer, an open descriptor 0 delegates reads to the
+runtime's startup input stream; no input handle yields end of file, and a
+closed descriptor or invalid handle can yield EBADF.
+The earlier Develop report's stdin EBADF finding is not a blanket adapter
+refusal or qualification of other startup-stream arrangements.
+C standard output and standard error use the granted output streams.
+Return main's status to report success or failure; check library errors
+rather than interpreting partial output as success.
+Named files are limited by the process's binding and its read/write rights.
+For accepted file-server changes and durability, see
+.Xr sync 1
+and
+.Xr filesystem 7 .
+.Pp
+The profile is static and single-task.
+It is not a POSIX conformance claim: unsupported process, signal, thread,
+loader and filesystem facilities are absent or refused as specified in the
+matching C interface contract.
+Optional C++0 has a separate bounded profile and acceptance record;
+exceptions, application RTTI, true threads, iostreams and std::filesystem
+are not provided by it.
+.Ss Host workflow
+The matching platform source's
+.Pa docs/HOST-SDK.md
+is the canonical staged-SDK guide;
+.Pa c/README.md
+covers building and using the C kit from source, and
+.Pa docs/C-INTERFACE.md
+owns the complete C contract and refusal semantics.
+Use the SDK manifest's tested kernel/platform pair and actual build-source
+identity, not an unrelated runtime or host library.
+.Pp
+On the development host, save this argument-only example as words.c:
+.Bd -literal -offset indent
+#include <stdio.h>
+#include <string.h>
+int main(int argc, char **argv) {
+    size_t bytes = 0;
+    for (int i = 1; i < argc; ++i) bytes += strlen(argv[i]);
+    printf("words=%d bytes=%zu\en", argc - 1, bytes);
+    return 0;
+}
+.Ed
+.Pp
+After verifying the supplied archive and SDK:
+.Bd -literal -offset indent
+"$SDK/bin/absd-sdk-check"
+"$SDK/bin/absd-cc" -O2 -o words words.c
+"$SDK/bin/absd-check-elf" words --map words.map
+.Ed
+.Pp
+The invocation below prints words=2 bytes=9.
+It uses argc/argv rather than stdin.
+Keep the generated map and toolchain records; rebuild after relocating the
+SDK because the map names the linked archives.
+The ELF checker checks the actual image/link form, not Linux executability.
+.Pp
+Upload from the development host over the operator-provided pinned SSH
+connection using binary-safe cat transport:
+.Bd -literal -offset indent
+ssh -i ./operator-key -o IdentitiesOnly=yes -o IdentityAgent=none \e
+    -o ForwardAgent=no -o UserKnownHostsFile=./absd-known-hosts \e
+    -o StrictHostKeyChecking=yes -p "$PORT" operator@"$HOST" \e
+    'cat > /home/operator/words' < words
+ssh -i ./operator-key -o IdentitiesOnly=yes -o IdentityAgent=none \e
+    -o ForwardAgent=no -o UserKnownHostsFile=./absd-known-hosts \e
+    -o StrictHostKeyChecking=yes -p "$PORT" operator@"$HOST" \e
+    '/home/operator/words apple pear'
+.Ed
+.Pp
+HOST and PORT, operator-key and absd-known-hosts must identify the
+operator-supplied ABSD destination and credentials, as specified in the
+host SDK guide.
+Do not request a terminal for the binary transfer.
+Matching operator images also provide the bounded SFTP version 3 subsystem
+for ordinary OpenSSH
+.Nm sftp
+and default modern
+.Nm scp
+uploads and downloads through the same pinned connection.
+Individual reads and writes are limited to 64 KiB; write ranges and
+size updates are limited to 64 MiB.
+Creation permissions are advisory; permission, ownership and timestamp
+preservation, APPEND, link operations and vendor extensions are unsupported.
+An interrupted upload may leave a partial file.
+See
+.Xr absd-sftp 8
+for the supported requests, remaining limits and refusal semantics.
+Direct absolute-path execution works on the compatible development pair.
+Change the program, rebuild, check, upload and rerun to confirm the new
+output; retain actual status and pair identities on failure.
+.Ss Existing execution evidence
+The independently reviewed #121 outsider proof on November 3, 2026 used
+runtime source c940d162c73dbce842ac37180940f14bc5e03a01 and kernel
+deb92457144cbe7ea1a12e768bfba2e9c83a6fb9.
+Its independent Ubuntu 24.04 write/build/upload/run/edit/rerun workflow
+recorded eight exact Linux/guest comparisons across C and C++0, with
+historical C++0 checked separately.
+See the engineering handoff
+.No "#121 local SDK candidate evidence" .
+This is evidence for those programs and that pair, not a rerun of this
+manual or a public SDK distribution acceptance.
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr cat 1 ,
+.Xr sync 1 ,
+.Xr filesystem 7 ,
+.Xr handles 7 ,
+.Xr process 7 ,
+.Xr absd-sftp 8

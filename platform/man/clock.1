@@ -1,0 +1,70 @@
+.Dd November 5, 2026
+.Dt CLOCK 1
+.Os ABSD
+.Sh NAME
+.Nm clock
+.Nd ask the authenticated operator session's time owner to inspect or correct time
+.Sh SYNOPSIS
+.Nm
+.Op Cm status
+.Nm
+.Cm set Ar UNIX_SECONDS
+.Nm
+.Cm sync
+.Sh DESCRIPTION
+.Nm
+is an operator shell builtin, handled over the session's private control
+channel by sshd, the existing NIC/time owner. Ordinary command children do not
+inherit its clock-write grant or session-control ends.
+Authenticated SSH exec requests such as
+.Dq clock status
+or
+.Dq clock sync
+also run through the session shell and its control channel; no PTY is required.
+The exec request text is passed to the shell unchanged.
+.Pp
+.Cm status
+shows the successful source, known/stale state, age, generation and last
+synchronization attempt or error. The same read-only information is available
+as
+.Nm date Fl -status .
+.Pp
+.Cm set
+steps software civil time to decimal Unix seconds, in the supported 1970..2099
+range. It is an operator assertion with unknown absolute UTC uncertainty, not
+an authenticated time claim. Forward and backward steps are allowed without a
+maximum-step bound on this explicit assertion. The RTC bootstrap floor does
+not restrict an operator assertion. Pending
+network synchronization is canceled, and the next periodic attempt waits its
+configured interval. The RTC and monotonic deadlines do not change.
+The assertion is not sticky: a later successful periodic estimate replaces it
+when the difference is within
+.Cm max-step-seconds .
+A larger difference leaves the assertion in place and records a maximum-step
+failure, error -34, at each attempted interval until the operator changes the
+assertion or disables the provider. This error does not establish a network fault.
+Set and sync requests are logged with their authenticated SSH connection or enrolled local console
+and shell process identity where available.
+.Pp
+.Cm sync
+requests one bounded configured SNTP attempt. The reply means scheduled, not
+successful: inspect status for the actual outcome. It refuses without a
+configured provider or NIC owner. An unavailable carrier records a failure
+once and waits for carrier; automatic timeout retries back off to the normal
+interval and peer refusals use that interval. Peer replies remain unauthenticated estimates and
+never alter TLS anchor policy.
+.Pp
+The command requires an authenticated SSH or enrolled local shell with its
+operator control channel, and runs alone, without a pipeline or redirection.
+There is no ambient clock-write authority in ordinary applications. For
+read-only pipelines use
+.Nm date Fl -status .
+All corrections are boot-local; they do not persist to the RTC or through
+reboot. No time-zone, NTS or clock-slew service is provided.
+.Sh EXIT STATUS
+0 on successful owner operation or accepted scheduling; 1 on refusal;
+2 on invalid shell usage. Network success is reported separately in status.
+.Sh SEE ALSO
+.Xr date 1 ,
+.Xr time.conf 5 ,
+.Xr absd-sh 1

@@ -165,32 +165,29 @@ def check(data):
     return True, "", len(loads)
 
 
-# --kernel mode: the facts above, and their other hand-made copies in this
-# tree, against the kernel source they were copied from. Each kernel fact is
-# read by one anchored pattern at its definition and must also appear at the
-# site that enforces it; each copy is read by one anchored pattern. A pattern
-# that does not match exactly one line is UNKNOWN (exit 2), never OK. The
-# relation is the copy's own stated contract: "eq" for a copy that says it is
-# the kernel's value (this file, :7; C-INTERFACE.md:124 "From the kernel"),
-# "le" for a consumer that may be stricter (the kit's link form, its gate,
-# the runtime). A stricter "le" copy is NARROWER: named, exit 0. Nothing is
-# rewritten and no side is taken: the output names both places.
+# --kernel mode compares selected compiler ABI values with the platform's
+# hand-made copies. Source-use anchors remain conservative sanity checks,
+# not proof of compiled enforcement. UNKNOWN exits 2; disagreement exits 1.
 
 import os
 import re
 import subprocess
+import hashlib
+import json
+from pathlib import Path
+import tempfile
+import tomllib
 
+# Inventory and source locations; ABI values come from the compiler.
 KERNEL_DEFS = [
-    # (fact, kernel file, definition pattern, value expression group)
-    ("MAX_LOAD_SEGMENTS", "src/elf.rs", r"pub const MAX_LOAD_SEGMENTS: usize = ([0-9a-fx_ <]+);"),
-    ("USER_IMAGE_MIN", "abi/src/layout.rs", r"pub const USER_IMAGE_MIN: u64 = USER_REGION_BASE \+ ([0-9a-fx_ <]+);"),
-    ("USER_IMAGE_MAX", "abi/src/layout.rs", r"pub const USER_IMAGE_MAX: u64 = USER_REGION_BASE \+ ([0-9a-fx_ <]+);"),
-    ("MAX_SPAWN_IMAGE_BYTES", "abi/src/syscall.rs", r"pub const MAX_SPAWN_IMAGE_BYTES: u64 = ([0-9a-fx_ <]+);"),
-    ("USER_HEAP_PAGES", "abi/src/layout.rs", r"pub const USER_HEAP_PAGES: u64 = ([0-9a-fx_ <]+);"),
-    ("MAX_MAP_PAGES", "abi/src/syscall.rs", r"pub const MAX_MAP_PAGES: u64 = ([0-9a-fx_ <]+);"),
+    ("MAX_LOAD_SEGMENTS", "src/elf.rs"),
+    ("USER_IMAGE_MIN", "abi/src/layout.rs"),
+    ("USER_IMAGE_MAX", "abi/src/layout.rs"),
+    ("MAX_SPAWN_IMAGE_BYTES", "abi/src/syscall.rs"),
+    ("USER_HEAP_PAGES", "abi/src/layout.rs"),
+    ("MAX_MAP_PAGES", "abi/src/syscall.rs"),
 ]
-# The window's base, added to the two image offsets above.
-KERNEL_BASE = ("USER_REGION_BASE", "abi/src/layout.rs", r"pub const USER_REGION_BASE: u64 = ([0-9a-fx_ <]+);")
+MAX_LOAD_DEF = r"pub const MAX_LOAD_SEGMENTS: usize = ([0-9a-fx_ <]+);"
 # Where the kernel applies each fact (a whole line, leading space ignored).
 KERNEL_SITES = [
     ("MAX_LOAD_SEGMENTS", "src/elf.rs", r"if image\.segment_count == MAX_LOAD_SEGMENTS \{"),
@@ -199,7 +196,9 @@ KERNEL_SITES = [
     ("MAX_SPAWN_IMAGE_BYTES", "src/syscalls.rs", r"\|\| request\.image_bytes > MAX_SPAWN_IMAGE_BYTES"),
     ("USER_HEAP_PAGES", "abi/src/layout.rs", r"pub const USER_HEAP_END: u64 = USER_HEAP_BASE \+ USER_HEAP_PAGES \* 4096;"),
     ("USER_HEAP_PAGES", "src/syscalls.rs",
-     r"vm::find_unmapped_run\(&process\.address_space, USER_HEAP_BASE, USER_HEAP_END, pages\)"),
+     r"let end = crate::heap_search_end!\(current, pid, reserved\);"),
+    ("USER_HEAP_PAGES", "src/syscalls.rs",
+     r"let Some\(base\) = \(unsafe \{ vm::find_unmapped_run\(&process\.address_space, start, end, pages\) \}\)"),
     ("MAX_MAP_PAGES", "src/syscalls.rs", r"if pages == 0 \|\| pages > MAX_MAP_PAGES \{"),
 ]
 
@@ -239,14 +238,14 @@ BINDINGS = [
     ("USER_IMAGE_MIN", "eq", "docs/C-INTERFACE.md", _DOC_IMAGE, 3, 1),
     ("USER_IMAGE_MAX", "eq", "docs/C-INTERFACE.md", _DOC_IMAGE, 4, 1),
 ]
-NOT_CHECKED = ("W^X (the kernel has no policy); segment overlap and page sharing; ELF header, "
+NOT_CHECKED = ("compiled enforcing-site control flow or heap-window macro semantics; W^X (the kernel has no policy); segment overlap and page sharing; ELF header, "
                "entry and per-segment rules (check() and its tests); this file's docstring and RULES "
                "citations; the kernel's own prose (PROCESS-STARTUP.md, USERSPACE.md, "
                "application-interface-v0 limits); other C-INTERFACE.md section 2 rows; POSIX "
                "mmap/brk absence (C-INTERFACE.md sections 3, 10); the syscall ABI generation "
                "(check-all's KERNEL_ABI step); whether the 32 MiB heap window is architectural; "
                "restatements outside C-INTERFACE section 2 (section 3 prose, CPA-060, SSH-HEAP.md, "
-               "c-ecosystem SPEC.md, the exec_probe boundary, build-tcc.sh's -Ttext and tcc's config.h)")
+               "c-ecosystem SPEC.md, the exec_probe boundary)")
 
 
 def _literal(text):
@@ -434,26 +433,144 @@ def _show(fact, value):
     return f"{value:#x}" if fact.startswith("USER_IMAGE") else str(value)
 
 
-def kernel_facts(kdir):
-    """{fact: (value or None, citation or reason)} from kernel source."""
-    facts = {}
-    line, base = _one(kdir, KERNEL_BASE[1], KERNEL_BASE[2])
-    base_value = _literal(base.group(1)) if line else None
-    base_cite = f"{KERNEL_BASE[1]}:{line}" if line else base
-    for fact, rel, pattern in KERNEL_DEFS:
-        line, m = _one(kdir, rel, pattern)
-        if line is None:
-            facts[fact] = (None, m)
-            continue
-        value = _literal(m.group(1))
-        cite = f"{rel}:{line}"
-        if value is not None and fact.startswith("USER_IMAGE"):
-            if base_value is None:
-                facts[fact] = (None, f"{cite} needs USER_REGION_BASE: {base_cite}")
+def _compiled_abi_facts(kdir, features, target, profile, no_default_features, report):
+    """Read actual selected ABI constants from a compiler object, never run it.
+
+    Cargo owns feature resolution. The temporary probe has no dependencies
+    except the actual ABI crate; its selected root profile is copied exactly
+    for supported scalar settings. Unsupported build shapes fail UNKNOWN.
+    """
+    kdir = Path(kdir).resolve()
+    names = [fact for fact, rel in KERNEL_DEFS if rel.startswith("abi/")]
+    try:
+        def run(args, env=None):
+            result = subprocess.run(args, cwd=kdir, env=env, capture_output=True,
+                                    text=True, timeout=120)
+            if result.returncode:
+                raise ValueError(f"{args[0]} exit {result.returncode}: " +
+                                 (result.stderr or result.stdout)[-1200:].replace("\n", " "))
+            return result.stdout
+
+        overrides = ("RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC",
+                     "CARGO_BUILD_RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
+        if any(name in os.environ for name in overrides):
+            raise ValueError("Cargo compiler overrides/wrappers are unsupported")
+        def fingerprint():
+            # The modest probe supports the current literal workspace. Cargo
+            # config needs explicit integration rather than guessed precedence.
+            config_roots = [p / ".cargo" for p in (kdir, *kdir.parents)] + [
+                Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")))]
+            if any((root / name).exists() for root in config_roots for name in ("config", "config.toml")):
+                raise ValueError("Cargo config files require an explicit probe design")
+            root_manifest = tomllib.loads((kdir / "Cargo.toml").read_text())
+            members = root_manifest.get("workspace", {}).get("members", [])
+            if any(not isinstance(m, str) or any(c in m for c in "*?[") or
+                   not (kdir / m).resolve().is_relative_to(kdir) for m in members):
+                raise ValueError("only literal in-tree workspace members are supported")
+            inputs = sorted((kdir / "abi/src").rglob("*.rs")) + [
+                kdir / "abi/Cargo.toml", kdir / "Cargo.toml", kdir / "Cargo.lock"] + [
+                kdir / m / "Cargo.toml" for m in members] + [
+                kdir / name for name in ("rust-toolchain", "rust-toolchain.toml") if (kdir / name).exists()]
+            digest = hashlib.sha256()
+            for path in sorted(set(inputs)):
+                digest.update(str(path.relative_to(kdir)).encode() + b"\0" + path.read_bytes() + b"\0")
+            return digest.hexdigest()
+        before = fingerprint()
+        compiler = run(["rustc", "-vV"])
+        target = target or os.environ.get("CARGO_BUILD_TARGET") or next(
+            line.removeprefix("host: ") for line in compiler.splitlines() if line.startswith("host: "))
+        if profile not in ("dev", "release"):
+            raise ValueError("only dev and release profiles are supported")
+        manifest = tomllib.loads((kdir / "Cargo.toml").read_text())
+        requested = features.replace(",", " ").split()
+        if any(f not in manifest.get("features", {}) for f in requested):
+            raise ValueError("select root-package features only")
+        settings = manifest.get("profile", {}).get(profile, {})
+        if any(type(v) not in (str, bool, int) for v in settings.values()):
+            raise ValueError("selected profile contains unsupported non-scalar settings")
+        metadata_args = ["cargo", "metadata", "--offline", "--locked", "--format-version", "1",
+                         "--filter-platform", target, "--manifest-path", str(kdir / "Cargo.toml")]
+        if features:
+            metadata_args += ["--features", features]
+        if no_default_features:
+            metadata_args += ["--no-default-features"]
+        metadata = json.loads(run(metadata_args))
+        if any(d["name"] == "absd-abi" and d["kind"] not in (None, "normal")
+               for p in metadata["packages"] for d in p["dependencies"]):
+            raise ValueError("non-normal ABI dependencies require isolated kernel resolution")
+        package, = [p for p in metadata["packages"] if p["name"] == "absd-abi"]
+        if package["dependencies"] or any(t["kind"] == ["custom-build"] for t in package["targets"]):
+            raise ValueError("ABI dependencies or build scripts need an explicit probe design")
+        abi_manifest = Path(package["manifest_path"])
+        if abi_manifest.resolve() != (kdir / "abi/Cargo.toml").resolve():
+            raise ValueError("resolved ABI crate is outside the selected kernel")
+        node, = [n for n in metadata["resolve"]["nodes"] if n["id"] == package["id"]]
+        selected = sorted(node["features"])
+        # metadata resolves workspace feature unification. Refuse a shape
+        # where another member could silently add ABI features to this probe.
+        abi_defaults = package["features"].get("default", [])
+        nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
+        for other in metadata["packages"]:
+            if other["manifest_path"] in (str(kdir / "Cargo.toml"), str(abi_manifest)):
                 continue
-            value += base_value
-            cite += f"+{base_cite}"
-        facts[fact] = (value, cite) if value is not None else (None, f"{cite}: value is not a literal")
+            for dependency in other["dependencies"]:
+                if dependency["name"] == "absd-abi" and (dependency["features"] or
+                        nodes[other["id"]]["features"] or
+                        (dependency["uses_default_features"] and abi_defaults)):
+                    raise ValueError("another workspace member selects ABI features; isolate kernel resolution first")
+        with tempfile.TemporaryDirectory(prefix="absd-abi-facts-") as directory:
+            scratch = Path(directory)
+            dependency = ("absd-abi = { path = " + json.dumps(str(abi_manifest.parent)) +
+                          ", default-features = false, features = " + json.dumps(selected) + " }\n")
+            (scratch / "Cargo.toml").write_text(
+                '[package]\nname="absd-abi-facts-probe"\nversion="0.0.0"\nedition="2024"\n'
+                '[workspace]\n[dependencies]\n' + dependency + f"[profile.{profile}]\n" +
+                "".join(f"{key} = {json.dumps(value)}\n" for key, value in settings.items()))
+            (scratch / "src").mkdir()
+            expressions = ["absd_abi::" + ("layout" if f.startswith("USER_") else "syscall") + "::" + f
+                           for f in names]
+            (scratch / "src/lib.rs").write_text(
+                '#![no_std]\n#[used]\n#[unsafe(link_section=".absd_abi_facts")]\n'
+                f'static VALUES: [u64; {len(names)}] = [' + ",".join(expressions) + "];\n")
+            env = dict(os.environ, CARGO_TARGET_DIR=str(scratch / "target"))
+            obj, data = scratch / "probe.o", scratch / "facts.bin"
+            run(["cargo", "rustc", "--offline", "--manifest-path", str(scratch / "Cargo.toml"),
+                 "--target", target, "--profile", profile, "--lib", "-j", "2", "--",
+                 f"--emit=obj={obj}"], env)
+            run(["llvm-objcopy-18", "--dump-section", f".absd_abi_facts={data}", str(obj)])
+            # The checker covers the x86-64 ELF ABI. Refuse any other object.
+            header = obj.read_bytes()[:20]
+            if header[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", header, 18)[0] != 62:
+                raise ValueError("compiler object is not little-endian x86-64 ELF64")
+            values = struct.unpack("<" + "Q" * len(names), data.read_bytes())
+        if fingerprint() != before:
+            raise ValueError("ABI compiler inputs changed during acquisition")
+        identity = hashlib.sha256(compiler.encode()).hexdigest()
+        flags = {k: v for k, v in os.environ.items() if k in ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTUP_TOOLCHAIN")
+                 or k.startswith("CARGO_PROFILE_") or (k.startswith("CARGO_TARGET_") and k.endswith("_RUSTFLAGS"))}
+        flag_identity = hashlib.sha256(json.dumps(flags, sort_keys=True).encode()).hexdigest()
+        cite = (f"compiler={identity} source={before} build_env={flag_identity} target={target} profile={profile} "
+                f"kernel_features={features or 'default'} no_default_features={no_default_features} "
+                f"abi_features={','.join(selected) or 'none'}")
+        if report is not None:
+            report(f"ABI COMPILER {cite}")
+        return {name: (value, f"compiled absd_abi::{'layout' if name.startswith('USER_') else 'syscall'}::{name}")
+                for name, value in zip(names, values)}
+    except (OSError, ValueError, KeyError, StopIteration, subprocess.SubprocessError, struct.error) as error:
+        return {name: (None, f"compiler facts unavailable: {error}") for name in names}
+
+
+def kernel_facts(kdir, *, features="", target=None, profile="dev", no_default_features=False, report=None):
+    """Selected compiler ABI facts plus conservative source-use anchors.
+
+    MAX_LOAD_SEGMENTS is outside the ABI crate and remains a source fact.
+    Enforcing-site anchors are not a compiled control-flow proof.
+    """
+    facts = _compiled_abi_facts(kdir, features, target, profile, no_default_features, report)
+    fact, rel = KERNEL_DEFS[0]
+    pattern = MAX_LOAD_DEF
+    line, match = _one(kdir, rel, pattern)
+    facts[fact] = ((_literal(match.group(1)), f"{rel}:{line}") if line is not None else (None, match))
     for fact, rel, pattern in KERNEL_SITES:
         value, cite = facts[fact]
         if value is None:
@@ -483,12 +600,12 @@ def _kernel_identity(kdir):
     return recorded[0].strip() if recorded else "unrecorded"
 
 
-def check_kernel(kdir, root, out=print):
+def check_kernel(kdir, root, out=print, **selection):
     """Compare every copy in BINDINGS with the kernel. Returns the exit code:
     0 OK, 1 MISMATCH (a copy disagrees), 2 UNKNOWN (evidence incomplete)."""
-    facts = kernel_facts(kdir)
     out(f"ABI FACTS KERNEL dir={kdir} identity={_kernel_identity(kdir)}")
-    for fact, _rel, _pattern in KERNEL_DEFS:
+    facts = kernel_facts(kdir, report=out, **selection)
+    for fact, _rel in KERNEL_DEFS:
         value, cite = facts[fact]
         out(f"ABI KERNEL {fact}={_show(fact, value)} {cite}")
     tally = {"OK": 0, "MISMATCH": 0, "NARROWER": 0, "UNKNOWN": 0}
@@ -543,14 +660,17 @@ def check_kernel(kdir, root, out=print):
 
 def main(argv):
     if len(argv) >= 2 and argv[1] == "--kernel":
-        if len(argv) == 3:
-            root = os.path.dirname(os.path.dirname(os.path.abspath(argv[0])))
-        elif len(argv) == 5 and argv[3] == "--root":
-            root = argv[4]
-        else:
-            print("usage: check-abi-elf.py --kernel KERNEL_DIR [--root PLATFORM_DIR]", file=sys.stderr)
-            return 2
-        return check_kernel(argv[2], root)
+        import argparse
+        parser = argparse.ArgumentParser(description="Compare platform copies with selected compiler ABI facts")
+        parser.add_argument("--kernel", required=True)
+        parser.add_argument("--root", default=os.path.dirname(os.path.dirname(os.path.abspath(argv[0]))))
+        parser.add_argument("--features", default="")
+        parser.add_argument("--no-default-features", action="store_true")
+        parser.add_argument("--target", help="kernel Cargo target (default: CARGO_BUILD_TARGET or rustc host)")
+        parser.add_argument("--profile", choices=("dev", "release"), default="dev")
+        args = parser.parse_args(argv[1:])
+        return check_kernel(args.kernel, args.root, features=args.features, target=args.target,
+                            profile=args.profile, no_default_features=args.no_default_features)
     if len(argv) != 2:
         print("usage: check-abi-elf.py FILE | --kernel KERNEL_DIR [--root PLATFORM_DIR]", file=sys.stderr)
         return 2

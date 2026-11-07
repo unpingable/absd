@@ -86,12 +86,25 @@ unsafe fn syscall3(number: u64, a0: u64, a1: u64, _a2: u64) -> i64 {
     }
 }
 
-fn ticks() -> u64 {
-    panic!("deadline path is outside this holder witness")
+// The real CRT negotiates before ordinary clients enter main. Exercise
+// that real VERSION path once, without affecting the holder fault counters.
+static VERSION_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+fn ticks() -> u64 { 0 }
+fn write_within(handle: u64, bytes: &[u8], budget: u64) -> Result<usize, i64> {
+    assert_eq!(handle, OWN_REQUEST);
+    assert!(budget > 0 && budget <= 60000);
+    assert_eq!(bytes[absd_fsd::proto::HEADER], absd_fsd::proto::op::VERSION);
+    VERSION_SEQ.store(u64::from_le_bytes(bytes[8..16].try_into().unwrap()), std::sync::atomic::Ordering::Relaxed);
+    Ok(bytes.len())
 }
-
-fn read_within(_handle: u64, _bytes: &mut [u8], _ticks: u64) -> Result<usize, i64> {
-    panic!("reply transport is outside this holder witness")
+fn read_within(handle: u64, bytes: &mut [u8], budget: u64) -> Result<usize, i64> {
+    assert_eq!(handle, OWN_REPLY);
+    assert!(budget > 0 && budget <= 10);
+    let mut reply=absd_fsd::proto::Frame::reply(0);
+    reply.0.extend(absd_fsd::version::encode(&absd_fsd::version::compiled()));
+    let reply=reply.finish_seq(VERSION_SEQ.load(std::sync::atomic::Ordering::Relaxed));
+    bytes[..reply.len()].copy_from_slice(&reply);
+    Ok(reply.len())
 }
 
 unsafe fn __absd_std_stderr_write(_bytes: *const u8, _length: usize) -> i64 {
@@ -106,6 +119,7 @@ fn __absd_std_exit(_code: i32) -> ! {
 fn parent_request_stays_refused_after_lent_holder_duplicate_exhaustion() {
     // One test serializes the production runtime's single-process globals.
     runtime_fsd::install(&[(OWN_REQUEST, OWN_REPLY), (SPARE_REQUEST, SPARE_REPLY)]);
+    runtime_fsd::check_server(0, false).unwrap();
     runtime_fsd::set_default_child(runtime_fsd::ChildFs::SpareOnly);
 
     // Bookkeeping for an already-derived spare: live tracking prevents

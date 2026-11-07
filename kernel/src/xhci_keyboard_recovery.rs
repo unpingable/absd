@@ -641,7 +641,7 @@ impl Recovery {
                 if !c.halted() || xhci_interrupt::STATE.snapshot() != self.retired {
                     return Err(XhciError::Keyboard(hid::Error::RetirementUncertain));
                 }
-                c.bus_master_on();
+                c.bus_master_on()?;
                 c.armed_this_round = true;
                 c.command = Producer::new(COMMAND_RING_TRBS);
                 c.events = Consumer::new(EVENT_RING_TRBS);

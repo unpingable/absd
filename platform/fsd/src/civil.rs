@@ -1,6 +1,6 @@
-//! Civil time from the RTC's seconds: the proleptic Gregorian calendar in
-//! UTC, whole seconds, no leap seconds and no time zones (the kernel's
-//! `wall_clock` declares the RTC UTC). Used by `date`, and by the file
+//! Civil formatting from software wall-clock seconds: the proleptic Gregorian calendar in
+//! UTC, whole seconds, no leap seconds and no time zones (the wall-clock
+//! API declares civil values UTC). Used by `date`, and by the file
 //! server and sshd to stamp their log lines.
 
 use core::fmt;

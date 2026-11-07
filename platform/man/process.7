@@ -1,5 +1,5 @@
 .\" ABSD manual page source (mdoc(7)); rendered by scripts/render-man.sh.
-.Dd September 27, 2026
+.Dd November 5, 2026
 .Dt PROCESS 7
 .Os ABSD
 .Sh NAME
@@ -10,7 +10,11 @@ A process is an address space, a table of handles
 .Pq Xr handles 7 ,
 a PID, a parent, and exactly one task: there are no threads.
 PIDs are not reused within a boot; process table slots are.
-There are sixteen slots in the whole system.
+The served profile has 32 slots in the whole system.
+The kernel capacity query reports the actual bound to
+.Xr ps 1
+and
+.Xr sysinfo 1 .
 .Ss Starting a program
 A new program is always a new process.
 There is no
@@ -90,23 +94,29 @@ its commands would then be adopted by init and run to their own end, with
 their standard input at end of file, their writes to the terminal failing,
 and the file server refusing their channel, which stays out of use until
 they end.
-Init has no right to end them, and a
+Init has no right to end them. If they outlive the orderly-end bound,
+a requested
 .Xr shutdown 8
-or
+stops with a named failure; a post-ready
 .Xr reboot 8
-that finds one still running stops the machine instead.
+can escalate to a whole-machine recovery reset. This is not a process-tree
+reclamation or completed-sync guarantee; see the shutdown caveats.
 A command
 .Nm sshd
 started directly (no shell) is killed and reaped at once.
 .Ss What a process can see
 A process can inspect itself and, through the process handles it holds, its
-own children, and nothing else.
-There is no list of all processes.
-A session's listing,
-.Xr ps 1 ,
-is the SSH server's answer for that session alone: it names the session's
-shell, which it holds a handle to, and counts what else holds the
-session's input and filesystem channels.
+own children. An inherited read-only Diagnostics grant also permits the
+kernel process snapshots shown by
+.Ql ps -A
+or
+.Pa /bin/ps .
+This system-wide view grants no wait, kill or other process-control right.
+The bare
+.Xr ps 1
+builtin remains the session service's answer for that session alone: it
+names the shell and counts additional holders of its input and filesystem
+channels. Kernel snapshots are independent per row, not an atomic census.
 There is no
 .Nm kill
 command: only a parent ends a child.
@@ -116,10 +126,24 @@ restart, and the new instance is a replacement.
 A replacement is not a recovery: recovery is claimed only once the
 replacement has read the state the earlier instance left and reconciled it.
 .Pp
-In the qualified boot nothing is restarted.
-If the SSH server ends, or the file server ends while the SSH server runs,
-the boot ends and is reported failed.
-A policy for replacing either in a long-running boot is not defined yet.
+Essential session-service or file-server failure triggers init's bounded
+stop and reap attempts. After readiness, an advertised recovery budget may
+permit a visible whole-machine reset of the selected image. This is not
+in-place service replacement or a guarantee that unsynced writes survived;
+a dirty writable image can still refuse the next boot.
+Before readiness, on unknown or exhausted budget, or if reset is refused,
+a local-enabled image holds read-only kernel maintenance. Returning from
+that held state requires an external operator reboot and any required
+offline recovery. The headless profile retains its stop/refusal path.
+See
+.Xr local-console 7
+and
+.Xr afterboot 8 .
+.Pp
+The dedicated log collector has its own bounded process-restart policy;
+see
+.Xr logs 1 .
+Restarting that collector does not repair the file server or session service.
 .Sh SEE ALSO
 .Xr absd-sh 1 ,
 .Xr ps 1 ,
@@ -131,11 +155,17 @@ In the kernel repository:
 (the start contract and the startup record) and
 .Pa docs/TERMINOLOGY.md .
 .Sh CAVEATS
-If the SSH server itself ends while sessions run, nothing tells their
-shells to end: what they run is left to init, and the boot ends failed
-instead of restarting (see
+If the session service dies, its shells may be adopted by init before
+bounded recovery cleanup. Init has no general process-tree kill authority;
+residue is reported, not treated as proof of complete reclamation.
+See
 .Sx Replacement is not recovery
 and
-.Xr shutdown 8 ) .
-Sixteen processes are few: init, the file server, and the SSH server take
-three, and each open shell running a pipeline takes one per command.
+.Xr shutdown 8 .
+The current served profile has 32 process slots. Init, the file server,
+the session service and the log collector consume four when all are present;
+each shell and each running pipeline command consumes another.
+.Pp
+These table maxima are not a count of free slots. Older images can have lower
+bounds; inspect the installed kernel's capacity values with
+.Xr sysinfo 1 .

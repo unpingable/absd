@@ -1,0 +1,85 @@
+#![allow(dead_code,unused_imports,unused_variables,static_mut_refs)]
+extern crate self as absd_abi;
+#[path="abi.rs"]pub mod syscall;
+#[path="program.rs"]pub mod program;
+#[path="object.rs"]mod object;
+#[path="handle.rs"]mod handle;
+#[path="sched.rs"]mod sched;
+use handle::{Object,HandleTable,HandleError};
+use syscall::*;
+#[derive(Clone,Copy,Debug,PartialEq)]enum Error{NoMemory,TooManyHandles,Rights,BadHandle,Invalid,Stale}
+fn error(code:i64)->Error{match code{-12=>Error::NoMemory,-24=>Error::TooManyHandles,-1=>Error::Rights,-9=>Error::BadHandle,_=>Error::Invalid}}
+struct Proc{handles:HandleTable}struct Table{entries:[Proc;1]}
+static mut TABLE:Option<Table>=None;static mut PIPES:Option<Box<object::PipeTable>>=None;static mut CELLS:Option<object::CellTable>=None;
+static mut CHILD_TABLE:Option<HandleTable>=None;static mut IMPORTED:Vec<u64>=Vec::new();static mut CREATED:Vec<u64>=Vec::new();static mut READ_MASK:u64=0;static mut CONSOLE_RAW:u64=1;static mut PARENT_CELL:u64=0;static mut CHILD_CODE:i32=999;static mut LAST_ERROR:i64=0;
+struct Stats{pipe_refusals:u64,handle_refusals:u64,cell_refusals:u64}static mut STATS:Stats=Stats{pipe_refusals:0,handle_refusals:0,cell_refusals:0};
+mod smp_app_pressure{pub fn omit_refusal(_:u64)->bool{false}pub fn refusal(_:u64){}}
+unsafe fn table()->&'static mut Table{unsafe{TABLE.as_mut().unwrap()}}unsafe fn pipes()->&'static mut object::PipeTable{unsafe{PIPES.as_mut().unwrap()}}
+unsafe fn stats()->&'static mut Stats{unsafe{&mut STATS}}
+unsafe fn cells()->&'static mut object::CellTable{unsafe{CELLS.as_mut().unwrap()}}
+static mut PARENT_MODE:bool=false;
+unsafe fn active_handles()->&'static mut HandleTable{if unsafe{PARENT_MODE}{unsafe{&mut table().entries[0].handles}}else{unsafe{CHILD_TABLE.as_mut().unwrap()}}}
+unsafe fn release_object(o:Object,rights:u8){if let Object::Cell(id)=o{unsafe{cells().release(id).unwrap();}}if let Object::Pipe(id)=o{unsafe{pipes().release(id,rights&handle::RIGHT_READ!=0,rights&handle::RIGHT_WRITE!=0).unwrap();}}}
+#[derive(Clone,Copy,Debug,PartialEq)]struct Pipe(u64);
+impl Pipe{
+ fn create()->Result<Self,Error>{let raw=unsafe{sys_pipe::call(0)};if raw<0{Err(error(raw))}else{unsafe{CREATED.push(raw as u64)};Ok(Self(raw as u64))}}
+ fn from_raw(h:u64)->Self{Self(h)}fn raw(self)->u64{self.0}
+ fn write_once(self,b:&[u8])->Result<usize,Error>{let id=unsafe{table().entries[0].handles.pipe(self.0,RIGHT_WRITE as u8)}.map_err(|e|error(unsafe{handle_error(e)}))?;unsafe{pipes().write(id,b)}.map_err(|_|Error::Invalid)}
+ fn read_once(self,b:&mut[u8])->Result<usize,Error>{let id=unsafe{table().entries[0].handles.pipe(self.0,RIGHT_READ as u8)}.map_err(|e|error(unsafe{handle_error(e)}))?;unsafe{pipes().read(id,b)}.map_err(|_|Error::Invalid)}
+}
+#[derive(Clone,Copy)]struct Console;
+impl Console{fn raw(self)->u64{unsafe{CONSOLE_RAW}}fn write_str(self,s:&str)->Result<(),()>{print!("{s}");Ok(())}fn line(self,s:std::fmt::Arguments<'_>)->Result<(),()>{print!("{s}");Ok(())}fn read_once(self,_:&mut[u8])->Result<usize,Error>{Err(Error::Rights)}}
+#[derive(Clone,Copy,Debug,PartialEq)]struct Cell(u64);impl Cell{
+ fn from_raw(h:u64)->Self{Self(h)}fn raw(self)->u64{self.0}
+ fn create(value:u64)->Result<Self,Error>{let h=unsafe{sys_cell::call(0,value)};if h<0{Err(error(h))}else{Ok(Self(h as u64))}}
+ fn read(self)->Result<(u64,u64),Error>{if let Some(i)=unsafe{IMPORTED.iter().position(|h|*h==self.0)}{unsafe{READ_MASK|=1<<i;}}let t=unsafe{active_handles()};let id=t.cell(self.0,RIGHT_READ as u8).map_err(|e|error(unsafe{handle_error(e)}))?;unsafe{CELLS.as_ref().unwrap().read(id)}.map_err(|_|Error::Invalid)}
+ fn transition(self,v:u64,n:u64)->Result<u64,Error>{let t=unsafe{active_handles()};let id=t.cell(self.0,RIGHT_WRITE as u8).map_err(|e|error(unsafe{handle_error(e)}))?;unsafe{CELLS.as_mut().unwrap().transition(id,v,n)}.map_err(|e|match e{object::CellError::Stale{..}=>Error::Stale,_=>Error::Invalid})}
+}
+#[derive(Clone,Copy,Debug,PartialEq)]struct Child(u64);
+#[derive(Clone,Copy,Debug,PartialEq)]enum Outcome{Exited(i32)}
+struct MultiStart<'a>{console:Console,handles:&'a[u64]}
+fn duplicate(h:u64,r:u64)->Result<u64,Error>{let t=unsafe{active_handles()};let source=t.lookup(h).map_err(|e|error(unsafe{handle_error(e)}))?;source.require(r as u8).map_err(|e|error(unsafe{handle_error(e)}))?;t.insert(source.object,r as u8).map_err(|e|error(unsafe{handle_error(e)}))}
+fn close(h:u64)->Result<(),Error>{let entry=unsafe{active_handles().close(h)}.map_err(|e|error(unsafe{handle_error(e)}))?;unsafe{release_object(entry.object,entry.rights)};Ok(())}
+fn spawn_with(_:u64,_:u64,_:u64)->Result<Child,Error>{panic!("unexercised console branch")}
+fn wait_timeout(_:Option<Child>,_:u64)->Result<Outcome,Error>{Ok(Outcome::Exited(unsafe{CHILD_CODE}))}
+fn expect_exit(c:Child,status:i32,step:&'static str)->Result<(),&'static str>{if wait_timeout(Some(c),500)==Ok(Outcome::Exited(status)){Ok(())}else{Err(step)}}
+const RIGHTS_CHAIN_MAX:usize=8;const RIGHTS_CHAIN_MIN:usize=4;const CONSOLE_PROBE_MARKER:u64=0x434f4e534f4c4501;
+#[derive(Clone,Copy)]struct Image{bytes:&'static[u8]}
+static PROGRAMS:[Image;64]=[Image{bytes:&[]};64];
+unsafe fn spawn_from(program:usize,_:&[u8],_:u64,transfers:&[sched::Transfer],_:u64,_:bool)->Result<u64,sched::SpawnError>{
+ let mut t=HandleTable::new(7);let console=t.insert(Object::Console,(RIGHT_READ|RIGHT_WRITE)as u8).unwrap();unsafe{CONSOLE_RAW=console;}
+ let copies:Vec<_>=transfers.iter().map(|r|(r.object,r.rights)).collect();let mut issued=vec![0;copies.len()];
+ t.insert_batch(&copies,&mut issued).map_err(|_|sched::SpawnError::NoHandles)?;
+ unsafe{CHILD_TABLE=Some(t);IMPORTED=issued;}
+ let code=multi_main(MultiStart{console:Console,handles:unsafe{&IMPORTED}});unsafe{CHILD_CODE=code;}
+ Ok(77)
+}
+fn spawn_many_copy(program:u64,copies:&[SpawnHandleCopy])->Result<Child,Error>{
+ let mut transfers=Vec::new();for c in copies{let h=unsafe{table().entries[0].handles.lookup(c.source)}.map_err(|e|error(unsafe{handle_error(e)}))?;h.require(c.rights as u8).map_err(|e|error(unsafe{handle_error(e)}))?;transfers.push(sched::Transfer{object:h.object,rights:c.rights as u8,as_console:c.flags!=0});}
+ match unsafe{sched::spawn_many_copy(program as usize,1,&transfers)}{Ok(h)=>Ok(Child(h)),Err(e)=>{let code=e.code();unsafe{LAST_ERROR=code;}Err(error(code))}}
+}
+unsafe fn syscall3(n:u64,a:u64,b:u64,c:u64)->i64{assert_eq!(n,SYS_CELL_TRANSITION);match Cell::from_raw(a).transition(b,c){Ok(v)=>v as i64,Err(Error::BadHandle)=>ERROR_BAD_HANDLE,Err(e)=>panic!("unexpected {e:?}")}}
+include!("consumers.rs");
+fn main(){
+ std::panic::set_hook(Box::new(|_|{}));unsafe{TABLE=Some(Table{entries:[Proc{handles:HandleTable::new(1)}]});PIPES=Some(Box::new(object::PipeTable::new()));CELLS=Some(object::CellTable::new());table().entries[0].handles.insert(Object::Console,(RIGHT_READ|RIGHT_WRITE)as u8).unwrap();}
+ let case=std::env::args().nth(1).unwrap();
+ if case=="cell-accounting"{unsafe{PARENT_MODE=true;}assert_eq!(cell_run(Console),Ok(()));assert_eq!(unsafe{STATS.cell_refusals},1);assert_eq!(unsafe{STATS.handle_refusals},2);println!("actual cell program: cell=1 handle=2; deliberate final cell awaits process teardown");return;}
+ if case=="object-accounting"{unsafe{PARENT_MODE=true;table().entries[0].handles.insert(Object::Machine,MACHINE_RIGHT_STOP as u8).unwrap();}assert_eq!(verify_object_capacity(Console),Ok(()));assert_eq!(unsafe{STATS.cell_refusals},6);assert_eq!(unsafe{STATS.handle_refusals},6);assert_eq!(unsafe{STATS.pipe_refusals},0);assert_eq!(unsafe{cells().live()},0);assert_eq!(unsafe{pipes().live()},0);assert_eq!(unsafe{table().entries[0].handles.live_count()},2);println!("actual init object cycles: cell=6 handle=6 pipe=0; cleanup baseline2");return;}
+ if case=="vector-accounting"{let cell=Cell::create(41).unwrap();let copies=[SpawnHandleCopy::new(cell.raw(),RIGHT_READ);MAX_SPAWN_HANDLES];spawn_many_copy(program::MULTI_HANDLE,&copies).unwrap();assert_eq!(unsafe{CHILD_CODE},0);assert_eq!(unsafe{READ_MASK},u64::MAX);assert_eq!(unsafe{STATS.handle_refusals},2*MAX_SPAWN_HANDLES as u64);println!("actual maximum-vector rights refusals={}",unsafe{STATS.handle_refusals});return;}
+ if case=="smoke"{let cell=Cell::create(41).unwrap();unsafe{PARENT_CELL=cell.raw();}let result=smoke_vector();println!("actual smoke vector result={result:?} scheduler_error={}",unsafe{LAST_ERROR});if result.is_err(){std::process::exit(1);}if unsafe{IMPORTED.len()}==64{assert_eq!(unsafe{READ_MASK},u64::MAX);println!("all64 imported handles actually read");}return;}
+ if case=="vector-negatives"{
+  let cell=Cell::create(41).unwrap();let good=[SpawnHandleCopy::new(cell.raw(),RIGHT_READ);MAX_SPAWN_HANDLES];
+  spawn_many_copy(program::MULTI_HANDLE,&good).unwrap();assert_eq!(unsafe{CHILD_CODE},0);
+  let mut duplicated=unsafe{IMPORTED.clone()};duplicated[63]=duplicated[62];assert_eq!(multi_main(MultiStart{console:Console,handles:&duplicated}),88);
+  let mut inaccessible=unsafe{IMPORTED.clone()};inaccessible[63]=u64::MAX;assert_eq!(multi_main(MultiStart{console:Console,handles:&inaccessible}),88);
+  let mut writable=good;writable[63].rights=RIGHT_READ|RIGHT_WRITE;spawn_many_copy(program::MULTI_HANDLE,&writable).unwrap();assert_eq!(unsafe{CHILD_CODE},88);
+  println!("actual64-vector consumer rejects duplicate, invalid and writable last entries");return;
+ }
+ let mut occupied=Vec::new();if case=="pipes-global"{for _ in 0..2{occupied.push(unsafe{pipes().create((RIGHT_READ|RIGHT_WRITE)as u8).unwrap()});}}
+ let result=std::panic::catch_unwind(||objects_exhausted(Console,false));let status=match result{Ok(n)=>n,Err(_)=>101};
+ let created=unsafe{CREATED.len()};println!("actual pipe probe status={status} created={created} object_limit={} handle_limit={}",object::MAX_PIPES,handle::MAX_HANDLES);
+ println!("actual exhaustion counters handle={} pipe={}",unsafe{STATS.handle_refusals},unsafe{STATS.pipe_refusals});
+ for h in unsafe{CREATED.clone()}{let entry=unsafe{table().entries[0].handles.close(h).unwrap()};unsafe{release_object(entry.object,entry.rights)};}
+ for id in occupied{unsafe{pipes().release(id,true,true).unwrap();}}
+ assert_eq!(unsafe{pipes().live()},0);println!("actual pipe-table refs after exact fixture cleanup=0");if status!=0{std::process::exit(1);}
+}

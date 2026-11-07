@@ -1,6 +1,6 @@
 # Per-port keyboard power refusal
 
-Admitted by the integration steward in the internal tracker on 2026-10-17,
+Admitted by the integration steward under coordination record #37 on 2026-10-17,
 after accepting D1 and stage 3 at `a5154a7` for composition. Native Console
 is the live consumer. A port that cannot retain PP, or reports over-current
 (OCA), is unavailable for that port; it does not quarantine keyboard recovery

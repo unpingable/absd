@@ -1,0 +1,105 @@
+.Dd November 3, 2026
+.Dt HTTPS-DOCUMENT 1
+.Os ABSD
+.Sh NAME
+.Nm https-document
+.Nd fetch one configured authenticated document under an explicit grant
+.Sh SYNOPSIS
+.Nm
+.Fl Fl sample
+.Nm
+.Fl Fl boot Ar hex
+.Fl Fl pit-ms Ar milliseconds
+.Fl Fl rtc Ar seconds
+.Fl Fl utc-ms Ar milliseconds
+.Fl Fl uncertainty Ar milliseconds
+.Fl Fl grant-expiry Ar milliseconds
+.Sh DESCRIPTION
+This optional App A command is installed only when the operator composition
+enables it.
+It is a bounded document transaction, not a general URL client.
+The operator supplies a time attestation and one finite grant; the program
+uses its supplied stream authority and filesystem binding.
+It refuses missing stream authority and unexpected NIC or block authority.
+.Pp
+.Fl Fl sample
+prints a boot id, monotonic PIT milliseconds and RTC seconds to standard
+error in an
+.Ql absd-https-sample/1
+record.
+It does not establish trusted UTC or issue a grant.
+.Pp
+The fetch form requires all six distinct option/value pairs, in any order.
+Boot is 16 bytes encoded as 32 lowercase hexadecimal digits.
+The other fields use canonical unsigned decimal, without leading zeroes.
+The attestation relates boot-local PIT and RTC observations to UTC with an
+uncertainty bound.
+Grant expiry is boot-local milliseconds, strictly after invocation and no
+more than 15000 ms ahead.
+Stale, inconsistent or unavailable time is refused; command-line values
+are not independently authenticated by this parser.
+Use the established App A operator procedure to supply them.
+.Sh CONFIGURATION
+.Pa /etc/https-document.conf
+is UTF-8, at most 2048 bytes, exactly four lines in this order:
+.Bd -literal -offset indent
+peer=IPv4:port
+name=lowercase.dns.name
+path=/request-target
+issuer_spki=64-lowercase-hex-digits
+.Ed
+.Pp
+The peer is canonical IPv4 with a nonzero port, not a DNS lookup request.
+The DNS name is checked separately against the certificate.
+The request target begins with a slash, has at most 1024 printable nonspace
+ASCII bytes and contains no fragment marker.
+.Pa /etc/https-issuer.der
+holds the nonempty issuer DER, at most 4096 bytes.
+The configured SPKI pin, issuer, leaf name and verified time interval must
+all satisfy the direct-issuer policy.
+No HTTP application request is sent before authentication.
+.Sh OUTPUT AND DURABILITY
+A successful transaction publishes a new directory under
+.Pa /home/operator/https-document- Ns Ar nonce
+containing
+.Pa body
+and
+.Pa receipt .
+The body is bounded to 16384 bytes; the receipt records peer, name, path,
+issuer pin, boot, verification/publication time intervals, byte count and
+SHA-256.
+Each file is created exclusively, written and synced in a new staging
+directory; time and grant are checked again before a no-replace rename
+publishes the directory.
+The final receipt path is printed on standard error.
+No response body is printed on standard output.
+.Pp
+Transaction failures may emit a bounded
+.Ql absd-https-failure/1
+record followed by refusal text on standard error.
+Local stream acceptance or queue drain is not proof of peer receipt.
+If publication outcome is refused or unknown, the refusal does not report
+the generated staging or final path.
+Preserve any corresponding artifacts under
+.Pa /home/operator
+for operator reconciliation; do not blindly retry or remove guessed artifacts.
+.Sh EXIT STATUS
+0 for a successful sample or publication; 1 for refusal or failure,
+including malformed arguments.
+.Sh EXAMPLES
+Sample only, without initiating a fetch:
+.Bd -literal -offset indent
+https-document --sample
+.Ed
+.Pp
+A fetch requires the configured peer/issuer, an operator time attestation
+and the original stream grant; copying sample values alone is insufficient.
+.Sh SEE ALSO
+.Xr sync 1 ,
+.Xr filesystem 7 ,
+.Xr handles 7 ,
+.Xr process 7
+.Pp
+The matching platform source's App A policy and operator documents define
+the supported TLS, HTTP, time and authority envelope; this page grants
+no wider network or certificate compatibility.

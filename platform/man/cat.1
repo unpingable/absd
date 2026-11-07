@@ -1,0 +1,56 @@
+.Dd November 3, 2026
+.Dt CAT 1
+.Os ABSD
+.Sh NAME
+.Nm cat
+.Nd copy file or stream bytes to standard output
+.Sh SYNOPSIS
+.Nm
+.Op Ar file ...
+.Sh DESCRIPTION
+Copy each named file in order, without text conversion, headers or numbering.
+Relative paths use the working directory.
+With no operands, read standard input; an operand
+.Ql -
+reads standard input at that point in the sequence.
+.Pp
+Input errors are reported on standard error; processing continues with the
+next operand.
+Output failure ends the command immediately.
+A broken pipe, as when
+.Xr head 1
+has read enough, ends quietly with status 1: ABSD has no SIGPIPE.
+Other output failures are diagnosed once.
+.Pp
+There are no options, including no
+.Fl n
+or
+.Fl Fl help .
+Options precede operands; a later option word is a path.
+.Ql --
+ends option processing; use it or a
+.Ql ./
+prefix for a name beginning with a dash.
+Unknown leading options return status 2.
+.Pp
+Only files visible through this process's filesystem view can be opened.
+The command changes no file itself.
+Redirection is performed by the shell and requires writable destination
+authority; it can truncate the destination before cat starts.
+Do not redirect onto a file also being read.
+For a durability barrier after a redirected write, see
+.Xr sync 1 .
+.Sh EXIT STATUS
+0 if all input was copied and output flushed; 1 for an input or output
+failure; 2 for an unknown leading option.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+cat /etc/network.conf
+echo middle | cat /etc/motd -
+cat /etc/motd > /home/operator/motd
+.Ed
+.Sh SEE ALSO
+.Xr absd-sh 1 ,
+.Xr head 1 ,
+.Xr sync 1 ,
+.Xr filesystem 7

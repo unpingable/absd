@@ -46,6 +46,10 @@ pub enum Error {
     Clock,
     /// Local framed IPC failed; a WRITE may already have queued bytes.
     Channel(i64),
+    /// Experimental v4 terminal advice. Earlier queued/submitted effects remain unknown.
+    FragmentationNeeded {
+        mtu: u16,
+    },
 }
 impl Error {
     pub fn code(self) -> u8 {
@@ -66,6 +70,7 @@ impl Error {
             Self::Oversize => 14,
             Self::Clock => 15,
             Self::Channel(_) => 16,
+            Self::FragmentationNeeded { .. } => mtu::STATUS,
         }
     }
     fn decode(code: u8) -> Option<Self> {
@@ -217,14 +222,32 @@ impl<L: Link> Stack<L> {
             self.streams.entries.push(entry);
             self.streams.entries.len() - 1
         };
+        self.port.tcp_mtu.revoke(slot);
         Ok(Endpoint {
             instance: self.streams.instance,
             slot,
             epoch,
         })
     }
+    /// Explicit experimental refusal policy; no transmission at construction.
+    pub fn stream_grant_mtu_refusal(&mut self, grant: Grant) -> Result<Endpoint, Error> {
+        let endpoint = self.stream_grant(grant)?;
+        let entry = &self.streams.entries[endpoint.slot];
+        self.port.tcp_mtu.bind(
+            endpoint.slot,
+            endpoint.epoch,
+            self.config.address.octets(),
+            self.config.prefix_len,
+            grant.local_port,
+            grant.peer,
+            entry.expires,
+            entry.last_ms,
+        );
+        Ok(endpoint)
+    }
     fn stream_live(&mut self) -> Result<(), Error> {
-        let result = match self.read_link() {
+        let reading = self.read_link();
+        let result = match reading {
             None => Err(Error::LinkUnknown),
             Some(r) if r.disabled => Err(Error::DeviceFailed),
             Some(r) if !r.link_up => Err(Error::LinkDown),
@@ -232,7 +255,11 @@ impl<L: Link> Stack<L> {
         };
         if result.is_err() {
             self.stream_fence();
-            self.datagram_fence();
+            if let Some(error) = crate::datagram::link_error(reading) {
+                self.datagram_link_fence(error);
+            } else {
+                self.datagram_fence();
+            }
             self.ipv6_fence();
         }
         result
@@ -350,6 +377,7 @@ impl<L: Link> Stack<L> {
     }
     fn stream_retire(&mut self, endpoint: Endpoint, abort: bool) -> Result<(), Error> {
         self.streams.entry(endpoint)?;
+        self.port.tcp_mtu.revoke(endpoint.slot);
         let e = &mut self.streams.entries[endpoint.slot];
         e.live = false;
         if e.socket.is_none() {
@@ -371,6 +399,8 @@ impl<L: Link> Stack<L> {
         self.stream_retire(endpoint, false)
     }
     pub fn stream_abort(&mut self, endpoint: Endpoint) -> Result<(), Error> {
+        self.streams.entry(endpoint)?;
+        self.port.tcp_mtu.revoke(endpoint.slot);
         if self.streams.entry(endpoint)?.inbound {
             let e = &mut self.streams.entries[endpoint.slot];
             e.live = false;
@@ -386,6 +416,7 @@ impl<L: Link> Stack<L> {
     }
     /// Local fencing discards queues; it cannot recall externally emitted data.
     pub fn stream_fence(&mut self) {
+        self.port.tcp_mtu.fence();
         self.port.server_rules.fill(None);
         for e in &mut self.streams.entries {
             e.live = false;
@@ -441,7 +472,33 @@ impl<L: Link> Stack<L> {
                 } else {
                     None
                 };
+                if e.error.is_none() && self.port.tcp_mtu.clock_fault(slot, e.epoch, now) {
+                    e.error = Some(Error::Clock);
+                }
+                if e.error.is_none() {
+                    e.error = self
+                        .port
+                        .tcp_mtu
+                        .fault(slot, e.epoch, now)
+                        .map(|mtu| Error::FragmentationNeeded { mtu });
+                }
                 e.last_ms = now;
+                if matches!(e.error, Some(Error::FragmentationNeeded { .. })) {
+                    // We are outside the Interface borrow. Discard this socket
+                    // and queues without attempting reset or retransmission.
+                    if let Some(handle) = e.socket.take() {
+                        self.sockets.remove(handle);
+                        self.port.stats.released += 1;
+                    }
+                    self.port.tcp_mtu.revoke(slot);
+                    e.closing = None;
+                    // Retain the terminal error/reservation until owner revoke;
+                    // no operation can queue bytes through this endpoint.
+                    continue;
+                }
+                if e.error.is_some() {
+                    self.port.tcp_mtu.revoke(slot);
+                }
                 if let Some(handle) = e.socket {
                     let socket = self.sockets.get_mut::<tcp::Socket>(handle);
                     let state = socket.state();
@@ -508,6 +565,7 @@ pub struct Session {
     endpoint: Endpoint,
     peer: Address,
     inbound: bool,
+    mtu_refusal: bool,
 }
 impl Session {
     pub fn grant<L: Link>(stack: &mut Stack<L>, grant: Grant) -> Result<Self, Error> {
@@ -515,6 +573,15 @@ impl Session {
             endpoint: stack.stream_grant(grant)?,
             peer: grant.peer,
             inbound: false,
+            mtu_refusal: false,
+        })
+    }
+    pub fn grant_mtu_refusal<L: Link>(stack: &mut Stack<L>, grant: Grant) -> Result<Self, Error> {
+        Ok(Self {
+            endpoint: stack.stream_grant_mtu_refusal(grant)?,
+            peer: grant.peer,
+            inbound: false,
+            mtu_refusal: true,
         })
     }
     pub fn revoke<L: Link>(&mut self, stack: &mut Stack<L>) {
@@ -529,6 +596,8 @@ impl Session {
         reply[..12].fill(0);
         let version = if self.inbound {
             server::VERSION
+        } else if self.mtu_refusal {
+            mtu::VERSION
         } else {
             VERSION
         };
@@ -606,6 +675,15 @@ impl Session {
             Err(e) => {
                 reply[2] = e.code();
                 reply[10..12].fill(0);
+                if let Error::FragmentationNeeded { mtu } = e {
+                    // This error can originate only from an opt-in endpoint.
+                    // Never expose new semantics on a legacy or server channel.
+                    if self.mtu_refusal {
+                        reply[10..12].copy_from_slice(&mtu.to_be_bytes());
+                    } else {
+                        reply[2] = Error::Invalid.code();
+                    }
+                }
                 12
             }
         }
@@ -616,3 +694,6 @@ pub mod client;
 pub use client::Client;
 
 pub mod server;
+
+/// Explicit experimental stream v4 policy and bounded observer.
+pub mod mtu;

@@ -18,6 +18,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+from kernel_capacities import FILE_SERVER_SLOTS
 import re
 import shutil
 import subprocess
@@ -65,7 +66,9 @@ class Campaign:
         self.long_text = args.long_text
         self.cases = args.cases
         self.command_inputs = args.command_inputs.resolve() if args.command_inputs else None
-        require(self.kernel != Path("/data/git/absd-kernel"), "canonical kernel checkout")
+        protected = os.environ.get("ABSD_KERNEL_SOURCE")
+        require(protected, "set ABSD_KERNEL_SOURCE explicitly to the canonical kernel checkout")
+        require(self.kernel != Path(protected).resolve(), "canonical kernel checkout")
         require(not self.work.exists(), f"work path already exists: {self.work}")
         self.work.mkdir(parents=True)
         self.target.mkdir(parents=True, exist_ok=True)
@@ -210,6 +213,8 @@ class Campaign:
             "ABSD_EXTERNAL_READER_INPUT": "",
             "ABSD_BROKER_POLICY": "",
             "ABSD_FILE_SERVER_ELF": str(Path(file_server).resolve()) if file_server else "",
+            # This matrix has no logger; prevent ambient input adding channel20.
+            "ABSD_LOGD_ELF": "",
             "ABSD_NET_WAIT_TICKS": "",
             "CARGO_TARGET_DIR": str(self.target),
         })
@@ -500,7 +505,7 @@ class Campaign:
             require(lines.count(f"RELEASE OK release={release_id}") == 1,
                     "native file server did not validate the selected release")
             require(sum(bool(re.fullmatch(
-                r"FSD READY channels=11 slots=10 fs_seq=\d+ formatted=(?:true|false) fs_objects=\d+", line))
+                rf"FSD READY channels={1 + FILE_SERVER_SLOTS} slots={FILE_SERVER_SLOTS} fs_seq=\d+ formatted=(?:true|false) fs_objects=\d+", line))
                 for line in lines) == 1, "file server did not report its ready boundary")
             starts = [re.fullmatch(r"FILE SERVER START pid=(\d+) channels=(\d+)", line)
                       for line in lines if line.startswith("FILE SERVER START ")]
@@ -509,7 +514,7 @@ class Campaign:
             require(len(starts) == len(outcomes) == 1 and starts[0] and outcomes[0]
                     and starts[0].group(1) == outcomes[0].group(1),
                     "file-server start/clean-stop lifecycle mismatch")
-            require(starts[0].group(2) == "11", "unexpected FSD channel count")
+            require(starts[0].group(2) == str(1 + FILE_SERVER_SLOTS), "unexpected FSD channel count")
             accounting = [line for line in lines if line.startswith("DURABLE status=")]
             require(len(accounting) == 1 and re.fullmatch(
                 r"DURABLE status=0 frames=0 processes=0 cells=0 pipes=0(?: [a-z0-9_]+=[0-9]+)*",

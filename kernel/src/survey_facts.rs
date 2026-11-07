@@ -510,7 +510,7 @@ fn yes_no(value: &str) -> Option<bool> {
     }
 }
 
-// ATA IDENTIFY DEVICE decoding (the AHCI census): pure word
+// ATA IDENTIFY DEVICE decoding (coordination record #45, the AHCI census): pure word
 // arithmetic, host-tested, used by src/ahci.rs.
 
 /// IDENTIFY strings are stored two characters per word, high byte first.
@@ -829,7 +829,7 @@ mod ata_identify_tests {
 }
 
 // ---------------------------------------------------------------------------
-// AHCI port engine stop handling: what the census may do
+// AHCI port engine stop handling (coordination record #45): what the census may do
 // after it tried to stop a port's command engine (PxCMD.CR) and FIS receive
 // (PxCMD.FR). Pure, host-tested, used by src/ahci.rs.
 

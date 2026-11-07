@@ -1,0 +1,9 @@
+status 1
+--- stdout
+--- stderr
+/bin/rmdir: rmdir missing: No such file or directory
+--- directories
+empty-tree
+empty-tree/child
+tree
+tree/sub

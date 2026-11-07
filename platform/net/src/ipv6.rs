@@ -338,10 +338,13 @@ impl<L: Link> Stack<L> {
         let now = self.port.link.now_ms();
         let rewind = self.ipv6_datagrams.last_ms.is_some_and(|last| now < last);
         self.ipv6_datagrams.last_ms = Some(now);
+        let mut native_link_error = None;
         let result = if rewind {
             Err(Error::Stale)
         } else {
-            match self.read_link() {
+            let reading = self.read_link();
+            native_link_error = crate::datagram::link_error(reading);
+            match reading {
                 None => Err(Error::LinkUnknown),
                 Some(reading) if reading.disabled => Err(Error::DeviceFailed),
                 Some(reading) if !reading.link_up => Err(Error::LinkDown),
@@ -350,7 +353,11 @@ impl<L: Link> Stack<L> {
         };
         if result.is_err() {
             self.ipv6_fence();
-            self.datagram_fence();
+            if let Some(error) = native_link_error {
+                self.datagram_link_fence(error);
+            } else {
+                self.datagram_fence();
+            }
             self.stream_fence();
         }
         result

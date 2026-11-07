@@ -1,0 +1,67 @@
+.Dd November 3, 2026
+.Dt CUT 1
+.Os ABSD
+.Sh NAME
+.Nm cut
+.Nd select byte, character or field ranges from lines
+.Sh SYNOPSIS
+.Nm
+.Fl b Ar list | Fl c Ar list | Fl f Ar list
+.Op Fl d Ar delimiter
+.Op Fl s
+.Op Fl Fl complement
+.Op Fl Fl output-delimiter Ar text
+.Op Fl z
+.Op Ar file ...
+.Sh DESCRIPTION
+Select one range mode:
+.Fl b
+for bytes,
+.Fl c
+for characters, or
+.Fl f
+for fields.
+A list contains one-based positions and inclusive ranges separated by
+commas: N, N-M, N-, or -M.
+The selected pieces remain in input order; list order does not reorder them.
+.Pp
+Fields are tab-separated by default.
+.Fl d Ar delimiter
+changes the single-character field separator.
+Lines without a field delimiter are passed through unless
+.Fl s
+suppresses them.
+.Fl Fl complement
+inverts the selection;
+.Fl Fl output-delimiter Ar text
+changes the separator between selected output pieces.
+.Fl z
+uses NUL in place of newline.
+.Pp
+Read named files in order, or standard input when no files are named;
+.Ql -
+explicitly selects standard input.
+Write selections to standard output without modifying the inputs.
+This is delimiter selection, not a quoted CSV parser.
+.Sh EXIT STATUS
+0 on successful processing; nonzero for invalid selection/options,
+unreadable input or output failure. Diagnostics use standard error.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+cut -d : -f 1,6 /etc/passwd.txt
+.Ed
+.Sh ABSD PROFILE
+This is the unmodified uutils 0.12.0 utility pinned by the platform build.
+The reference describes selected source-supported options; use
+.Fl Fl help
+for the complete upstream interface.
+File access uses the process's ABSD filesystem view, output uses its
+inherited stream, and the command acquires no additional authority.
+There are no native Unix processes, signals or permission bits underneath
+this port.
+The command matrix exercises the example forms below; other options
+listed here are source-checked, not separately guest-qualified.
+.Sh SEE ALSO
+.Xr cat 1 ,
+.Xr wc 1 ,
+.Xr filesystem 7

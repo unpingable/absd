@@ -9,22 +9,30 @@ compile_error!("SMP_SERIALIZATION_LIFECYCLE refuses AP userspace");
 
 mod acpi_boot;
 mod ahci;
+mod ahci_block;
+mod ahci_check;
+mod amdvi_hw;
+use amdvi_hw::contain;
 mod ap;
 #[path = "arch/x86_64/runtime.rs"]
 mod arch_runtime;
 mod ata;
 mod block;
 mod cpu;
+mod dma;
 mod e1000;
 mod framebuffer;
 mod i219_device;
 mod kernel_lock;
 mod mmio;
 mod modern_smp;
+mod native_install;
 mod nic_device;
 mod nvme;
 mod nvme_check;
+mod partition_check;
 mod pci;
+mod rtl8125_device;
 mod sched;
 mod serial;
 mod smp_app_pressure;
@@ -35,12 +43,16 @@ mod smp_fpu;
 mod smp_leaf_measure;
 mod smp_measure;
 mod smp_nway;
+mod smp_operator;
 mod smp_startup;
 mod smp_timer;
 mod smp_user;
+mod stack_growth_audit;
 mod suite;
 mod survey;
 mod syscalls;
+#[cfg(feature = "native-pcm-experiment")]
+mod virtio_sound;
 mod vm;
 mod whole_ram;
 mod xhci;
@@ -91,6 +103,11 @@ static timer_ticks: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU6
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    contain::fatal();
+    smp_operator::fatal_guard();
+    serial::emergency_presentation();
+    absd_kernel::kernel_log::LOG.flush();
+    serial::fatal_raw(b"ABSD PANIC emergency path\n");
     framebuffer::fault_colors();
     serial_write("ABSD PANIC: ");
     let _ = write!(Serial, "{info}");
@@ -105,7 +122,7 @@ pub extern "C" fn rust_eh_personality() {}
 
 // The fixed-capacity allocator initializes arrays. With no libc in this
 // freestanding binary, provide the compiler's ordinary byte-copy helpers.
-// Safety for all three: the compiler only emits calls with valid, correctly
+// Safety for these helpers: the compiler only emits calls with valid, correctly
 // sized pointers, exactly as it would for a C library implementation.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
@@ -114,28 +131,69 @@ pub unsafe extern "C" fn memcpy(
     source: *const c_void,
     count: usize,
 ) -> *mut c_void {
-    let mut index = 0;
-    while index < count {
-        unsafe {
-            core::ptr::write_volatile(
-                destination.cast::<u8>().add(index),
-                core::ptr::read_volatile(source.cast::<u8>().add(index)),
-            );
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        // Integer-only string instructions avoid a checked Rust helper call
+        // for every byte in Cranelift builds. REP with RCX=0 touches neither
+        // pointer. The C ABI requires DF clear on return.
+        core::arch::asm!(
+            "cld",
+            "rep movsb",
+            inout("rdi") destination => _,
+            inout("rsi") source => _,
+            inout("rcx") count => _,
+            options(nostack),
+        );
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let mut index = 0;
+        while index < count {
+            unsafe {
+                core::ptr::write_volatile(
+                    destination.cast::<u8>().add(index),
+                    core::ptr::read_volatile(source.cast::<u8>().add(index)),
+                );
+            }
+            index += 1;
         }
-        index += 1;
     }
     destination
 }
 
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn memmove(
+    destination: *mut c_void,
+    source: *const c_void,
+    count: usize,
+) -> *mut c_void {
+    unsafe { absd_kernel::byte_move::move_bytes(destination.cast(), source.cast(), count).cast() }
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn memset(destination: *mut c_void, value: i32, count: usize) -> *mut c_void {
-    let mut index = 0;
-    while index < count {
-        unsafe {
-            core::ptr::write_volatile(destination.cast::<u8>().add(index), value as u8);
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!(
+            "cld",
+            "rep stosb",
+            inout("rdi") destination => _,
+            inout("rcx") count => _,
+            in("al") value as u8,
+            options(nostack),
+        );
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let mut index = 0;
+        while index < count {
+            unsafe {
+                core::ptr::write_volatile(destination.cast::<u8>().add(index), value as u8);
+            }
+            index += 1;
         }
-        index += 1;
     }
     destination
 }
@@ -189,12 +247,35 @@ fn enable_write_protect() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
+    // Kernel entry, for the pre-enable window the AMD-Vi boots report
+    // (#111 increment 6).
+    ENTRY_TSC.store(
+        unsafe { core::arch::x86_64::_rdtsc() },
+        core::sync::atomic::Ordering::Relaxed,
+    );
     if !cpu::is_bootstrap_processor() {
         cpu::refuse_application_processor();
     }
     enable_write_protect();
     serial::init();
+    serial::write("KLOG early retention active (Rust console start; boot scoped)\n");
     let total_size = unsafe { core::ptr::read_unaligned(multiboot_info.cast::<u32>()) };
+    // Bus masters firmware left on, recorded before anything else touches
+    // PCI (configuration reads only; nothing changes). Every boot reports
+    // them; the AMD-Vi boots only after the unit is enabled, so no output
+    // that depends on device state precedes the deny-by-default sweep.
+    dma::snapshot_inherited();
+    // Nothing is drawn but the framebuffer's own clear until the unit is up, or
+    // the boot ends: see serial::defer_screen.
+    if contain_value(multiboot_info, total_size as usize).is_some() {
+        serial::defer_screen();
+    }
+    let amdvi_boot = has_command_line(multiboot_info, total_size as usize, b"amdvi-enforce-test")
+        || has_command_line(multiboot_info, total_size as usize, b"amdvi-oracle=1");
+    // `dma-contain` reports them after the unit is enabled, like these boots.
+    if !amdvi_boot && contain_value(multiboot_info, total_size as usize).is_none() {
+        dma::report_inherited();
+    }
     let bench = has_command_line(multiboot_info, total_size as usize, b"smp-user-bench");
     let app_scale = has_option(multiboot_info, total_size as usize, b"smp-real-app-scale");
     let app_leaf = has_option(multiboot_info, total_size as usize, b"smp-app-leaf-meter");
@@ -302,6 +383,7 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
         !bench_up || bench,
         "benchmark UP requires qualification mode"
     );
+    smp_operator::configure(command_line(multiboot_info, total_size as usize).unwrap_or(&[]));
     let user_test =
         has_command_line(multiboot_info, total_size as usize, b"smp-user-test") || bench;
     let user_pressure = has_command_line(multiboot_info, total_size as usize, b"smp-user-pressure")
@@ -769,7 +851,8 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
     {
         sched::arm_handoff_negative();
     }
-    let kernel_only_ap = (user_test && !bench_up)
+    let kernel_only_ap = smp_operator::enabled()
+        || (user_test && !bench_up)
         || user_pressure
         || has_option(multiboot_info, total_size as usize, b"smp-kernel-only")
         || has_command_line(multiboot_info, total_size as usize, b"smp-lifecycle")
@@ -834,7 +917,10 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
     // Served failure recovery is qualified as a UP whole-machine reset.
     // Do not start an AP in this composition until an AP quiescence/reset
     // boundary has its own qualification.
-    if kernel_only_ap && has_option(multiboot_info, total_size as usize, b"served") {
+    if kernel_only_ap
+        && !smp_operator::enabled()
+        && has_option(multiboot_info, total_size as usize, b"served")
+    {
         serial_write("SERVED KERNEL-ONLY AP REFUSED\n");
         exit_qemu(1);
     }
@@ -858,6 +944,11 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
     serial_hex(total_size as u64);
     serial_write("\n");
     let readback = match framebuffer {
+        // The AMD-Vi boots print nothing that depends on device state before
+        // the unit is enabled (#111 increment 6): no framebuffer probe.
+        Ok(()) if amdvi_boot || contain_value(multiboot_info, total_size as usize).is_some() => {
+            false
+        }
         Ok(()) => framebuffer_probe(),
         Err(reason) => {
             serial_write("framebuffer: unavailable ");
@@ -866,6 +957,28 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
             false
         }
     };
+    // A refused `dma-contain` word halts here: no unit, no BME change, no driver.
+    let contain_word = contain_value(multiboot_info, total_size as usize).map(|value| {
+        let line = (multiboot_info, total_size as usize);
+        match absd_kernel::dma_contain::parse(value).and_then(|word| {
+absd_kernel::dma_contain::check_options(
+                &word,
+                |name| boot_word_present(line.0, line.1, name),
+                |name| boot_word_selected(line.0, line.1, name),
+            )
+            .map(|()| word)
+        }) {
+            Ok(word) => word,
+            Err(refusal) => {
+                let _ = writeln!(
+                    serial::Serial,
+                    "DMA CONTAIN WORD REFUSED reason={} firmware-masters=as-found qualification=none",
+                    refusal.word()
+                );
+                exit_qemu(1)
+            }
+        }
+    });
     cpu::install_tss_and_gdt();
     if !exercise_idt() {
         serial_write("IDT TEST FAILED\n");
@@ -952,6 +1065,29 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
         exit_qemu(1);
     }
     serial_write("PAGE MAP OK\n");
+    if amdvi_boot {
+        whole_ram::release_page_test_window(frames, page_test_window);
+        // #111 increment 6: the AMD-Vi boots go straight to discovery and
+        // the deny-by-default sweep once memory and paging work: no PIT,
+        // timer calibration, heap or RAM tests, and no driver, run first.
+        amdvi_boot_entry(multiboot_info, total_size as usize, kernel_only_ap);
+    }
+    if let Some(word) = contain_word {
+        contain::enter(
+            word,
+            acpi_boot::SmpView {
+                active: kernel_only_ap,
+                assumed_cpus: cpu::count(),
+            },
+            multiboot_info,
+            total_size as usize,
+            contain::Options {
+                poweroff: has_option(multiboot_info, total_size as usize, b"acpi-poweroff"),
+                reset: cfg!(feature = "acpi-reset-qemu")
+                    && has_option(multiboot_info, total_size as usize, b"acpi-reset-qemu"),
+            },
+        );
+    }
     let ticks = timer_test();
     if ticks < 5 {
         serial_write("TIMER FAILED ticks=");
@@ -975,12 +1111,16 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
     );
     let calibration = timer_calibration(stall);
     print_timer_calibration(&calibration);
-    if !heap_roundtrip(frames) || frames.allocated_frames() != 0 {
+
+    if !heap_roundtrip(frames) || frames.allocated_frames() != contain::frame_baseline() {
         serial_write("HEAP FAILED\n");
         exit_qemu(1);
     }
     serial_write("HEAP OK\n");
     whole_ram::release_page_test_window(frames, page_test_window);
+    if contain::census() {
+        contain::run_census(census_seconds(multiboot_info, total_size as usize));
+    }
     if whole_ram_test {
         if !whole_ram::self_test(frames) {
             serial_write("WHOLE RAM TEST FAILED\n");
@@ -997,11 +1137,23 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
         serial_write("\n");
         serial_write("WHOLE RAM TEST OK\n");
     }
+    if has_option(multiboot_info, total_size as usize, b"dma-report") {
+        dma::report_arms();
+    }
     // ACPI is read only when asked for (docs/x86-acpi-20261015/RESULT.md),
     // on the BSP, before any AP start or `mmio::freeze`.
     let acpi_test = has_command_line(multiboot_info, total_size as usize, b"acpi-test");
     let acpi_poweroff = has_option(multiboot_info, total_size as usize, b"acpi-poweroff");
-    if acpi_test || acpi_poweroff || has_option(multiboot_info, total_size as usize, b"acpi") {
+    let acpi_reset = cfg!(feature = "acpi-reset-qemu")
+        && has_option(multiboot_info, total_size as usize, b"acpi-reset-qemu");
+    // A `dma-contain` boot already read ACPI, with these options, on entry.
+    if !contain::active()
+        && (smp_operator::enabled()
+            || acpi_test
+            || acpi_poweroff
+            || acpi_reset
+            || has_option(multiboot_info, total_size as usize, b"acpi"))
+    {
         let ok = acpi_boot::report(
             multiboot_info,
             total_size as usize,
@@ -1010,12 +1162,40 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
                 assumed_cpus: cpu::count(),
             },
             acpi_poweroff,
+            acpi_reset,
         );
+        if smp_operator::enabled() && !ok {
+            smp_operator::refuse("acpi-topology");
+        }
         report_boot_stack();
         if acpi_test {
             exit_qemu(if ok { 0 } else { 1 });
         }
     }
+    let mwm_demo = has_command_line(multiboot_info, total_size as usize, b"mwm-demo");
+    let mwm_fault = has_option(multiboot_info, total_size as usize, b"mwm-fault");
+    #[cfg(feature = "mwm-experiment")]
+    let mwm_init =
+        match absd_kernel::display::boot_init_word(true, mwm_demo, mwm_fault, kernel_only_ap) {
+            Ok(word) => {
+                syscalls::display::set_fault_allowed(mwm_fault);
+                word
+            }
+            Err(error) => {
+                serial_write("MWM BOOT REFUSED error=");
+                serial::signed(error.try_into().unwrap_or(-1));
+                serial_write("\n");
+                exit_qemu(1);
+            }
+        };
+    #[cfg(not(feature = "mwm-experiment"))]
+    let mwm_init = {
+        if mwm_demo || mwm_fault {
+            serial_write("MWM BOOT REFUSED error=-38\n");
+            exit_qemu(1);
+        }
+        None
+    };
     if kernel_only_ap {
         kernel_lock::activate_on_bsp();
     }
@@ -1032,7 +1212,7 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
         );
     }
     if has_command_line(multiboot_info, total_size as usize, b"ahci-census") {
-        // AHCI census slice 1: a separate census entry, before storage or
+        // coordination record #45 slice 1: a separate census entry, before storage or
         // userspace. IDENTIFY DEVICE only; RAID-class controllers refused.
         let totals = ahci::census(
             has_option(
@@ -1077,6 +1257,80 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
             }
         }
     }
+    if [
+        b"rtl8125-probe".as_slice(),
+        b"rtl8125-phy",
+        b"rtl8125-loopback",
+        b"rtl8125-wire",
+        b"rtl8125-linkdiag",
+    ]
+    .iter()
+    .any(|mode| has_command_line(multiboot_info, total_size as usize, mode))
+        || has_option(multiboot_info, total_size as usize, b"net-rtl8125")
+    {
+        // #109 lane 2: options shared by the RTL8125 entries below.
+        let number = |prefix: &[u8], default: u32| {
+            option_value(multiboot_info, total_size as usize, prefix)
+                .map(|digits| decimal_u32(digits).expect("RTL8125 option needs a number"))
+                .unwrap_or(default)
+        };
+        let hold_s = number(b"rtl8125-hold=", 45);
+        let wire_passes = number(b"rtl8125-wire-passes=", 0);
+        assert!(
+            hold_s <= 3600 && wire_passes <= 1_000_000,
+            "RTL8125 option out of range"
+        );
+        rtl8125_device::set_options(rtl8125_device::Options {
+            phy_tuning: !has_option(
+                multiboot_info,
+                total_size as usize,
+                b"rtl8125-no-phy-tuning",
+            ),
+            hold_s,
+            wire_passes,
+        });
+    }
+    if has_command_line(multiboot_info, total_size as usize, b"rtl8125-probe") {
+        // coordination record #109 S1 (docs/RTL8125.md): identity by reads only,
+        // bus mastering fenced off, before storage or userspace.
+        exit_qemu(if rtl8125_device::probe() { 0 } else { 1 });
+    }
+    if has_command_line(multiboot_info, total_size as usize, b"rtl8125-phy") {
+        // #109 S2: firmware-free chip and PHY init, explicit advertisement.
+        exit_qemu(if rtl8125_device::phy_link() { 0 } else { 1 });
+    }
+    if has_command_line(multiboot_info, total_size as usize, b"rtl8125-loopback") {
+        // #109 S3: TX to RX through the MAC loopback, then a custody release.
+        // The option words select one negative control each.
+        let control = match (
+            has_option(multiboot_info, total_size as usize, b"rtl8125-hole"),
+            has_option(multiboot_info, total_size as usize, b"rtl8125-short-rx"),
+            has_option(multiboot_info, total_size as usize, b"rtl8125-no-loopback"),
+        ) {
+            (false, false, false) => rtl8125_device::Control::None,
+            (true, false, false) => rtl8125_device::Control::Hole,
+            (false, true, false) => rtl8125_device::Control::ShortRx,
+            (false, false, true) => rtl8125_device::Control::NoLoopback,
+            _ => panic!("conflicting RTL8125 loopback controls"),
+        };
+        exit_qemu(if rtl8125_device::loopback(control) {
+            0
+        } else {
+            1
+        });
+    }
+    if has_command_line(multiboot_info, total_size as usize, b"rtl8125-linkdiag") {
+        // #109 lane 2 disposable diagnostic: raw link registers for 30 s.
+        exit_qemu(if rtl8125_device::link_diagnostic() {
+            0
+        } else {
+            1
+        });
+    }
+    if has_command_line(multiboot_info, total_size as usize, b"rtl8125-wire") {
+        // #109 optional stage: the S3 frames onto the cable, then listen.
+        exit_qemu(if rtl8125_device::wire() { 0 } else { 1 });
+    }
     if !block::WRITES_BUILT {
         serial_write("BLOCK WRITES DISABLED: read-only build\n");
     }
@@ -1099,17 +1353,40 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
     } else {
         None
     };
-    match block::probe(option_value(
+    let fence_declaration = absd_kernel::storage_fence::Declaration::parse(option_value(
         multiboot_info,
         total_size as usize,
-        b"nvme-write=",
-    )) {
+        b"storage-fence=",
+    ));
+    match block::probe(
+        option_value(multiboot_info, total_size as usize, b"nvme-write="),
+        block::AhciOptions {
+            disk: option_value(multiboot_info, total_size as usize, b"ahci-disk="),
+            write: option_value(multiboot_info, total_size as usize, b"ahci-write="),
+            pretend_pending: option_value(
+                multiboot_info,
+                total_size as usize,
+                b"ahci-pretend-pending=",
+            )
+            .and_then(decimal_u32),
+            pretend_decode_off: has_option(
+                multiboot_info,
+                total_size as usize,
+                b"ahci-pretend-decode-off",
+            ),
+        },
+        fence_declaration,
+        // docs/hardware/GPT-PARTITION.md: the device becomes one GPT
+        // partition of whichever disk the options above select.
+        option_value(multiboot_info, total_size as usize, b"block-partition="),
+    ) {
         Ok(sectors) => {
             serial_write("BLOCK DEVICE OK sectors=");
             serial_decimal(sectors);
             serial_write("\n");
             serial_write(match block::backend() {
                 Some(block::Backend::Nvme) => "BLOCK BACKEND nvme",
+                Some(block::Backend::Ahci) => "BLOCK BACKEND ahci",
                 _ => "BLOCK BACKEND ata",
             });
             serial_write(if block::writable() {
@@ -1117,6 +1394,18 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
             } else {
                 " access=read-only\n"
             });
+            // docs/STORAGE-STALE-WRITE-FENCE.md: what, if anything, fences
+            // an earlier generation's device effects from this boot's writes.
+            let fence = block::fence();
+            serial_write("STORAGE FENCE fence=");
+            serial_write(fence.name());
+            match fence {
+                absd_kernel::storage_fence::Fence::NotEstablished(reason) => {
+                    serial_write(" reason=");
+                    serial_write(reason.name());
+                }
+            }
+            serial_write("\n");
         }
         Err(block::BlockError::Absent) => serial_write("block: no device\n"),
         Err(error) => {
@@ -1133,6 +1422,18 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
     // Qualification only: the ring fault is injected in any boot that probes
     // the NIC, so a `net` worker (the platform matrix) can be run over a
     // device that disables itself at its first ring access.
+    if contain::active()
+        && let Some(kind) =
+            boot_word_value(multiboot_info, total_size as usize, b"dma-contain-inject=")
+    {
+        contain::run_inject(kind);
+    }
+    if contain::active()
+        && boot_word_present(multiboot_info, total_size as usize, b"dma-contain-check")
+    {
+        contain::run_check(false);
+    }
+    contain::poll();
     let ring_fault = has_option(multiboot_info, total_size as usize, b"nic-ring-fault");
     // Qualification only (docs/NETWORK.md, "Verification"): hold a transmit
     // descriptor posted without carrier, so the §10 link outcome can be
@@ -1162,11 +1463,24 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
         // The fixture pauses the 82540's transmitter (`e1000::MmioTx`); it
         // has no I219 form. Refuse it under `net-i219` here, before any NIC
         // is probed (`nic_device::arm_tx_hold` refuses it again at arming).
-        if has_option(multiboot_info, total_size as usize, b"net-i219") {
+        if has_option(multiboot_info, total_size as usize, b"net-i219")
+            || has_option(multiboot_info, total_size as usize, b"net-rtl8125")
+        {
             panic!("transmit-hold fixture is QEMU e1000 only");
         }
     }
-    nic_device::select_i219(has_option(multiboot_info, total_size as usize, b"net-i219"));
+    // Native backends are opt-in words; the 82540 stays the default.
+    nic_device::select(
+        match (
+            has_option(multiboot_info, total_size as usize, b"net-i219"),
+            has_option(multiboot_info, total_size as usize, b"net-rtl8125"),
+        ) {
+            (false, false) => nic_device::Backend::Legacy,
+            (true, false) => nic_device::Backend::I219,
+            (false, true) => nic_device::Backend::Rtl8125,
+            (true, true) => panic!("conflicting native NIC backends"),
+        },
+    );
     if net_probe || net {
         probe_nic(ring_fault, tx_hold);
     }
@@ -1221,6 +1535,10 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
             })
         };
         xhci::qualify(xhci::Plan {
+            controller: absd_kernel::pci_selection::option(options(
+                multiboot_info,
+                total_size as usize,
+            )),
             interrupts: xhci_controller,
             rounds,
             fault,
@@ -1242,6 +1560,7 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
             }
         };
         xhci::initialize_keyboard(
+            absd_kernel::pci_selection::option(options(multiboot_info, total_size as usize)),
             has_option(multiboot_info, total_size as usize, b"usb-keyboard-observe"),
             masked,
             usb_console_test,
@@ -1250,11 +1569,30 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
         );
         kernel_lock::activate_on_bsp();
     }
+    if has_command_line(multiboot_info, total_size as usize, b"native-install") {
+        native_install::run(option_value(
+            multiboot_info,
+            total_size as usize,
+            b"install-consent=",
+        ));
+    }
     if has_command_line(multiboot_info, total_size as usize, b"nvme-qualify-write") {
         nvme_check::run(nvme_check::Phase::Write);
     }
     if has_command_line(multiboot_info, total_size as usize, b"nvme-qualify-verify") {
         nvme_check::run(nvme_check::Phase::Verify);
+    }
+    for (word, phase) in ahci_check::PHASES {
+        if has_command_line(multiboot_info, total_size as usize, word) {
+            ahci_check::run(phase);
+        }
+    }
+    if has_command_line(
+        multiboot_info,
+        total_size as usize,
+        b"block-partition-qualify",
+    ) {
+        partition_check::run();
     }
     if let Some((pid, mapping)) = startup {
         if multicore_startup {
@@ -1332,6 +1670,48 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
         serial_write("HANDOFF NEGATIVE FIXTURE\n");
         sched::arm_handoff_negative();
     }
+    let pcm_mode = if cfg!(feature = "native-pcm-experiment") {
+        [
+            (b"pcm-tone".as_slice(), 0x50434d),
+            (b"pcm-underrun".as_slice(), 0x50434e),
+            (b"pcm-stop".as_slice(), 0x50434f),
+            (b"pcm-death".as_slice(), 0x504350),
+        ]
+        .iter()
+        .find(|(name, _)| has_command_line(multiboot_info, total_size as usize, name))
+        .map_or(0, |(_, mode)| *mode)
+    } else {
+        0
+    };
+    #[cfg(feature = "native-pcm-experiment")]
+    let pcm_optional = has_option(multiboot_info, total_size as usize, b"pcm-enable");
+    #[cfg(feature = "native-pcm-experiment")]
+    if pcm_mode != 0
+        || pcm_optional
+        || has_command_line(multiboot_info, total_size as usize, b"pcm-probe")
+    {
+        match virtio_sound::init() {
+            Ok(()) => serial_write("PCM DEVICE READY s16 stereo 48000\n"),
+            Err(error) => {
+                let _ = writeln!(Serial, "PCM DEVICE REFUSED {error:?}");
+                if !pcm_optional {
+                    exit_qemu(1);
+                }
+            }
+        }
+        if has_command_line(multiboot_info, total_size as usize, b"pcm-probe") {
+            match virtio_sound::stop() {
+                Ok(()) => {
+                    serial_write("PCM PROBE STOPPED\n");
+                    exit_qemu(0);
+                }
+                Err(error) => {
+                    let _ = writeln!(Serial, "PCM PROBE STOP FAILED {error:?}");
+                    exit_qemu(1);
+                }
+            }
+        }
+    }
     // The kernel chooses validation policy and passes the matching word to
     // userspace init. Init remains PID 1 and starts shell/fuzz itself.
     let shell = has_command_line(multiboot_info, total_size as usize, b"shell");
@@ -1342,10 +1722,16 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
     let external_live = has_command_line(multiboot_info, total_size as usize, b"external-live");
     let block_probe = has_command_line(multiboot_info, total_size as usize, b"block-probe");
     let durable_step = command_line_number(multiboot_info, total_size as usize, b"durable=");
-    let init_mode = if let Some(step) = durable_step {
+    let init_mode = if let Some(word) = mwm_init {
+        sched::set_boot_mode(sched::BootMode::External);
+        word
+    } else if pcm_mode != 0 {
+        sched::set_boot_mode(sched::BootMode::External);
+        pcm_mode
+    } else if let Some(step) = durable_step {
         // The step rides above init's mode byte; a step that would lose its
         // high bits there would silently run a different step.
-        if step > u64::MAX >> absd_kernel::program::INIT_STEP_SHIFT {
+        if step > absd_kernel::program::INIT_STEP_MAX {
             serial_write("DURABLE STEP OUT OF RANGE\n");
             exit_qemu(1);
         }
@@ -1390,7 +1776,14 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
         } else {
             absd_kernel::program::INIT_MODE_DURABLE
         };
-        absd_kernel::program::init_arg(mode, step)
+        // A served boot's file server decides writable recovery from the
+        // fence (docs/STORAGE-STALE-WRITE-FENCE.md); init forwards it.
+        let fence = if served {
+            block::fence().word()
+        } else {
+            absd_kernel::program::INIT_FENCE_NONE
+        };
+        absd_kernel::program::init_with_fence(absd_kernel::program::init_arg(mode, step), fence)
     } else if block_probe {
         sched::set_boot_mode(sched::BootMode::Durable);
         absd_kernel::program::INIT_MODE_BLOCK_PROBE
@@ -1461,6 +1854,7 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
             exit_qemu(1);
         }
         serial_write("SPAWN EXHAUSTION OK\n");
+        smp_operator::begin_users();
         #[cfg(feature = "frame-admission-v0")]
         if !user_test
             && matches!(
@@ -1555,8 +1949,10 @@ pub extern "C" fn kernel_main(multiboot_info: *const u8) -> ! {
                 }
             }
         }
-        if (user_test || user_pressure) && !startup_pressure && !bench_up {
+        if (smp_operator::enabled() || user_test || user_pressure) && !startup_pressure && !bench_up
+        {
             ap::start_user_scheduler();
+            smp_operator::wait_ready();
             smp_app_pressure::calibrate_before_users();
         }
         sched::start()
@@ -1576,7 +1972,9 @@ fn probe_nic(inject_ring_fault: bool, tx_hold: Option<e1000::TxHold>) {
             serial::hex_digits(u64::from(function.device), 2);
             serial_write(".");
             serial::hex_digits(u64::from(function.function), 1);
-            serial_write(" vendor=8086 device=");
+            serial_write(" vendor=");
+            serial::hex_digits(u64::from(pci::ids(function).0), 4);
+            serial_write(" device=");
             serial::hex_digits(u64::from(pci::ids(function).1), 4);
             serial_write(" mac=");
             for (index, byte) in identity.mac.iter().enumerate() {
@@ -1591,11 +1989,12 @@ fn probe_nic(inject_ring_fault: bool, tx_hold: Option<e1000::TxHold>) {
             } else {
                 "NIC LINK DOWN AT PROBE rx_descriptors="
             });
-            serial_decimal(absd_kernel::e1000_ring::RX_DESCRIPTORS as u64);
+            let (rx_descriptors, tx_descriptors, buffer_bytes) = nic_device::geometry();
+            serial_decimal(rx_descriptors as u64);
             serial_write(" tx_descriptors=");
-            serial_decimal(absd_kernel::e1000_ring::TX_DESCRIPTORS as u64);
+            serial_decimal(tx_descriptors as u64);
             serial_write(" buffer_bytes=");
-            serial_decimal(absd_kernel::e1000_ring::BUFFER_BYTES as u64);
+            serial_decimal(buffer_bytes as u64);
             serial_write("\n");
             if inject_ring_fault && let Some(head) = nic_device::inject_rx_head_fault() {
                 serial_write("NIC RING FAULT INJECTED rdh=");
@@ -1659,80 +2058,32 @@ fn load_memory_map(info: *const u8, total_size: usize, frames: &mut FrameAllocat
     None
 }
 
-/// Admit the fixed QEMU SIPI page only when the firmware memory map names
-/// the whole page usable RAM and no known boot-owned span overlaps it. The
-/// allocator already reserves the entire first MiB separately.
+/// Admit only the fixed SIPI page after host-tested handoff/range checks.
+/// The allocator reserves the entire first MiB independently of this RAM proof.
 fn validated_ap_page(info: *const u8, total_size: usize) -> Option<ap::ValidatedLowPage> {
     unsafe extern "C" {
         static __kernel_start: u8;
         static __kernel_end: u8;
     }
-    const PAGE: u64 = 0x7000;
-    const TOP: u64 = PAGE + 4096;
-    let overlaps = |start: u64, end: u64| start < TOP && PAGE < end;
-    let ebda_segment = unsafe { core::ptr::read_unaligned(0x40eu64 as *const u16) };
-    let ebda_start = u64::from(ebda_segment) * 16;
-    if ebda_start == 0
-        || TOP > ebda_start
-        || overlaps(info as u64, (info as u64).checked_add(total_size as u64)?)
-        || overlaps(
+    let ebda = unsafe { core::ptr::read_unaligned(0x40eu64 as *const u16) };
+    let bytes = unsafe { core::slice::from_raw_parts(info, total_size) };
+    match absd_kernel::ap_page::validate(
+        bytes,
+        info as u64,
+        (
             core::ptr::addr_of!(__kernel_start) as u64,
             core::ptr::addr_of!(__kernel_end) as u64,
-        )
-    {
-        return None;
+        ),
+        ebda,
+    ) {
+        Ok(page) => Some(unsafe { ap::ValidatedLowPage::from_verified_multiboot_page(page) }),
+        Err(reason) => {
+            serial_write("SMP AP LOW PAGE DETAIL reason=");
+            serial_write(reason);
+            serial_write("\n");
+            None
+        }
     }
-    let mut usable = false;
-    let mut offset = 8usize;
-    while offset.checked_add(8).is_some_and(|end| end <= total_size) {
-        let tag = unsafe { info.add(offset) };
-        let kind = unsafe { core::ptr::read_unaligned(tag.cast::<u32>()) };
-        let size = unsafe { core::ptr::read_unaligned(tag.add(4).cast::<u32>()) } as usize;
-        if kind == 0 {
-            break;
-        }
-        if size < 8 || offset.checked_add(size).is_none_or(|end| end > total_size) {
-            return None;
-        }
-        if kind == 3 {
-            if size < 16 {
-                return None;
-            }
-            let start = unsafe { core::ptr::read_unaligned(tag.add(8).cast::<u32>()) } as u64;
-            let end = unsafe { core::ptr::read_unaligned(tag.add(12).cast::<u32>()) } as u64;
-            if overlaps(start, end) {
-                return None;
-            }
-        }
-        if kind == 6 {
-            if size < 16 {
-                return None;
-            }
-            let stride = unsafe { core::ptr::read_unaligned(tag.add(8).cast::<u32>()) } as usize;
-            if stride < 24 || !(size - 16).is_multiple_of(stride) {
-                return None;
-            }
-            let mut row_offset = 16;
-            while row_offset < size {
-                let row = unsafe { tag.add(row_offset) };
-                let base = unsafe { core::ptr::read_unaligned(row.cast::<u64>()) };
-                let length = unsafe { core::ptr::read_unaligned(row.add(8).cast::<u64>()) };
-                let entry_kind = unsafe { core::ptr::read_unaligned(row.add(16).cast::<u32>()) };
-                let end = base.checked_add(length)?;
-                if base <= PAGE && TOP <= end && entry_kind == 1 {
-                    usable = true;
-                } else if entry_kind != 1 && overlaps(base, end) {
-                    return None;
-                }
-                row_offset += stride;
-            }
-        }
-        offset += (size + 7) & !7;
-    }
-    if !usable {
-        return None;
-    }
-    Some(unsafe { ap::ValidatedLowPage::from_verified_multiboot_page(PAGE as u32) })
 }
 
 /// All device and framebuffer MMIO mappings precede this boundary. AP code
@@ -1773,7 +2124,9 @@ fn start_kernel_only_ap(info: *const u8, total_size: usize) {
     ap::start_kernel_only();
     modern_smp::topology_online();
     serial_write("SMP AP KERNEL ONLY ONLINE\n");
-    smp_fixture::qualify_wait_sites();
+    if !smp_operator::enabled() {
+        smp_fixture::qualify_wait_sites();
+    }
 }
 
 fn reserve_boot_owned_memory(
@@ -2096,6 +2449,42 @@ fn exercise_idt() -> bool {
 /// This observation covers the BSP bootstrap through ACPI, not task stacks
 /// or future boot paths. A paint scan measures touched bytes, not an exact
 /// maximum RSP depth; retain a separate 2 KiB qualification margin.
+/// The AMD-Vi boots (`amdvi-enforce-test`, `amdvi-oracle=1`; #111): ACPI
+/// discovery (firmware tables and the IOMMU function's own identity), then
+/// the AMD-Vi path, which never returns. Reached right after memory and
+/// paging work, before any timer, driver or device-state output.
+fn amdvi_boot_entry(multiboot_info: *const u8, total_size: usize, kernel_only_ap: bool) -> ! {
+    acpi_boot::report(
+        multiboot_info,
+        total_size,
+        acpi_boot::SmpView {
+            active: kernel_only_ap,
+            assumed_cpus: cpu::count(),
+        },
+        false,
+        false,
+    );
+    report_boot_stack();
+    // The AMD-Vi boots read through the AHCI backend at device LBAs and
+    // never establish a partition (docs/hardware/GPT-PARTITION.md).
+    if option_value(multiboot_info, total_size, b"block-partition=").is_some() {
+        serial_write("AMDVI BOOT REFUSED: block-partition is not supported here\n");
+        exit_qemu(1);
+    }
+    // #123: `ahci-disk=SERIAL` (or `ahci-write=SERIAL`) makes the AHCI
+    // controller at 00:07.0 the second target; without either, nothing
+    // changes.
+    let ahci = absd_kernel::ahci_command::select(
+        option_value(multiboot_info, total_size, b"ahci-disk="),
+        option_value(multiboot_info, total_size, b"ahci-write="),
+        block::WRITES_BUILT,
+    );
+    if has_command_line(multiboot_info, total_size, b"amdvi-enforce-test") {
+        amdvi_hw::enforce_test(ahci);
+    }
+    amdvi_hw::oracle(ahci);
+}
+
 fn report_boot_stack() {
     unsafe extern "C" {
         static boot_stack_canary: [u64; 0];
@@ -2310,6 +2699,9 @@ fn print_timer_calibration(calibration: &Result<facts::TimerCalibration, &'stati
 /// TSC cycles the timer probe waited, reported (uncalibrated) by the survey.
 static mut TIMER_TSC_CYCLES: u64 = 0;
 
+/// TSC at `kernel_main`'s first instruction.
+pub(crate) static ENTRY_TSC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
 /// Draws every printable character through the ordinary console path, then
 /// reads the framebuffer back and requires every pixel of every cell.
 /// Returns whether the read-back matched.
@@ -2382,6 +2774,54 @@ fn options(info: *const u8, total_size: usize) -> impl Iterator<Item = &'static 
         .split(|&byte| byte == b' ')
         .filter(|word| !word.is_empty())
         .skip(1)
+}
+
+/// Any word of the boot line, the first included.
+fn boot_words(info: *const u8, total_size: usize) -> impl Iterator<Item = &'static [u8]> {
+    command_line(info, total_size)
+        .unwrap_or(&[])
+        .split(|&byte| byte == b' ')
+        .filter(|word| !word.is_empty())
+}
+
+fn boot_word_value(info: *const u8, total_size: usize, prefix: &[u8]) -> Option<&'static [u8]> {
+    boot_words(info, total_size).find_map(|word| word.strip_prefix(prefix))
+}
+
+/// Whether the boot line holds `name`; for a name ending in `=`, a word with
+/// that prefix.
+fn boot_word_present(info: *const u8, total_size: usize, name: &[u8]) -> bool {
+    if name.ends_with(b"=") {
+        boot_word_value(info, total_size, name).is_some()
+    } else {
+        boot_words(info, total_size).any(|word| word == name)
+    }
+}
+
+/// Whether `name` is where the code that uses it reads it: `net-probe` is a
+/// mode, the others options, and neither kind reads the other's position.
+fn boot_word_selected(info: *const u8, total_size: usize, name: &[u8]) -> bool {
+    if name == b"net-probe" {
+        has_command_line(info, total_size, name)
+    } else if name.ends_with(b"=") {
+        option_value(info, total_size, name).is_some()
+    } else {
+        has_option(info, total_size, name)
+    }
+}
+
+fn contain_value(info: *const u8, total_size: usize) -> Option<&'static [u8]> {
+    boot_word_value(info, total_size, b"dma-contain=")
+}
+
+/// The census's length: the smoke's override exists only in a fixture build.
+fn census_seconds(info: *const u8, total_size: usize) -> Option<u64> {
+    if !cfg!(feature = "contain-qemu-fixture") {
+        return None;
+    }
+    boot_word_value(info, total_size, b"dma-contain-census-seconds=")
+        .and_then(decimal_u32)
+        .map(u64::from)
 }
 
 fn has_command_line(info: *const u8, total_size: usize, expected: &[u8]) -> bool {
@@ -2462,6 +2902,9 @@ pub extern "C" fn serial_input_interrupt() {
 /// what is known and stop QEMU with a distinct status.
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_exception_report(vector: u64, error: u64, rip: u64) -> ! {
+    contain::fatal();
+    smp_operator::fatal_guard();
+    serial::emergency_presentation();
     // A fault while reporting must not loop through the report path again.
     if !cpu::begin_fault_report() {
         exit_qemu(2);
@@ -2485,13 +2928,53 @@ pub extern "C" fn kernel_exception_report(vector: u64, error: u64, rip: u64) -> 
 
 use serial::{decimal as serial_decimal, hex as serial_hex};
 
-/// Resets the machine for `machine_restart`: first the reset control
+/// Resets after AP retirement. An explicitly armed QEMU Q35 FADT plan is
+/// attempted once before the existing fallback; a returned attempt is not success.
+/// The authorized syscall caller enters with interrupts disabled (library red zone).
+/// The legacy sequence starts with the reset control
 /// register at port 0xcf9 (a hard reset on PIIX and ICH chipsets; QEMU's
 /// i440fx and q35 implement it), then the 8042 keyboard controller's reset
 /// line, then a triple fault (an empty IDT and a breakpoint). Under QEMU the
 /// first one resets the machine, or ends QEMU when it runs with
 /// `-no-reboot`. On physical hardware none of the three is tested.
 pub(crate) fn machine_reset() -> ! {
+    use absd_kernel::acpi::{ResetStep, reset_sequence};
+    reset_sequence(acpi_boot::reset_plan, |step| match step {
+        ResetStep::Retire => smp_operator::retire(),
+        ResetStep::DisableInterrupts => unsafe { asm!("cli", options(nomem, nostack)) },
+        ResetStep::Unavailable(error) => {
+            use core::fmt::Write;
+            let _ = writeln!(
+                serial::Serial,
+                "ACPI RESET UNAVAILABLE reason={error:?} fallback=legacy"
+            );
+        }
+        ResetStep::Attempt => serial_write("ACPI RESET ATTEMPT port=0xcf9 value=0x0f\n"),
+        ResetStep::Drain => {
+            serial::finish_output();
+            for _ in 0..1_000_000 {
+                if unsafe { serial::inb(0x3f8 + 5) } & 0x40 != 0 {
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+        }
+        ResetStep::Write { port, value } => unsafe { serial::outb(port, value) },
+        ResetStep::Wait => {
+            for _ in 0..1_000_000 {
+                core::hint::spin_loop();
+            }
+        }
+        ResetStep::Returned => serial_write("ACPI RESET RETURNED fallback=legacy\n"),
+        ResetStep::Legacy => {
+            serial::finish_output();
+            legacy_machine_reset()
+        }
+    });
+    unreachable!()
+}
+
+fn legacy_machine_reset() -> ! {
     framebuffer::notice("ABSD RESTART code=", 0);
     unsafe {
         asm!("out dx, al", in("dx") 0xcf9u16, in("al") 0x02u8, options(nomem, nostack));
@@ -2529,20 +3012,34 @@ static mut HALT_ON_EXIT: bool = false;
 /// Under QEMU the debug-exit device stops the machine; elsewhere the CPU
 /// halts with the screen as the last record.
 pub(crate) fn exit_qemu(code: u32) -> ! {
-    let code = if code == 0 && serial::tx_dropped() != 0 {
+    serial::emergency_presentation();
+    serial::flush_screen();
+    smp_operator::retire();
+    // An armed RTL8125 must not outlive this kernel (coordination record #109 F4).
+    if !contain::skip_driver_shutdown() {
+        rtl8125_device::shutdown();
+    }
+    contain::poll();
+    serial::finish_output();
+    let mut code = if code == 0 && serial::tx_dropped() != 0 {
         1
     } else {
         code
     };
-    if code != 0 {
-        framebuffer::fault_colors();
-    }
-    framebuffer::notice("ABSD HALT code=", u64::from(code));
     if code == 0 {
         // Opt-in only (`acpi-poweroff`); returns if S5 was not armed or
         // did not take effect.
         acpi_boot::poweroff_if_armed();
     }
+    // A returned power-off attempt may itself have emitted diagnostics.
+    serial::finish_output();
+    if code == 0 && serial::tx_dropped() != 0 {
+        code = 1;
+    }
+    if code != 0 {
+        framebuffer::fault_colors();
+    }
+    framebuffer::notice("ABSD HALT code=", u64::from(code));
     unsafe {
         if !core::ptr::read_volatile(core::ptr::addr_of!(HALT_ON_EXIT)) {
             asm!("out dx, eax", in("dx") DEBUG_EXIT, in("eax") ((code << 1) | 1), options(nomem, nostack));
@@ -2554,3 +3051,7 @@ pub(crate) fn exit_qemu(code: u32) -> ! {
         }
     }
 }
+
+#[cfg(feature = "builder-class-heap")]
+mod builder_heap;
+mod heap_window;

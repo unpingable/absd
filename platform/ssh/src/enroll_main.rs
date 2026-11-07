@@ -1,6 +1,6 @@
 #![cfg_attr(target_os = "absd", feature(restricted_std))]
-//! `absd-enroll`, the worker of the dedicated enrollment image
-//! (slice A; kernel `docs/USERSPACE.md`, "enrollment build"). Init gives
+//! `absd-enroll`, the worker of the dedicated enrollment image (coordination record
+//! #31 slice A; kernel `docs/USERSPACE.md`, "enrollment build"). Init gives
 //! it the block device and, over absd-stream-v1, the importer's stream
 //! (`ABSDFIX1`, records, end marker; `src/bin/fixture_import.rs`). It
 //! accepts exactly one record and refuses everything else by name:
@@ -16,9 +16,12 @@
 //! a refused or interrupted stream leaves the disk untouched. Then it mounts
 //! the filesystem already on the device (never formatting), requires the
 //! writable placeholder `/ssh/authorized_keys` the blank disk carries,
-//! replaces its bytes and syncs once: one commit, so the commit protocol
+//! and arms the private fixed writable guard before replacing any bytes.
+//! Key replacement syncs once: one filesystem commit, so the commit protocol
 //! leaves the old file or the new one (shown for abrupt QEMU stops, model
-//! M1, not under the device law). It reads the file back and prints
+//! M1, not under the device law). After verification and sync it restores
+//! the prior fresh/clean marker last. An interrupted writer leaves dirty
+//! and cannot be retried as a fresh enrollment. It reads the file back and prints
 //! `ENROLL OK keys=<n> sha256=<hex>`, or `ENROLL REFUSED reason=<word>
 //! <detail>` and exits 95. The host helper (`scripts/absd_try.py`) checks
 //! the whole tree afterwards. Its validator follows the same rules, and the
@@ -28,7 +31,7 @@
 #[allow(dead_code)]
 mod keys;
 
-/// The one path an enrollment may write.
+/// The one ordinary data path an enrollment may write (beside its private guard).
 pub const KEYS_PATH: &str = "/ssh/authorized_keys";
 /// The largest authorized_keys file an enrollment accepts.
 pub const KEYS_MAX_BYTES: usize = 16 * 1024;
@@ -135,6 +138,7 @@ fn enroll() -> Result<(usize, String), Refusal> {
 
     use absd_fs::OpenFlags;
     use absd_runtime::storage;
+    use absd_fsd::write_guard;
     use sha2::{Digest as _, Sha256};
 
     if absd_runtime::step() != ENROLL_STEP {
@@ -148,11 +152,26 @@ fn enroll() -> Result<(usize, String), Refusal> {
         .map_err(|error| Refusal { reason: "truncated", detail: error.to_string() })?;
     let enrollment = validate_stream(&stream)?;
     let fs_error = |error| Refusal { reason: "storage", detail: format!("{error:?}") };
+    let guard_error = |error| Refusal { reason: "writable-guard", detail: format!("{error:?}") };
+    let (_, reader) = storage::mount_read_only_authority().map_err(fs_error)?;
+    let mut read_only = storage::take_mounted()
+        .ok_or(Refusal { reason: "storage", detail: "read-only mount vanished".into() })?;
+    // Enrollment is a bounded update: never admitted by a resume record.
+    let admission = write_guard::assess(&mut read_only, write_guard::Resume::Never).map_err(guard_error)?;
+    let attr = read_only.stat(KEYS_PATH.as_bytes())
+        .map_err(|error| Refusal { reason: "placeholder", detail: format!("{KEYS_PATH}: {error:?}") })?;
+    if attr.kind != absd_fs::Kind::File || attr.readonly {
+        return refuse("placeholder", format!("{KEYS_PATH} is not a writable file"));
+    }
+    drop(read_only);
+    absd_runtime::close(reader)
+        .map_err(|code| Refusal { reason: "storage", detail: format!("reader close: {code}") })?;
     // Never formats: a blank device is refused, not initialised.
     let mounted = storage::mount(false, true).map_err(fs_error)?;
     println!("ENROLL MOUNT seq={}", mounted.sequence);
     let path = KEYS_PATH.as_bytes();
     let written = storage::with_fs(|fs| {
+        write_guard::begin(fs, admission).map_err(guard_error)?;
         match fs.stat(path) {
             Ok(attr) if attr.kind == absd_fs::Kind::File && !attr.readonly => {}
             Ok(_) => return refuse("placeholder", format!("{KEYS_PATH} is not a writable file")),
@@ -181,6 +200,11 @@ fn enroll() -> Result<(usize, String), Refusal> {
             return refuse("read-back", "the file read back differs from the bytes written");
         }
         fs.check().map_err(|message| Refusal { reason: "check", detail: message.into() })?;
+        if fs.sequence() != mounted.sequence + 1 {
+            return refuse("commits", format!("sequence {} -> {}, one commit expected",
+                mounted.sequence, fs.sequence()));
+        }
+        write_guard::finish_update(fs, admission).map_err(guard_error)?;
         Ok(fs.sequence())
     })
     .ok_or(Refusal { reason: "storage", detail: "no filesystem mounted".into() })??;

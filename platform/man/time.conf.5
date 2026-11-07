@@ -1,0 +1,93 @@
+.Dd November 5, 2026
+.Dt TIME.CONF 5
+.Os ABSD
+.Sh NAME
+.Nm time.conf
+.Nd explicit boot-local unauthenticated SNTP policy for the existing NIC owner
+.Sh DESCRIPTION
+.Pa /etc/time.conf
+is read by sshd at startup. A missing file disables synchronization. Changing
+it requires restarting sshd; no silent live activation occurs.
+Sessions do not acquire a writable /etc view. Supply time.conf through the
+existing image builder --etc directory or its offline reconfigure path; the
+file is not activated live.
+.Pp
+Use one keyword and value per line; blank lines and lines beginning with
+# are ignored. Only printable ASCII, spaces, tabs and newlines are accepted.
+Unknown/duplicate keywords, extra words, invalid values and files over 4096
+bytes prevent remote SSH startup rather than silently replacing operator policy.
+An enrolled local shell remains available when FSD and enrollment are usable;
+otherwise init can retain read-only kernel maintenance. Preserve the startup
+console and stop the exact owned launcher before repairing this startup-only
+file through the image builder's offline reconfigure path, then restart.
+Neither local path activates this file live.
+.Bl -tag -width max-step-seconds
+.It Cm enabled yes Ns | Ns Cm no
+Default no. No outgoing query occurs unless enabled and an explicit server is
+configured.
+.It Cm server Ar IPv4
+One unicast dotted IPv4 peer, required when enabled. No DNS, multicast,
+broadcast or public default server is used.
+.It Cm server-port Ar port
+Exact UDP peer port, 1..65535; default 123. A nonprivileged private test peer can
+use a high port without altering its host clock.
+.It Cm local-port Ar port
+Exclusive local UDP port, 1024..65535; default 49123. An occupied port refuses the
+attempt; another service's endpoint is never taken. The native stack also
+refuses loopback, local/subnet/broadcast destinations and off-subnet peers
+without a configured route.
+.It Cm interval-seconds Ar seconds
+Normal refresh/refusal interval 60..86400; default 3600. With the link up,
+timeouts pause 1, 2, 4 seconds and double up to this interval. KoD, stratum
+refusal and other non-timeout failures wait the normal interval. A down link
+waits for carrier without periodic queries or failure records; a link-waiting
+provider re-arms on carrier rise. Success resets timeout backoff. Retry-state
+changes are logged once, with bounded summaries. A manual assertion retains
+its automatic-work cancellation and waits the configured interval.
+.It Cm max-step-seconds Ar seconds
+Maximum absolute difference from known current civil time, 1..315360000;
+default 86400. A larger disagreement is refused and retains the prior clock.
+Unknown time may bootstrap from the configured estimate, and the first network
+sample can replace an eligible RTC anchor without this bound. RTC readings
+before the fixed 2026 build floor are unknown. The limit applies to later
+network corrections relative to a prior network sample or operator assertion,
+with no cumulative bound. Explicit authenticated operator assertions themselves
+are not step-bounded and remain supported throughout 1970..2099.
+A manual assertion is replaced by the next successful periodic estimate within
+this limit. A larger difference retains the assertion and records error -34
+on each attempted interval until the assertion or provider policy changes.
+.It Cm max-age-seconds Ar seconds
+Successful network sample age 60..86400, at least the retry interval;
+default 21600. An older estimate is marked stale and continues advancing until
+replaced. Age uses delivered monotonic ticks, not a proven external elapsed
+or suspend-aware clock.
+.El
+.Pp
+Each query uses at most 3 nonce-correlated requests, 2 seconds per attempt and
+8 seconds total in boot time, driven nonblockingly inside the existing owner
+loop. Malformed/late responses, entropy or transport failure and step-policy
+refusal retire the attempt. Last successful source/value and latest failure
+remain separately observable with
+.Nm date Fl -status .
+.Pp
+The existing SNTP parser's explicit 2026..2035 era window is retained. Server
+transmit time is an unauthenticated estimate anchored at local receipt; RTT is
+only a transport observation. It is not an authenticated UTC error bound, and
+no symmetric-delay accuracy claim is made. All corrections are software-only,
+boot-local and do not feed TLS trust or write the RTC. Monotonic timeouts, RT
+budgets and watchdogs are independent.
+.Sh EXAMPLES
+An explicitly selected private test peer:
+.Bd -literal -offset indent
+enabled yes
+server 10.0.2.2
+server-port 40123
+interval-seconds 3600
+max-step-seconds 86400
+max-age-seconds 21600
+.Ed
+.Sh SEE ALSO
+.Xr clock 1 ,
+.Xr date 1 ,
+.Xr network.conf 5 ,
+.Xr afterboot 8

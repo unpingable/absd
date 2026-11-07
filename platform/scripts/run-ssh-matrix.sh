@@ -22,6 +22,7 @@ for file in sshd.elf absd-fsd.elf absd-fsd-regenerate.elf sshtest.elf fsd-probe.
 done
 rm -rf "${work:?}"
 mkdir -p "$work"
+python3 -I "$root/scripts/tests/test_ssh_clean_halt.py"
 # sshd's host tests (the PTY line discipline, authorized_keys parsing).
 (cd "$root/ssh" && env -u RUSTFLAGS cargo +1.95.0 test --offline --locked --release \
     --target x86_64-unknown-linux-gnu --target-dir "$work/linux-target" --bin sshd)

@@ -1,7 +1,9 @@
 //! The bounded byte FIFO shared by physical Console input sources.
 //! The runtime owner serializes access on the BSP with interrupts disabled.
 
-pub const CAPACITY: usize = 256;
+/// Two maximum 4095-byte canonical lines plus their terminators. IRQ work
+/// remains bounded separately; headroom covers bursts between Console reads.
+pub const CAPACITY: usize = 8192;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Source {
@@ -15,6 +17,8 @@ pub struct Input {
     len: usize,
     accepted: [u64; 2],
     dropped: [u64; 2],
+    reported: [u64; 2],
+    loss_report_tick: Option<u64>,
 }
 
 impl Default for Input {
@@ -31,6 +35,8 @@ impl Input {
             len: 0,
             accepted: [0; 2],
             dropped: [0; 2],
+            reported: [0; 2],
+            loss_report_tick: None,
         }
     }
 
@@ -69,6 +75,58 @@ impl Input {
         self.dropped[source as usize]
     }
 
+    /// Observe new loss at a Console read boundary, never in an input ISR.
+    /// The retained logger never displays input bytes or blocks. Coalesce
+    /// changed counters to one attempt per 1000 ticks, retaining a failed
+    /// publication for a later read rather than silently marking it reported.
+    pub fn report_loss(&mut self, now: u64, log: &crate::kernel_log::Log) -> bool {
+        if self.dropped == self.reported
+            || self
+                .loss_report_tick
+                .is_some_and(|last| now.saturating_sub(last) < 1000)
+        {
+            return false;
+        }
+        self.loss_report_tick = Some(now);
+        struct Message {
+            bytes: [u8; 128],
+            len: usize,
+        }
+        impl core::fmt::Write for Message {
+            fn write_str(&mut self, text: &str) -> core::fmt::Result {
+                if text.len() > self.bytes.len() - self.len {
+                    return Err(core::fmt::Error);
+                }
+                self.bytes[self.len..self.len + text.len()].copy_from_slice(text.as_bytes());
+                self.len += text.len();
+                Ok(())
+            }
+        }
+        use core::fmt::Write;
+        let mut message = Message {
+            bytes: [0; 128],
+            len: 0,
+        };
+        // Even two saturated u64 counters fit in this fixed message buffer.
+        let _ = write!(
+            message,
+            "physical Console input loss serial={} keyboard={} capacity={}",
+            self.dropped[0], self.dropped[1], CAPACITY
+        );
+        if log.emit(
+            b"console-input",
+            4,
+            Some(now),
+            &message.bytes[..message.len],
+            0,
+        ) {
+            self.reported = self.dropped;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn total_dropped(&self) -> u64 {
         self.dropped[0].saturating_add(self.dropped[1])
     }
@@ -77,6 +135,7 @@ impl Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::vec::Vec;
 
     #[test]
     fn sources_share_enqueue_order_across_wrap() {
@@ -144,5 +203,129 @@ mod tests {
         assert!(!input.push(Source::Keyboard, b'c'));
         assert_eq!(input.total_dropped(), u64::MAX);
         assert_eq!(input.available(), CAPACITY);
+    }
+    // Regression: losing the suffix of a burst below the worker's canonical
+    // line limit loses its terminator, leaving an ordinary command unfinished.
+    fn through_input_fifo(bytes: &[u8]) {
+        let mut input = Input::new();
+        let mut drained = Vec::new();
+        let mut relay = crate::local_console_router::Relay::new();
+        for &byte in bytes {
+            assert!(
+                input.push(Source::Serial, byte),
+                "lost a supported burst byte"
+            );
+        }
+        let mut part = [0; 128];
+        while input.available() != 0 {
+            let n = input.take(&mut part);
+            drained.extend_from_slice(&part[..n]);
+            relay.enqueue(&part[..n]);
+        }
+        assert_eq!(drained, bytes);
+        assert_eq!(&relay.pending[..relay.count], bytes);
+        assert_eq!(relay.dropped, 0);
+        assert_eq!(input.total_dropped(), 0);
+    }
+
+    #[test]
+    fn live149_exact_393_byte_command_reaches_the_fifo_reader() {
+        let bytes = include_bytes!("../user/tests/vectors/console-burst149.input");
+        assert_eq!(bytes.len(), 393);
+        assert_eq!(bytes.last(), Some(&b'\r'));
+        through_input_fifo(bytes);
+    }
+
+    #[test]
+    fn full_canonical_line_keeps_its_terminator() {
+        let mut bytes = vec![b'x'; 4095];
+        bytes.push(b'\n');
+        through_input_fifo(&bytes);
+    }
+
+    #[test]
+    fn two_coalesced_maximum_command_lines_keep_every_byte() {
+        let mut bytes = Vec::new();
+        for value in *b"ab" {
+            bytes.extend_from_slice(b"echo ");
+            bytes.extend(std::iter::repeat_n(value, 4090));
+            bytes.push(b'\r');
+        }
+        assert_eq!(bytes.len(), 8192);
+        through_input_fifo(&bytes);
+    }
+
+    #[test]
+    fn burst_after_partial_read_wraps_without_reordering_sources() {
+        let mut input = Input::new();
+        for _ in 0..8000 {
+            assert!(input.push(Source::Serial, b's'));
+        }
+        let mut prefix = [0; 7900];
+        assert_eq!(input.take(&mut prefix), 7900);
+        assert_eq!(prefix, [b's'; 7900]);
+        for _ in 0..2000 {
+            assert!(input.push(Source::Keyboard, b'k'));
+        }
+        let mut remaining = [0; 2100];
+        assert_eq!(input.take(&mut remaining), 2100);
+        assert_eq!(&remaining[..100], &[b's'; 100]);
+        assert_eq!(&remaining[100..], &[b'k'; 2000]);
+        assert_eq!(input.total_dropped(), 0);
+    }
+
+    #[test]
+    fn new_loss_is_retained_without_entered_bytes_and_coalesced() {
+        let log = crate::kernel_log::Log::new();
+        let mut input = Input::new();
+        assert!(!input.report_loss(0, &log));
+        for _ in 0..8192 {
+            input.push(Source::Serial, b'P');
+        }
+        assert!(!input.push(Source::Serial, b's'));
+        assert!(input.report_loss(0, &log));
+        let first = log.read(0).unwrap();
+        let record = first.record.unwrap();
+        assert_eq!(record.source(), b"console-input");
+        assert_eq!(record.severity, 4);
+        assert_eq!(record.ticks, Some(0));
+        assert!(
+            record
+                .text()
+                .windows(19)
+                .any(|w| w == b"serial=1 keyboard=0")
+        );
+        assert!(!record.text().contains(&b'P'));
+        assert!(!input.report_loss(200, &log)); // No new drops, no warning.
+        assert!(!input.push(Source::Keyboard, b'k'));
+        assert!(!input.push(Source::Keyboard, b'k'));
+        assert!(!input.report_loss(999, &log));
+        assert!(input.report_loss(1000, &log));
+        let second = log.read(first.next).unwrap();
+        assert!(
+            second
+                .record
+                .unwrap()
+                .text()
+                .windows(19)
+                .any(|w| w == b"serial=1 keyboard=2")
+        );
+        assert!(!input.report_loss(2000, &log));
+        assert!(log.read(second.next).unwrap().record.is_none());
+    }
+
+    #[test]
+    fn busy_retention_defers_loss_warning_with_a_bounded_retry() {
+        let log = crate::kernel_log::Log::new();
+        let mut input = Input::new();
+        for _ in 0..8192 {
+            input.push(Source::Serial, b'x');
+        }
+        input.push(Source::Serial, b'y');
+        log.test_while_locked(|| assert!(!input.report_loss(5, &log)));
+        assert!(!input.report_loss(6, &log));
+        assert!(input.report_loss(1005, &log));
+        assert_eq!(log.read(0).unwrap().producer_dropped, 1);
+        assert!(!input.report_loss(2005, &log));
     }
 }

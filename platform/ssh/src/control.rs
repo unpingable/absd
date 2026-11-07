@@ -26,6 +26,25 @@
 //!   sshd exactly as the same `exec` would be;
 //! * [`LIST`]: this session's processes (no payload). The channel names
 //!   the session: there is no way to ask about another.
+//! * [`INPUT_MODE`]: one byte, 1 for the primary prompt, 2 for a continuation, 0 for
+//!   program/script input. The acknowledgement precedes the prompt/read or
+//!   command. Commands never inherit these ends; no shared reply race.
+//!   Value 3 acknowledges a just-read shell line: disarm collection while
+//!   retaining pending shell input for a possible continuation. It is not
+//!   program mode; a matched shell enters mode 0 before execution.
+//!   Following terminal cancellation, mode 0 also acknowledges a paused
+//!   stdin producer with status INPUT_PAUSED. Only that explicit reply permits
+//!   a drain; an ordinary mode-0 acknowledgement does not. The shell drains
+//!   its inherited pipe before mode 1/2
+//!   resumes input. Prompt acknowledgements never discard the interrupt.
+//!   Value 4 refuses the shell's interactive source bound into terminal
+//!   quarantine. Status INPUT_REFUSED acknowledges that bounded state; it
+//!   does not end the channel. PTY acknowledgements carry paste-record-v2,
+//!   selecting the matched length-prefixed stdin reader.
+//!   The local console instead advertises plain-discard-v1, without records.
+//!   Its mode-4 reply is INPUT_PAUSED; explicit cancellation must then arrive
+//!   before mode 0 can acknowledge recovery with INPUT_PAUSED. The shell drains
+//!   while paused. Mode 1/2 refuses rearm until the local pending input is empty.
 //!
 //! A malformed frame ends the conversation: the reader stops using the
 //! channel.
@@ -35,11 +54,18 @@ pub const REPLY: u8 = 2;
 pub const END: u8 = 3;
 pub const MACHINE: u8 = 16;
 pub const LIST: u8 = 17;
+/// Program input (0), primary prompt (1), continuation prompt (2). Acknowledged.
+pub const INPUT_MODE: u8 = 18;
+pub const CLOCK:u8=19;
+pub const INPUT_REFUSED: u8 = 3;
+/// The server has actually paused its stdin producer. Only this reply
+/// permits the shell to drain that pipe before rearming input.
+pub const INPUT_PAUSED: u8 = 4;
 
 /// Kinds sshd sends.
 pub const EVENTS: &[u8] = &[INTERRUPT, REPLY, END];
 /// Kinds the shell sends.
-pub const REQUESTS: &[u8] = &[MACHINE, LIST];
+pub const REQUESTS: &[u8] = &[MACHINE, LIST, INPUT_MODE, CLOCK];
 
 pub const MAX_PAYLOAD: usize = 4096;
 const HEADER: usize = 3;
@@ -78,7 +104,9 @@ pub enum Frame {
     Reply { status: u8, text: String },
     End,
     Machine(String),
+    Clock(String),
     List,
+    InputMode(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,7 +151,9 @@ impl Decoder {
                 Ok(Some(Frame::Reply { status, text: text(rest)? }))
             }
             MACHINE => Ok(Some(Frame::Machine(text(&payload)?))),
+            CLOCK => Ok(Some(Frame::Clock(text(&payload)?))),
             LIST if payload.is_empty() => Ok(Some(Frame::List)),
+            INPUT_MODE if payload.len() == 1 && payload[0] <= 4 => Ok(Some(Frame::InputMode(payload[0]))),
             _ => Err(Malformed),
         }
     }
@@ -201,4 +231,33 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+}
+
+#[cfg(test)]
+mod input_mode_tests {
+    use super::*;
+    #[test]
+    fn read_fence_round_trip_is_distinct_from_application() {
+        let mut decoder = Decoder::new(REQUESTS);
+        decoder.push(&encode(INPUT_MODE, &[3]));
+        assert_eq!(decoder.next(), Ok(Some(Frame::InputMode(3))));
+    }
+    #[test]
+    fn prompt_mode_round_trip_and_strict_payload() {
+        for prompt in [0, 1, 2, 3, 4] {
+            let mut decoder = Decoder::new(REQUESTS);
+            for byte in encode(INPUT_MODE, &[prompt]) { decoder.push(&[byte]); }
+            assert_eq!(decoder.next(), Ok(Some(Frame::InputMode(prompt))));
+        }
+        for payload in [b"".as_slice(), &[5], &[1,0]] {
+            let mut decoder = Decoder::new(REQUESTS);
+            decoder.push(&encode(INPUT_MODE, payload));
+            assert_eq!(decoder.next(), Err(Malformed));
+        }
+    }
+}
+
+#[cfg(test)]mod clock_tests {
+    use super::*;
+    #[test]fn clock_requests_are_directional_and_reassemble(){let bytes=encode(CLOCK,b"set 123");let mut d=Decoder::new(REQUESTS);for &b in &bytes[..bytes.len()-1]{d.push(&[b]);assert_eq!(d.next(),Ok(None));}d.push(&bytes[bytes.len()-1..]);assert_eq!(d.next(),Ok(Some(Frame::Clock("set 123".into()))));let mut events=Decoder::new(EVENTS);events.push(&bytes);assert_eq!(events.next(),Err(Malformed));}
 }

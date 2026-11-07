@@ -9,8 +9,8 @@
 //! Before serving it prepares the filesystem with its own authority:
 //! `/tmp` and `/home/operator` exist, and the SSH host key seed
 //! `/ssh/host_ed25519_seed` exists (drawn from RDRAND when absent,
-//! or when built with `--regenerate-host-key`). No session binding can
-//! include `/ssh`; sshd's control channel sees `/ssh` and `/bin` read-only.
+//! or in the dedicated `regenerate-host-key` feature build). No session
+//! binding can include `/ssh`; sshd's control channel sees `/ssh` and `/bin` read-only.
 //! Then it checks the selected release (`/absd/selected` and the record
 //! `/releases/<id>/release`, `docs/RELEASE.md`) against its own compiled
 //! identity, printing `RELEASE OK release=<id>` or exiting 3 after
@@ -24,6 +24,14 @@
 
 #[cfg(target_os = "absd")]
 include!("fsd_server.rs");
+
+#[cfg(all(target_os = "absd", feature = "regenerate-host-key"))]
+mod fsd_regenerate_mode;
+
+#[cfg(all(target_os = "absd", not(feature = "regenerate-host-key")))]
+use absd_runtime::link_anchor;
+#[cfg(all(target_os = "absd", feature = "regenerate-host-key"))]
+use fsd_regenerate_mode::link_anchor;
 
 #[cfg(not(target_os = "absd"))]
 fn main() {

@@ -30,8 +30,8 @@ unchanged: fresh directory, host-reader formatting, judging, pins, census.
    carrying all 256 byte values round-trips.
 6. STATUS LINE: a non-zero status without absd-sh's status line fails.
 7. GRAMMAR: summary() and od_bytes().
-8. DEMO: the demo rehearsal's sessions answered as the guest should; tcc
-   NOT_RUN without /bin/tcc, hello.c gone afterwards.
+8. DEMO: the demo rehearsal's sessions answered as the guest should;
+   hello.c gone afterwards.
 
 Usage: userland-matrix-selftest.py --work <empty dir>
 Prints USERLAND SELFTEST OK checks=<n>."""
@@ -111,7 +111,11 @@ class FakeGuest:
             return 0, b"", b"", "1", ["2"]
         if words[0] == "mkdir":
             for d in words[1:]:
+                if d == "-p":
+                    continue
                 t.dirs.add(f"{cwd}/{d}")
+                if "-p" in words:
+                    t.dirs |= {str(p) for p in pathlib.PurePosixPath(f"{cwd}/{d}").parents if str(p).startswith(cwd)}
             return 0, b"", b"", "1", ["2"]
         if words[:2] == ["cp", "-r"]:
             src, dst = f"{cwd}/{words[2]}", f"{cwd}/{words[3]}"
@@ -137,7 +141,10 @@ class FakeGuest:
         answer = self.answers.get(case.name, self.m.want(case)[0])
         if callable(answer):
             answer = answer(self.runs[case.name])
-        rc, out, err, files = um.parse_pin(answer)
+        rc, out, err, files = um.parse_pin(answer, directories=case.util == "rmdir")
+        if case.util == "rmdir":
+            dirs = answer.rsplit(b"--- directories\n", 1)[1].decode().splitlines()
+            t.dirs = {p for p in t.dirs if not p.startswith(cwd + "/")} | {cwd + "/" + d for d in dirs}
         if case.result_id == "tar-create" and case.name not in self.answers:
             # The pin contains the contents projection; the guest produces ustar.
             # Use the independent standard writer for this fixed case's inputs.
@@ -231,15 +238,17 @@ def fails(fn, *args):
     return False
 
 
-def with_files(pin, files):
-    rc, out, err, _ = um.parse_pin(pin)
+def with_files(pin, files, case_id=None):
+    rmdir = bool(case_id and case_id.startswith("rmdir-"))
+    rc, out, err, _ = um.parse_pin(pin, directories=rmdir)
     after = dict(um.FIXTURES)
     for name, data in files.items():
         if data is None:
             after.pop(name, None)
         else:
             after[name] = data
-    return um.cu.format_result(rc, out, err, after)
+    dirs = pin.rsplit(b"--- directories\n", 1)[1].decode().splitlines() if rmdir else None
+    return um.cu.format_result(rc, out, err, after, case_id=case_id if rmdir else None, directories=dirs)
 
 
 def main():
@@ -253,8 +262,8 @@ def main():
     with_section = 0
     for pin in pins:
         data = pin.read_bytes()
-        rc, out, err, files = um.parse_pin(data)
-        ok(with_files(data, files) == data, f"format_result does not rebuild {pin.name}")
+        rc, out, err, files = um.parse_pin(data, directories=pin.name.startswith("rmdir-"))
+        ok(with_files(data, files, pin.name) == data, f"format_result does not rebuild {pin.name}")
         with_section += bool(files)
     ok(with_section >= 2, f"only {with_section} pins carry a files section")
     print(f"USERLAND SELFTEST FORMAT OK pins={len(pins)} with_files={with_section}", flush=True)
@@ -280,7 +289,7 @@ def main():
     else:
         rejected_projection = False
     ok(rejected_projection, "projected contents cannot substitute for a raw archive")
-    line, status = um.summary(n, counts, "ok", ["interrupt-printf", "exhaustion", "demo-tcc"])
+    line, status = um.summary(n, counts, "ok", ["interrupt-printf", "exhaustion"])
     ok(OK_LINE.fullmatch(line) is not None and status == 0, line)
     ok(not any(p for p in m.t.files if p.startswith(um.RUN + "/")), "the case directory was left")
     print(f"USERLAND SELFTEST AGREE OK :: {line}", flush=True)
@@ -369,13 +378,12 @@ def main():
     ok(fails(ms.run_cases), "a non-zero status without absd-sh's line passed")
     print("USERLAND SELFTEST STATUS LINE OK :: absd-sh's status line is required for a non-zero status", flush=True)
 
-    # 8. DEMO: the scripted rehearsal on the fake guest (tcc absent).
+    # 8. DEMO: the scripted rehearsal on the fake guest.
     mdemo = matrix(work, "demo")
-    notrun, text = quiet(mdemo.demo)
-    ok(notrun == ["demo-tcc"] and "USERLAND DEMO TCC NOT_RUN reason=no /bin/tcc\n" in text
-       and "USERLAND DEMO OK\n" in text and f"{um.HOME}/hello.c" not in mdemo.t.files, text[-600:])
-    print("USERLAND SELFTEST DEMO OK :: ed writes hello.c, od/cmp/grep/find/rm, man sbase licence, /bin names; "
-          "tcc NOT_RUN without /bin/tcc", flush=True)
+    _, text = quiet(mdemo.demo)
+    ok("USERLAND DEMO OK\n" in text and f"{um.HOME}/hello.c" not in mdemo.t.files, text[-600:])
+    print("USERLAND SELFTEST DEMO OK :: ed writes hello.c, od/cmp/grep/find/rm, man sbase licence, /bin names",
+          flush=True)
 
     # 7. GRAMMAR
     ok(um.od_bytes(b"0000000 69 6e 74\n0000003\n") == b"int", "od_bytes")

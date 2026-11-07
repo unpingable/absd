@@ -87,6 +87,9 @@ pub mod op {
     /// it does not serve), and one that cannot parse the frame never
     /// answers: a client treats all three as a refusal.
     pub const VERSION: u8 = 23;
+    /// Private logger channel only: retire opens from its previous process
+    /// incarnation before this sequential holder resumes persisted history.
+    pub const LOGGER_BEGIN: u8 = 24;
     /// Control only: bind a slot to a session (`u8 slot`, `u8 spare
     /// count`, spares, mounts).
     pub const BIND: u8 = 32;

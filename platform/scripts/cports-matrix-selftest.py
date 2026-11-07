@@ -50,8 +50,9 @@
    fails naming the class; a frames-only step with the heap peak moved fails
    naming it; a fall prints "released", none "(equal)".
 10. JUDGED CENSUS (census ruling (b) as ratified 2026-10-13): REST is taken
-   from the boot's first reading with draining 0 and two equal samples, and
-   again on the restart path (cut -> REBASE); a rest reading stuck at
+   from the boot's first reading with draining 0 and two equal samples (the
+   cut no longer restarts: under the storage fence it is a strict cold
+   refusal with no writable reopen, FENCED CUT); a rest reading stuck at
    draining 1 fails UNSETTLED. The first sample at rest is judged: bisect
    run A's 66 -> 67 -> 67 -> 67 -> 66 -> 66 at 66, an fsd heap peak of 20,
    24, 20, 20 at 20, an opens transient at rest; each prints one TRANSIENT
@@ -68,7 +69,7 @@
    repeat (base and repeats) off rest. Rest counts: the rest reading needs
    three equal samples (a two-sample 67 is not taken); a settled pair below
    rest lowers it (REST LOWERED, and the RECORDED summary line), and a
-   reading above the lowered rest still fails as a settled change. The tcc,
+   reading above the lowered rest still fails as a settled change. The
    clang and userland matrices inherit CportsMatrix.census and stable(): the
    base class takes each boot's rest before its first judged census, run
    A's shape is judged at 66 in each, and a draining stuck at 1 fails
@@ -776,6 +777,25 @@ class Held:
         return 0
 
 
+class FencedTarget(FakeTarget):
+    """A target cut() stops and never restarts: the refused cold boot is
+    patched in; start() is a writable reopen and must not be called."""
+    proc = None
+
+    def __init__(self, image, work):
+        self.image, self.work, self.boots, self.log = image, work, 1, pathlib.Path("sshd-001.serial.log")
+        self.contents = {"/x": b"1"}
+
+    def stop(self):
+        pass
+
+    def start(self, **kwargs):
+        raise AssertionError("cut() reopened the fenced image writable")
+
+    def tree(self):
+        return dict(self.contents)
+
+
 class RestartTarget(FakeTarget):
     """A target whose stop/start a cut() can drive: the next boot is boots+1."""
     def __init__(self, image):
@@ -848,17 +868,52 @@ def at_rest_section(work, linux, cases):
         m.rest = None
         result, _ = captured(m.take_rest, "boot 1 after its first sessions")
         fails(result, "UNSETTLED draining never settled")
-        # REST on the restart path: cut() takes the new boot's rest counts (REBASE).
+        # The cut under the storage fence (coordination record #63 (b)): the same
+        # image's next boot must be the strict cold refusal (plain fsd, zero
+        # I/O, image and host tree unchanged); cut() never reopens it
+        # writable (FencedTarget.start raises) and takes no REBASE.
         image = work / "restart.img"
-        image.write_bytes(b"img")
-        new = dict(base, fsd_opens=5, kernel=base["kernel"].replace("66 handles", "70 handles"))
-        m = sampled([d1, new, new])
-        m.t = RestartTarget(image)
-        m.host_key, m.case_before, m.restart_round = "key", base, 1
-        result, text = captured(m.cut, cases["sqlite.excl-crash"], Held(), "spilled")
-        assert not isinstance(result, failed) and m.rest == {"opens": 5, "handles": 70, "boot": 2}, (result, m.rest)
-        assert "CPORTS RESOURCES REST boot=2 :: draining=0 opens=5 handles=70" in text, text
-        assert "CPORTS RESOURCES REBASE" in text and m.rebased == dict(new, rest_at_judgment={"boot": 2, "handles": 70, "opens": 5}), text
+        refused = ("ABSD KERNEL BOOT\nSTORAGE FENCE fence=none reason=not_declared\n"
+                   "RECOVERY WRITABLE REFUSED reason=storage_fence previous=failed fence=none\n"
+                   "DURABLE status=99 block_writes=0 block_flushes=0 block_errors=0 halt=failed\n")
+        writable = ("ABSD KERNEL BOOT\nSTORAGE FENCE fence=none reason=not_declared\nFSD READY channels=2\n"
+                    "EXTERNAL OUTPUT CHUNK offset=0 data=" + b"SSH LISTENING port=22\n".hex() + "\n"
+                    "DURABLE status=0 block_writes=12 block_flushes=3 block_errors=0 halt=ok\n")
+
+        def fenced_cut(transcript, status="7", touch_image=False, touch_tree=False):
+            image.write_bytes(b"img")
+            m = sampled([base])
+            m.t = FencedTarget(image, work)
+            seen = {}
+
+            def boot(target, backend, name, **kwargs):
+                seen.update(kwargs, backend=backend)
+                if touch_image:
+                    image.write_bytes(b"written")
+                if touch_tree:
+                    m.t.contents = {"/x": b"2"}
+                log = work / (name + ".serial.log")
+                log.write_bytes(transcript.encode())
+                return transcript.encode(), status, log
+            m.host_key, m.case_before, m.restart_round = "key", base, 1
+            with patch.object(cm.fence_guest, "cold_boot", side_effect=boot):
+                result, text = captured(m.cut, cases["sqlite.excl-crash"], Held(), "spilled")
+            return m, result, text, seen
+        m, result, text, seen = fenced_cut(refused)
+        assert not isinstance(result, failed) and m.fenced == "sqlite.excl-crash" and getattr(m, "rebased", None) is None, (result, text)
+        assert seen.get("served") is False and seen.get("backend") == "ata", seen
+        assert "CPORTS CUT REFUSED sqlite.excl-crash" in text and "REBASE" not in text, text
+        for label, args in (("writable reopen", (writable, "3")), ("writable at status 7", (writable, "7")),
+                            ("missing refusal line", (refused.replace("RECOVERY WRITABLE REFUSED", "unrelated"), "7")),
+                            ("block write", (refused.replace("block_writes=0", "block_writes=1"), "7"))):
+            _, result, text, _ = fenced_cut(*args)
+            assert isinstance(result, failed), f"the fenced cut passed with a {label}: {text}"
+        _, result, _, _ = fenced_cut(refused, touch_image=True)
+        assert isinstance(result, failed), "the fenced cut passed with the image changed"
+        _, result, _, _ = fenced_cut(refused, touch_tree=True)
+        assert isinstance(result, failed), "the fenced cut passed with the host tree changed"
+        print("CPORTS SELFTEST FENCED CUT OK :: the refusal passes with no writable reopen; a writable or "
+              "unnamed successor, a block write, a changed image or tree fails", flush=True)
         # Three samples: a two-sample N5 (67, 67) is never taken as the rest reading.
         m = sampled([h67, h67, base, base, base])
         m.rest = None
@@ -1013,8 +1068,7 @@ def at_rest_section(work, linux, cases):
 
         # The inheriting harnesses: their censuses are CportsMatrix.census and carry the fsd keys.
         sysinfo = (base["memory"], base["kernel"])
-        for script, cls in (("tcc-matrix", "TccMatrix"), ("clang-guest-matrix", "ClangMatrix"),
-                            ("userland-matrix", "UserlandMatrix")):
+        for script, cls in (("clang-guest-matrix", "ClangMatrix"), ("userland-matrix", "UserlandMatrix")):
             spec_ = importlib.util.spec_from_file_location(script.replace("-", "_") + "_st", here / f"{script}.py")
             mod = importlib.util.module_from_spec(spec_)
             spec_.loader.exec_module(mod)
@@ -1058,7 +1112,7 @@ def at_rest_section(work, linux, cases):
             assert result == dict(base, rest_at_judgment=dict(m.rest)) and m.rest["handles"] == 66 and m.rest_boot == 1, (cls, result, m.rest)
             assert "CPORTS RESOURCES REST boot=1 :: draining=0 opens=3 handles=66" in buf.getvalue(), buf.getvalue()
             assert "TRANSIENT x after :: handles 67 (judged at rest" in buf.getvalue(), buf.getvalue()
-        print("CPORTS SELFTEST JUDGED SUBCLASSES OK :: TccMatrix, ClangMatrix and UserlandMatrix inherit "
+        print("CPORTS SELFTEST JUDGED SUBCLASSES OK :: ClangMatrix and UserlandMatrix inherit "
               "CportsMatrix.census (fsd keys) and stable(): the base class takes each boot's rest (REST boot=1 "
               "handles=66) and run A's shape is judged at 66 (TRANSIENT handles 67); draining stuck at 1 fails "
               "UNSETTLED", flush=True)

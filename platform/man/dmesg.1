@@ -1,0 +1,75 @@
+.Dd November 4, 2026
+.Dt DMESG 1
+.Os ABSD
+.Sh NAME
+.Nm dmesg
+.Nd read retained boot and runtime kernel diagnostics
+.Sh SYNOPSIS
+.Nm
+.Op Fl w
+.Op Fl -level Ar level
+.Op Fl -source Ar source
+.Op Fl -since Ar sequence
+.Sh DESCRIPTION
+.Nm
+prints a nondestructive snapshot of the kernel diagnostic ring. With
+.Fl w
+or
+.Fl -follow
+it also polls for later records. Every reader has an independent cursor.
+.Fl -since
+starts at the specified boot-local sequence; zero starts at retained oldest.
+.Fl -source
+matches the exact source token.
+.Fl -level
+includes the named level and all more severe levels: emerg, alert, crit,
+err, warn, notice, info, debug. The default includes every level.
+.Pp
+Each line names capture sequence, monotonic timer ticks when available
+.Pq otherwise ? ,
+severity and source. Early streamed console diagnostics infer source from
+an initial token and severity from PANIC, FAILED, ERROR or WARN text;
+structured producers provide explicit metadata. Inferred records carry
+inferred; fragments affected by producer contention carry damaged, with
+unknown source and a conservative informational level. Severity and source
+filters on inferred records compare those disclosed estimates. Damaged records
+remain visible through severity filters because their original level may be
+lost; an explicit source filter still applies. Capture order does not
+establish cross-CPU causality. The header names the boot identity, or
+unknown if the kernel cannot supply one. No wall-clock date is invented.
+.Pp
+Retention is 128 records of at most 480 message bytes. Long lines retain
+their prefix and carry truncated. Fatal non-newline fragments carry partial.
+Overwritten sequences and producer contention drops are explicit. A snapshot
+ends at the sequence boundary observed by its first read; a busy producer
+may overwrite history while it is read. No read clears the ring.
+.Pp
+All terminal controls, newlines inside messages and non-ASCII bytes are
+printed as hexadecimal escapes; literal backslashes are doubled. Filters
+operate on original metadata. This is safe display text, not a reversible
+binary export format.
+.Pp
+Reading uses the explicit inherited read-only Diagnostics capability through
+branch-local experimental syscall 0x7fc0. Init mints this grant using 0x7fc3
+and delegates it as startup role20; runtime children inherit a narrowed read
+copy even when stdout is a pipe. The grant confers no terminal input, physical
+display write or machine-control rights. Only root init can fall back to its
+private writable Console. A missing, closed, wrong-kind or insufficient-right
+handle is refused. Handle zero resolves existing authority and creates none.
+There is no clear operation. Kernel diagnostics may include device and kernel
+addresses already emitted by the existing console. This operator image delegates
+the grant throughout the runtime child tree, including children without file
+access; there is currently no per-spawn diagnostic exclusion. Do not use this
+profile for applications that must be excluded from kernel diagnostics, or log
+credentials.
+.Pp
+The command reads the kernel directly and does not contact the file server
+or network. Its ordinary shell and executable loading still require their
+normal services. The companion local console's kernel maintenance view supplies the independent
+emergency access route when composed into the image.
+.Sh EXIT STATUS
+0 on snapshot completion or output closure; 1 on kernel refusal;
+2 on invalid options. Follow continues until interrupted or output closes.
+.Sh SEE ALSO
+.Xr afterboot 8 ,
+.Xr uptime 1

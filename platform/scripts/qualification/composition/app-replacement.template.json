@@ -1,0 +1,105 @@
+{
+  "schema": "absd-app-replacement-qualification/1",
+  "execution_go": false,
+  "run": null,
+  "host_kind": "disposable-qemu-vm",
+  "machine_id": null,
+  "unit": null,
+  "unit_invocation_id": null,
+  "unit_runtime_properties_sha256": null,
+  "hard_end_unix_s": null,
+  "network_namespace_inode": null,
+  "parent_network_namespace_inode": null,
+  "private_work": null,
+  "evidence": null,
+  "custodian": null,
+  "retirement_condition": null,
+  "driver_sha256": null,
+  "source_revision": null,
+  "wrong_source_revision": "03479a3e090e847ccdfa647dce44e7b16d035988",
+  "kernel_revision": "0f770fe5469861e5d6a55652a2153c75ba834ffe",
+  "kernel": null,
+  "release": null,
+  "wrong_release": null,
+  "manifest": {
+    "path": null,
+    "sha256": null
+  },
+  "wrong_manifest": {
+    "path": null,
+    "sha256": null
+  },
+  "app_build_receipt": {
+    "path": null,
+    "sha256": null
+  },
+  "qemu": {
+    "path": null,
+    "sha256": null
+  },
+  "importer_binding_helper": {
+    "path": null,
+    "sha256": null
+  },
+  "clock_helper": {
+    "path": null,
+    "sha256": null
+  },
+  "clock_preflight": {
+    "path": null,
+    "sha256": null
+  },
+  "clock_attestor": null,
+  "native_peer_helper": {
+    "path": null,
+    "sha256": null
+  },
+  "client_private_key": null,
+  "client_public_key": {
+    "path": null,
+    "sha256": null
+  },
+  "etc": null,
+  "configuration": {
+    "network.conf": {
+      "path": null,
+      "sha256": null
+    },
+    "https-document.conf": {
+      "path": null,
+      "sha256": null
+    },
+    "https-issuer.der": {
+      "path": null,
+      "sha256": null
+    }
+  },
+  "issuer_spki": null,
+  "leaf_pem": {
+    "path": null,
+    "sha256": null
+  },
+  "leaf_key": null,
+  "pki_lifecycle_receipt": {
+    "path": null,
+    "sha256": null
+  },
+  "runbooks": {
+    "docs/P2-REPLACEMENT-RESTORE.md": null,
+    "docs/NATIVE-HTTPS-DOCUMENT.md": null,
+    "docs/OPERATOR-RUNBOOK.md": null
+  },
+  "unresolved_inputs": [
+    "Final composed source and exact producer repository revisions; actual nominated private B and distinct compatible earlier wrong-release artifacts.",
+    "Actual native build receipt, final p2_boot_binding.py/p2-bound-qemu.py integration and exact QEMU path/digest.",
+    "Fresh VM unit, invocation, finite runtime properties, lease, isolated TAP namespace and output directories.",
+    "Existing AcceptedPeer Linux fixture helper and Linux clock helper, exact staged hashes and fresh clock preflight with named attestor.",
+    "Exact public configuration/issuer/leaf certificate, private TLS/client keys with their current custodians and retirement conditions.",
+    "Resource and storage admission, durable checkpoint/collector, actual current operator documentation hashes, independent driver review."
+  ],
+  "runbook_root": null,
+  "ancestry": {
+    "path": null,
+    "sha256": null
+  }
+}

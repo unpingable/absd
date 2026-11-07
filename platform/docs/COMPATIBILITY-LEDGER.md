@@ -71,7 +71,12 @@ those out of the native design unless a native workload earns them.
 
 `scripts/stage-compat.sh` extracts each registry archive of
 `compat/programs.tsv` (checked against its crates.io checksum) twice,
-beside this repository in `absd-std-staged-compat/`:
+in the worktree-specific sibling `${root}.staged-compat/` (for example,
+`/work/platform.staged-compat/` for `/work/platform`). This stays outside the
+checkout's `.cargo/config.toml` ancestry while isolating each worktree's inputs,
+Cargo homes and build outputs. The ports build still refuses other ancestor
+Cargo configuration rather than removing or ignoring it:
+
 
 - `linux/<crate>`: exactly as published, built for Linux with the archive's
   own `Cargo.lock` (the reference);

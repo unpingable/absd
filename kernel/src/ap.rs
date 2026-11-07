@@ -18,7 +18,7 @@ const AP_ID: u8 = 1;
 const AP_IPI_VECTOR: u8 = absd_kernel::interrupt_vector::AP_IPI;
 pub const BSP_ACK_VECTOR: u8 = absd_kernel::interrupt_vector::BSP_ACK;
 const AP_SPURIOUS_VECTOR: u8 = absd_kernel::interrupt_vector::APIC_SPURIOUS;
-const TRAMPOLINE_PAGE: u32 = 0x7000;
+const TRAMPOLINE_PAGE: u32 = absd_kernel::ap_page::PAGE;
 const PAGE_BYTES: usize = 4096;
 const TRAMPOLINE_STACK_RESERVE: usize = 256;
 const STACK_BYTES: usize = 16 * 1024;
@@ -46,8 +46,8 @@ const STARTUP: u32 = 0x0000_0600;
 const FIXED: u32 = 0;
 
 /// Proof-carrying label for the fixed local-VM SIPI page. The caller must
-/// establish that the complete page is type-1 Multiboot RAM below EBDA, is
-/// disjoint from the kernel, Multiboot data/modules and all live low-memory
+/// establish that the complete page is type-1 Multiboot RAM below any EBDA
+/// (or an absent legacy EBDA in a validated exited EFI handoff), is disjoint from the kernel, Multiboot data/modules and all live low-memory
 /// consumers, and remains reserved for the AP until the VM stops. The kernel
 /// allocator already reserves 0..1 MiB but that alone is not a RAM proof.
 pub struct ValidatedLowPage {
@@ -528,8 +528,7 @@ fn tsc_delay(bound: u64) {
     }
 }
 
-/// Start only APIC ID 1; AP stays CPL0 on its private stacks until a
-/// controlled fixture command. No ordinary task can be scheduled there.
+/// Start admitted APs sequentially; each stays CPL0 until its command.
 pub fn start_kernel_only() {
     bsp_only();
     enable_bsp_lapic();
@@ -551,17 +550,27 @@ fn start_one(id: u8) {
         "controlled VM BSP APIC ID must be 0"
     );
     install_trampoline(config.low_page, id);
-    send_ipi_to(id, INIT_ASSERT);
-    tsc_delay(INIT_SETTLE_TSC);
-    send_ipi_to(id, INIT_DEASSERT);
-    tsc_delay(SIPI_SETTLE_TSC);
-    send_ipi_to(id, STARTUP | (TRAMPOLINE_PAGE >> 12));
-    tsc_delay(SIPI_SETTLE_TSC);
-    if !ONLINE[id as usize].load(Ordering::Acquire) {
+    crate::smp_operator::attempted(id);
+    if !crate::smp_operator::suppress_start(id) {
+        send_ipi_to(id, INIT_ASSERT);
+        tsc_delay(INIT_SETTLE_TSC);
+        send_ipi_to(id, INIT_DEASSERT);
+        tsc_delay(SIPI_SETTLE_TSC);
         send_ipi_to(id, STARTUP | (TRAMPOLINE_PAGE >> 12));
+        tsc_delay(SIPI_SETTLE_TSC);
+        if !ONLINE[id as usize].load(Ordering::Acquire) {
+            send_ipi_to(id, STARTUP | (TRAMPOLINE_PAGE >> 12));
+        }
     }
     let start = unsafe { core::arch::x86_64::_rdtsc() };
     while !ONLINE[id as usize].load(Ordering::Acquire) {
+        crate::smp_operator::check_bsp_failure(None);
+        if crate::smp_operator::enabled()
+            && (FAILED[id as usize].load(Ordering::Acquire)
+                || unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start) >= START_TSC_BOUND)
+        {
+            crate::smp_operator::refuse("startup-timeout");
+        }
         assert!(
             !FAILED[id as usize].load(Ordering::Acquire),
             "controlled AP failed closed"
@@ -865,7 +874,15 @@ pub fn ack_count() -> u64 {
     ACK_COUNT.load(Ordering::Acquire)
 }
 
+#[cfg(feature = "smp-operator-controls")]
+pub fn operator_backstop_control() -> ! {
+    fail_closed()
+}
+
 fn fail_closed() -> ! {
+    if crate::smp_operator::enabled() {
+        crate::smp_operator::raw_backstop();
+    }
     let id = (core::arch::x86_64::__cpuid(1).ebx >> 24) as usize;
     if id < crate::cpu::MAX_CPUS {
         FAILED[id].store(true, Ordering::Release);
@@ -1192,8 +1209,10 @@ extern "C" fn ap_kernel_main() -> ! {
     install_ap_descriptors();
     enable_ap_lapic();
     crate::modern_smp::capture_topology(id as usize);
+    crate::smp_operator::check_stop();
     ONLINE[id as usize].store(true, Ordering::Release);
     loop {
+        crate::smp_operator::check_stop();
         match COMMAND[id as usize].swap(0, Ordering::AcqRel) {
             0 => unsafe { asm!("sti", "hlt", "cli", options(nomem, nostack)) },
             1..=3 if id != AP_ID || crate::cpu::count() != 2 => fail_closed(),
@@ -1234,6 +1253,43 @@ pub fn send_task_ipi(cpu: u8) {
                 u32::from(absd_kernel::interrupt_vector::BSP_STOP)
             },
     );
+}
+/// Terminal delivery is bounded and nonasserting. An unavailable/busy LAPIC
+/// never prevents fan-out to remaining attempted APs or manufactures an ACK.
+pub fn send_retirement_ipi(cpu: u8) -> bool {
+    let base = LAPIC_VIRT.load(Ordering::Acquire);
+    if base == 0 || base & 0xfff != 0 || cpu == 0 || cpu as usize >= crate::cpu::count() {
+        return false;
+    }
+    let Some(config) = (unsafe { *core::ptr::addr_of!(CONFIG) }) else {
+        return false;
+    };
+    if config.lapic != base {
+        return false;
+    }
+    let idle = || {
+        let start = unsafe { core::arch::x86_64::_rdtsc() };
+        while unsafe { core::ptr::read_volatile((base + LAPIC_ICR_LOW) as *const u32) } & ICR_BUSY
+            != 0
+        {
+            if unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start) >= ICR_TSC_BOUND {
+                return false;
+            }
+            core::hint::spin_loop();
+        }
+        true
+    };
+    if !idle() {
+        return false;
+    }
+    unsafe {
+        core::ptr::write_volatile((base + LAPIC_ICR_HIGH) as *mut u32, u32::from(cpu) << 24);
+        core::ptr::write_volatile(
+            (base + LAPIC_ICR_LOW) as *mut u32,
+            FIXED | u32::from(AP_IPI_VECTOR),
+        );
+    }
+    idle()
 }
 pub fn task_eoi() {
     lapic_write(LAPIC_EOI, 0);

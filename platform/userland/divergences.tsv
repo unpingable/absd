@@ -4,6 +4,7 @@
 # prefix as the guest prints it (/bin/NAME, CPA-066, D-21). ABSD stdout is empty for every
 # row. These are predictions from the patches and the contract, unverified
 # until the guest run (T5) pins them.
+tee-ignore-signal	1	/bin/tee: signal: Function not implemented	Existing CPA-004 signal adapter refuses all dispositions, including SIG_IGN; tee checks this before opening files, so no file or stdout is produced
 test-writable-dir	2	/bin/test: -w dir: check not supported on this system: Function not implemented	access(dir, W_OK) is ENOSYS (SPEC A11, c/posix/unistd_more.c); test-access-mtime.patch reports it instead of answering false
 test-exec-file	2	/bin/test: -x words.txt: check not supported on this system: Invalid argument	access(file, X_OK) is EINVAL: no execute permission exists (c/posix/unistd_more.c); test-access-mtime.patch
 test-newer	2	/bin/test: -nt/-ot: file modification times are not available on this system	st_mtime is 0 for every file (C-INTERFACE.md 11); the ABSD build defines ABSD_NO_MTIME; test-access-mtime.patch

@@ -19,6 +19,11 @@ Markers (each printed only when every check behind it held):
                                   cannot stop the machine: the kernel
                                   refuses every attempt (-9, retired -38)
                                   and logs it; the machine keeps serving
+  DIRECT PATH OK                  a program copied to /home/operator runs
+                                  by its absolute path with no shell syntax
+                                  (#119); a real program only sshd's own
+                                  mounts hold (/ssh/matrix-echo) does not run,
+                                  and a text file is refused by the loader
   ORDERLY SHUTDOWN OK             `ssh host shutdown`: a shell mid-write
                                   (cat > file, input still open), an idle
                                   PTY shell, and a command that never ends
@@ -79,6 +84,7 @@ import time
 here = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(here))
 from served_kernel import kernel_make
+from served_kernel import file_server_started
 from served_ram import served_qemu
 import ssh_absd  # noqa: E402
 
@@ -86,7 +92,9 @@ spec = importlib.util.spec_from_file_location("ssh_matrix", here / "ssh-matrix.p
 sm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sm)
 
+# Non-PTY shells write the plain prompt. Only a PTY carries mode sequences.
 PROMPT = b"absd$ "
+PTY_PROMPT = b"\x1b[?2004habsd$ "
 # The qualification deadline under test, in kernel ticks (about 1 kHz).
 DEADLINE_TICKS = 30_000
 SHUTDOWN_SECONDS = 180
@@ -113,14 +121,23 @@ class ServedTarget(ssh_absd.AbsdTarget):
     deadline, or `net fsd served`."""
 
     served = True
+    # Ordinary qualification supplies no declaration. The optional words
+    # remain available as negative inputs: neither external nor controller
+    # establishes retirement, including on a QEMU-owned image.
+    storage_fence = os.environ.get("ABSD_HARNESS_STORAGE_FENCE", "none")
+    if storage_fence == "none":
+        storage_fence = None
 
     def iso(self, step, worker, input_bytes=b"", options="", server=""):
+        if self.storage_fence and "served" in options.split():
+            options += f" storage-fence={self.storage_fence}"
         input_path = self.work / f"input-{hashlib.sha256(input_bytes).hexdigest()}.bin"
         input_path.write_bytes(input_bytes)
         subprocess.run([*kernel_make(), "--no-print-directory", "-C", str(self.kernel), "durable-iso",
                         f"DURABLE_STEP={step}", f"EXTERNAL_USER_ELF={worker}", f"EXTERNAL_INPUT={input_path}",
                         "EXTERNAL_READER_ELF=", "EXTERNAL_READER_INPUT=", f"DURABLE_OPTIONS={options}",
-                        f"FILE_SERVER_ELF={server}", f"NET_WAIT_TICKS={DEADLINE_TICKS}"],
+                        f"FILE_SERVER_ELF={server}", f"NET_WAIT_TICKS={DEADLINE_TICKS}",
+                        f"LOGD_ELF={self.root / 'absd-logd.elf' if server else ''}", "LOGD_FAULT=0"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         return self.kernel / "build" / "durable" / f"absd-durable-{step}.iso"
 
@@ -130,7 +147,8 @@ class ServedTarget(ssh_absd.AbsdTarget):
         return self.iso(0, self.root / "sshd.elf", options=options, server=server)
 
     def files(self, authorized):
-        return super().files(authorized)
+        # A real program on sshd's own /ssh mount (the DIRECT PATH check).
+        return super().files(authorized) + [("/ssh/matrix-echo", (self.root / "commands" / "echo").read_bytes())]
 
     def status(self, timeout):
         """QEMU's exit status as durable-boot.sh reports it, or None if the
@@ -224,7 +242,7 @@ class ServedMatrix(sm.Matrix):
         self.client.trust(first["public"])
         serial = t.serial()
         self.check("the served boot starts the file server and sshd as in an fsd boot",
-                   "FILE SERVER START pid=2 channels=11" in serial and "SSH LISTENING" in t.output(), serial[-600:])
+                   file_server_started(serial, logger_present=True) and "SSH LISTENING" in t.output(), serial[-600:])
         started = self.ticks()
         waited = 0
         now = started
@@ -259,6 +277,32 @@ class ServedMatrix(sm.Matrix):
                    serial[-400:])
         self.mark("STOP RIGHT OK")
 
+        # -- DIRECT PATH (#119) --------------------------------------------
+        # A program outside /bin, named by path with no shell syntax, runs
+        # with the session's authority, never sshd's. /ssh/matrix-echo is a
+        # real program only sshd's own mounts reach: run with sshd's
+        # authority (the defect's route) it would print; refused, it shows
+        # the session cannot read it. Checked first, so a build that reads
+        # images with sshd's authority fails here on its own.
+        rc, out, err = self.ssh("/ssh/matrix-echo read with sshd authority")
+        self.check("a program only sshd's own mounts hold does not run for a session",
+                   rc in (126, 127) and out == b"" and err.startswith(b"absd-sh: /ssh/matrix-echo: "),
+                   f"rc={rc} {out!r} {err!r}")
+        rc, out, err = self.ssh("cat /bin/echo > /home/operator/echo-copy")
+        self.check("a program copied into /home/operator", rc == 0, f"rc={rc} {out!r} {err!r}")
+        rc, out, err = self.ssh("/home/operator/echo-copy direct path ok")
+        self.check("an uploaded program runs by its absolute path, without shell syntax",
+                   rc == 0 and out == b"direct path ok\n", f"rc={rc} {out!r} {err!r}")
+        rc, out, err = self.ssh("cat > /home/operator/not-a-program", stdin=b"plain text, not an ELF\n")
+        self.check("a text file written to /home/operator", rc == 0, f"rc={rc} {out!r} {err!r}")
+        rc, out, err = self.ssh("/home/operator/not-a-program")
+        self.check("a file that is no program is refused by the loader, read with the session's authority",
+                   rc == 126 and out == b"" and err.startswith(b"absd-sh: /home/operator/not-a-program: cannot run: "),
+                   f"rc={rc} {out!r} {err!r}")
+        self.check("the boot still serves after the refusals",
+                   t.proc.poll() is None and self.ssh("/bin/pwd")[0] == 0, t.serial()[-400:])
+        self.mark("DIRECT PATH OK")
+
         # -- ORDERLY SHUTDOWN ----------------------------------------------
         # A shell writing a file from its input, the input still open.
         spawned = t.spawn_count()
@@ -269,7 +313,7 @@ class ServedMatrix(sm.Matrix):
         writer.stdin.flush()
         # An idle interactive shell on a PTY.
         term = self.client.terminal(self.op)
-        self.check("PTY session starts", term.wait_raw() and term.expect(PROMPT), term.shown[-200:].decode(errors="replace"))
+        self.check("PTY session starts", term.wait_raw() and term.expect(PTY_PROMPT), term.shown[-200:].decode(errors="replace"))
         # A command that never reads its input and never ends.
         spawned = t.spawn_count()
         forever = subprocess.Popen(self.client.base(self.op) + ["/bin/sshtest sleep 600000"],
@@ -364,12 +408,12 @@ class ServedMatrix(sm.Matrix):
         # shell's `shutdown` goes to sshd on the session control channel.
         term = self.client.terminal(self.op, extra=("-t",))
         try:
-            ready = term.wait_raw() and term.expect(PROMPT, timeout=60)
+            ready = term.wait_raw() and term.expect(PTY_PROMPT, timeout=60)
             steps = []
             for keys, screen in [
-                (b"shutdown +5\r", b"shutdown +5\r\nusage: shutdown [-h|-p|-r now] | reboot (this sshd takes no other form)\r\n" + PROMPT),
-                (b"shutdown | cat\r", b"shutdown | cat\r\nabsd-sh: shutdown: cannot run in a pipeline\r\n" + PROMPT),
-                (b"status\r", b"status\r\n2\r\n" + PROMPT),
+                (b"shutdown +5\r", b"shutdown +5\r\n\x1b[?2004lusage: shutdown [-h|-p|-r now] | reboot (this sshd takes no other form)\r\n" + PTY_PROMPT),
+                (b"shutdown | cat\r", b"shutdown | cat\r\n\x1b[?2004labsd-sh: shutdown: cannot run in a pipeline\r\n" + PTY_PROMPT),
+                (b"status\r", b"status\r\n\x1b[?2004l2\r\n" + PTY_PROMPT),
             ]:
                 term.type(keys)
                 steps.append(term.expect(screen, timeout=60) and term.between == b"")
@@ -408,6 +452,10 @@ class ServedMatrix(sm.Matrix):
         self.mark("REBOOT OK")
         self.mark("SHELL SHUTDOWN OK")
 
+        # Run the independent link case while the preceding boot is clean.
+        # The deliberate deadline failure below leaves this image dirty.
+        self.link_down_boot()
+
         # -- QUALIFICATION DEADLINE ----------------------------------------
         self.start(served=False)
         begun = self.ticks()
@@ -417,9 +465,6 @@ class ServedMatrix(sm.Matrix):
                    status == "7" and "init: FAILED at external workload deadline" in serial
                    and "DURABLE WORKLOAD FAILED" in serial, f"status={status} {serial[-800:]}")
         self.mark(f"QUALIFICATION DEADLINE KEPT OK deadline_ticks={DEADLINE_TICKS} first_session_tick={begun}")
-
-        # -- LINK DOWN BOOT ------------------------------------------------
-        self.link_down_boot()
 
     def ram_below_minimum_boot(self):
         """Deliberate gate-only bypass: prove the kernel refuses 128M.

@@ -180,7 +180,7 @@ class KitMatrix(sm.Matrix):
     # Every reading opens at sshd's quiescent line (see Quiescence above).
     QUIESCENT_READINGS = True
     # Connections this matrix has opened. A class attribute, so a subclass
-    # whose __init__ skips KitMatrix.__init__ (CportsMatrix, TccMatrix call
+    # whose __init__ skips KitMatrix.__init__ (CportsMatrix calls
     # sm.Matrix.__init__ directly) still counts from 0 in ssh().
     connections = 0
 
@@ -368,7 +368,9 @@ class KitMatrix(sm.Matrix):
         (seen 705 -> 706, every count else equal, no file changed): a
         `warmup` round takes that step unjudged and prints it; the
         measured rounds must then return to their rest reading exactly."""
-        rest = self.stable(f"frames {label}", "rest")
+        # Measured held routes have the same judged-before anchor as the
+        # ordinary case loop. A transient agreeing pair must not replace it.
+        rest = self.stable(f"frames {label}", "rest", confirm=not (warmup or rehearsal))
         spawned = self.t.spawn_count()
         self.connections += 1
         held = subprocess.Popen(self.client.base(self.op) + [SCRATCH + " ".join(quote(w) for w in words)],
@@ -398,6 +400,9 @@ class KitMatrix(sm.Matrix):
                        (rest["images"], rest["kernel"], rest["objects"]) == (after["images"], after["kernel"], after["objects"])
                        and 0 <= self.allocated(after["memory"]) - self.allocated(rest["memory"]) <= 4,
                        f"rest={rest['memory']} {rest['kernel']} after={after['memory']} {after['kernel']}")
+            # Pin authoring explicitly admits this bounded cold step. Only
+            # its validated result anchors the following measured routes.
+            self._settled_census = after
         else:
             self.compare_census(f"frames {label}", rest, after)
         live = self.allocated(memory[0]) - self.allocated(rest["memory"])

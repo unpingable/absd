@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Bounded cold-boot recovery cases for the guest file server.
+"""Bounded interruption and cold-refusal cases for the guest file server.
 
-Every interruption ends the exact QEMU process after a named guest
-operation boundary. The next boot uses the exact same raw image. The host
-reads that image through absd_fs, independently of the guest file server.
-This covers three representative histories, not every sector write or a
-physical power-loss model. The AG SQLite matrix remains a separate gate.
+Every case has a fresh image and ends its exact QEMU process after a named
+operation boundary. The host checks complete file contents independently.
+The next boot uses that same interrupted image and must refuse writable
+entry without a checked storage fence, issuing no writes or flushes. This
+covers three histories, not every sector write or physical power loss.
+The AG SQLite matrix remains a separate gate.
 """
 
 import argparse
@@ -23,6 +24,7 @@ import uuid
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import ssh_absd  # noqa: E402
+import storage_fence_guest as fence_guest  # noqa: E402
 
 spec = importlib.util.spec_from_file_location("ssh_matrix", HERE / "ssh-matrix.py")
 ssh_matrix = importlib.util.module_from_spec(spec)
@@ -121,21 +123,18 @@ def interrupt(target, label):
     return identity
 
 
-def recover(target, client, key, identity, label, expected, read_path, read_bytes):
+def refuse_recovery(target, identity, label, expected):
     need(image_identity(target.image) == identity, f"{label}: reboot would use a different disk")
-    boot = target.start(expect_sweep=True)
+    before = target.tree()
+    need(before.get(BASELINE_PATH) == BASELINE, f"{label}: independent baseline changed")
+    outcome = expected(before)
+    refusal = fence_guest.refused_cold_boot(target, "ata", label + "-refused", served=False)
     need(image_identity(target.image) == identity, f"{label}: reboot replaced the disk")
-    need(not boot["generated"] and "FSD READY " in target.serial(),
-         f"{label}: a new file server did not mount the same disk")
-    tree = target.tree()
-    need(tree.get(BASELINE_PATH) == BASELINE, f"{label}: independent baseline changed across the interruption")
-    outcome = expected(tree)
-    # A fresh guest request must pass through the recovered file server.
-    rc, out, err = client.run(key, f"/bin/cat {read_path}")
-    need(rc == 0 and out == read_bytes and err == b"",
-         f"{label}: recovered server read failed rc={rc} bytes={len(out)} err={err!r}")
-    print(f"CORE FSD RECOVERED case={label} outcome={outcome} image={target.image} serial={target.log}", flush=True)
-    return tree
+    after = target.tree()
+    need(after == before, f"{label}: cold refusal changed filesystem contents")
+    need(expected(after) == outcome, f"{label}: cold refusal changed the host outcome")
+    print(f"CORE FSD COLD REFUSAL case={label} outcome={outcome} "
+          f"image={target.image} serial={refusal['log']} image_unchanged=true", flush=True)
 
 
 def command(client, key, argv, answer):
@@ -144,30 +143,14 @@ def command(client, key, argv, answer):
          f"{argv}: rc={rc} out={out!r} err={err!r}")
 
 
-def run(args):
-    root = pathlib.Path(args.work).resolve()
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    need(root.stat().st_mode & 0o077 == 0, "work root must be owner-only for the local test key")
-    work = root / str(uuid.uuid4())
+def run_case(args, work, key, label):
+    # An interrupted generation cannot authorize the next case's writes.
     work.mkdir(mode=0o700)
-    need(work.stat().st_mode & 0o077 == 0, "work directory must be owner-only for the local test key")
-    print(f"CORE FSD WORK run={work.name} path={work}", flush=True)
     target = ssh_absd.target(["--kernel", args.kernel, "--platform", args.platform,
                               "--shell", args.shell, "--qemu", args.qemu,
                               "--boot-seconds", "1200"])
-    key = work / "operator"
-    success = False
-    fingerprint = "unavailable"
-    review = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)).date().isoformat()
     try:
-        subprocess.run([ssh_matrix.KEYGEN, "-q", "-t", "ed25519", "-N", "",
-                        "-C", f"core-fsd-recovery-{work.name}", "-f", str(key)], check=True)
-        public = key.with_suffix(".pub")
-        fingerprint = subprocess.run([ssh_matrix.KEYGEN, "-lf", str(public)], check=True,
-                                     capture_output=True, text=True).stdout.split()[1]
-        print(f"CORE FSD KEY run={work.name} fingerprint={fingerprint} "
-              f"destination=local-vm-operator path={key} owner_only=true", flush=True)
-        target.setup(work, public.read_text())
+        target.setup(work, key.with_suffix(".pub").read_text())
         target.start(fresh=True)
         client = Client(work, target.port)
         client.trust(target.host_public_from_image())
@@ -177,79 +160,93 @@ def run(args):
         command(client, key, f"/bin/fsd-probe write {path} {SIZE}", f"write: {SIZE} bytes ".encode())
         need(target.tree().get(path) == OLD, "initial committed content differs from host oracle")
 
-        # WRITE_AT answered while its handle is open and unsynced. The SSH
-        # command remains live when the host ends QEMU.
-        process = subprocess.Popen(client.base(key) + [f"/bin/fsd-probe recovery-pending {path} {SIZE}"],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        try:
-            shown = await_marker(process.stdout, MARKER, process)
-            need(MARKER in shown and process.poll() is None, "pending write did not reach its live boundary")
-            identity = interrupt(target, "open_write")
-        finally:
+        if label == "open_write":
+            # WRITE_AT answered while its handle is open and unsynced.
+            process = subprocess.Popen(client.base(key) + [f"/bin/fsd-probe recovery-pending {path} {SIZE}"],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
-                process.communicate(timeout=15)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.communicate()
-        cold = target.tree()  # independent structural and content check before any recovery boot
-        outcome = classify_pending(cold)
-        print(f"CORE FSD HOST ORACLE case=open_write outcome={outcome}", flush=True)
-        recover(target, client, key, identity, "open_write",
-                lambda tree: outcome if classify_pending(tree) == outcome else need(False, "pending outcome changed on recovery boot"),
-                path, OLD if outcome == "previous" else PENDING)
+                shown = await_marker(process.stdout, MARKER, process)
+                need(MARKER in shown and process.poll() is None, "pending write did not reach its live boundary")
+                identity = interrupt(target, label)
+            finally:
+                try:
+                    process.communicate(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
+            outcome = classify_pending(target.tree())
+            expected = classify_pending
+        elif label == "synced_write":
+            committed = "/home/operator/recovery-committed"
+            command(client, key, f"/bin/fsd-probe write {committed} {SIZE}", f"write: {SIZE} bytes ".encode())
+            need(target.tree().get(committed) == OLD, "sync was not visible to the independent reader")
+            identity = interrupt(target, label)
 
-        # A completed sync must survive an abrupt stop and cold boot.
-        committed = "/home/operator/recovery-committed"
-        command(client, key, f"/bin/fsd-probe write {committed} {SIZE}", f"write: {SIZE} bytes ".encode())
-        need(target.tree().get(committed) == OLD, "sync was not visible to the independent reader")
-        identity = interrupt(target, "synced_write")
-        need(target.tree().get(committed) == OLD, "synced bytes absent after interruption")
-        recover(target, client, key, identity, "synced_write",
-                lambda tree: "committed" if tree.get(committed) == OLD else need(False, "synced bytes lost"),
-                committed, OLD)
+            def expected(tree):
+                need(tree.get(committed) == OLD, "synced bytes lost")
+                return "committed"
 
-        # Rename replacement commits a complete namespace transition.
-        old_path = "/home/operator/recovery-old"
-        new_path = "/home/operator/recovery-new"
-        command(client, key, f"/bin/fsd-probe write {old_path} {SIZE}", f"write: {SIZE} bytes ".encode())
-        command(client, key, f"/bin/fsd-probe write {new_path} 4097", b"write: 4097 bytes ")
-        command(client, key, f"/bin/fsd-probe rename {old_path} {new_path}", b"rename: OK ")
-        identity = interrupt(target, "rename_replace")
-        def renamed(tree):
-            need(old_path not in tree and tree.get(new_path) == OLD, "rename replacement recovered an incomplete namespace")
-            return "replaced"
-        renamed(target.tree())
-        recover(target, client, key, identity, "rename_replace", renamed, new_path, OLD)
+            outcome = expected(target.tree())
+        elif label == "rename_replace":
+            old_path = "/home/operator/recovery-old"
+            new_path = "/home/operator/recovery-new"
+            command(client, key, f"/bin/fsd-probe write {old_path} {SIZE}", f"write: {SIZE} bytes ".encode())
+            command(client, key, f"/bin/fsd-probe write {new_path} 4097", b"write: 4097 bytes ")
+            command(client, key, f"/bin/fsd-probe rename {old_path} {new_path}", b"rename: OK ")
+            identity = interrupt(target, label)
+
+            def expected(tree):
+                need(old_path not in tree and tree.get(new_path) == OLD, "rename replacement recovered an incomplete namespace")
+                return "replaced"
+
+            outcome = expected(target.tree())
+        else:
+            raise RuntimeError(f"unknown interruption case: {label}")
+        print(f"CORE FSD HOST ORACLE case={label} outcome={outcome}", flush=True)
+        refuse_recovery(target, identity, label, expected)
+        return target
+    finally:
+        target.stop()
+
+
+def run(args):
+    root = pathlib.Path(args.work).resolve()
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    need(root.stat().st_mode & 0o077 == 0, "work root must be owner-only for the local test key")
+    work = root / str(uuid.uuid4())
+    work.mkdir(mode=0o700)
+    print(f"CORE FSD WORK run={work.name} path={work}", flush=True)
+    key = work / "operator"
+    success = False
+    targets = []
+    fingerprint = "unavailable"
+    review = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)).date().isoformat()
+    try:
+        subprocess.run([ssh_matrix.KEYGEN, "-q", "-t", "ed25519", "-N", "",
+                        "-C", f"core-fsd-refusal-{work.name}", "-f", str(key)], check=True)
+        fingerprint = subprocess.run([ssh_matrix.KEYGEN, "-lf", str(key.with_suffix(".pub"))], check=True,
+                                     capture_output=True, text=True).stdout.split()[1]
+        print(f"CORE FSD KEY run={work.name} fingerprint={fingerprint} "
+              f"destination=local-vm-operator path={key} owner_only=true", flush=True)
+        for label in ("open_write", "synced_write", "rename_replace"):
+            targets.append(run_case(args, work / label, key, label))
         success = True
     finally:
-        runner = target.proc
-        had_live_runner = runner is not None and runner.poll() is None
-        qemu = qemu_identity(runner) if had_live_runner else []
-        try:
-            target.stop()
-        finally:
-            # Waiting for the wrapper is not evidence that its QEMU child
-            # ended. Keep disk and key if that exact consumer is still live
-            # or cannot be identified for the successful final boot.
-            uncertain = runner is not None and (not had_live_runner or len(qemu) != 1 or same_process(qemu[0]))
-            if uncertain:
-                print(f"CORE FSD CUSTODY run={work.name} qemu={qemu} image=retained "
-                      f"private_key=retained reason=live_or_unresolved_consumer review={review}", flush=True)
-                raise RuntimeError("cannot retire image or key: final QEMU exit is unverified")
-            # The run's exact private identity has no consumer after the
-            # VM stops. Logs remain for result review; a failed image
-            # remains for bounded diagnosis. A successful image and
-            # importer inputs are reproducible substrate and retire here.
+        # A successful case verified the writer's exact QEMU exit and the
+        # cold boot's terminal refusal. On any incomplete path retain the
+        # private fixture for explicit campaign process/custody reconciliation;
+        # do not replace the original exception with a cleanup exception.
+        if success:
             key.unlink(missing_ok=True)
-            if success:
+            for target in targets:
                 target.image.unlink(missing_ok=True)
-                for source in work.glob("input-*.bin"):
+                for source in target.work.glob("input-*.bin"):
                     source.unlink()
-            print(f"CORE FSD CUSTODY run={work.name} fingerprint={fingerprint} private_key=retired "
-                  f"image={'retired' if success else 'retained_for_diagnosis'} "
-                  f"logs=retained review={review}", flush=True)
-    if success:
-        print("ABSD RUST CORE FSD RECOVERY OK cases=3 guest_fsd=ready host_oracle=agree", flush=True)
+        print(f"CORE FSD CUSTODY run={work.name} fingerprint={fingerprint} "
+              f"private_key={'retired' if success else 'retained'} "
+              f"image={'retired' if success else 'retained_for_reconciliation'} "
+              f"logs=retained review={review}", flush=True)
+    print("ABSD RUST CORE FSD REFUSAL OK cases=3 guest_fsd=refused host_oracle=agree", flush=True)
 
 
 def main():

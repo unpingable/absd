@@ -1,0 +1,43 @@
+.Dd November 3, 2026
+.Dt DF 1
+.Os ABSD
+.Sh NAME
+.Nm df
+.Nd report shared filesystem space and session mount access
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+Print one filesystem's data capacity, used and available space in
+1024-byte units, rounded-up percentage used, and commit sequence.
+The filesystem id identifies that backing filesystem.
+Used space includes blocks held by the committed image or accepted changes;
+reserved metadata regions are outside the reported data-block count.
+.Pp
+Then print this session's mount paths in sorted order and their read-only
+or read-write access.
+These are views of the same filesystem, not separate Unix filesystems.
+All sessions share the same free space; there are no per-session quotas.
+The commit column is an observation, not a commit request.
+.Pp
+There are no operands or options: even
+.Ql --
+and
+.Fl Fl help
+are usage errors.
+The command requires this process's active file-server channel.
+A direct block handle does not substitute for it.
+An absent channel, a channel lent to a running child, or file-server refusal
+is reported on standard error.
+No data or mount authority is changed.
+.Sh EXIT STATUS
+0 for a successful report; 1 for a file-server request failure;
+2 if any argument is supplied.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+df
+.Ed
+.Sh SEE ALSO
+.Xr stat 1 ,
+.Xr sync 1 ,
+.Xr filesystem 7 ,
+.Xr handles 7

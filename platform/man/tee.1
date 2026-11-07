@@ -1,0 +1,47 @@
+.Dd November 5, 2026
+.Dt TEE 1
+.Os ABSD
+.Sh NAME
+.Nm tee
+.Nd copy standard input to standard output and files
+.Sh SYNOPSIS
+.Nm
+.Op Fl ai
+.Op Ar file ...
+.Sh DESCRIPTION
+Read standard input until end of input and copy it to standard output and
+each named file.
+Without file operands, copy only to standard output.
+Files are created or truncated by default.
+.Fl a
+appends instead of truncating.
+.Pp
+If one file cannot be opened or an output fails, report the error and
+continue copying to the other outputs.
+The final status is nonzero when any output failed.
+Input and output are byte streams; no newline conversion is performed.
+.Sh UNSUPPORTED ON ABSD
+This is the unmodified sbase 0.1 implementation from the pinned archive;
+see
+.Xr sbase 7 .
+.Fl i
+is recognized but refused before any file is opened: ABSD's existing
+signal adapter returns ENOSYS for signal dispositions, including SIG_IGN.
+The error is reported on standard error with a nonzero status.
+.Pp
+File access uses the process's inherited filesystem view.
+Unix owners, permission bits and signal delivery are not provided.
+.Sh EXIT STATUS
+0 when input was copied without error, nonzero on invalid options,
+input/output errors or the unsupported signal option.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+cd /home/operator
+/bin/echo "keep this" | tee notes.txt
+/bin/echo "more" | tee -a notes.txt
+cat notes.txt
+.Ed
+.Sh SEE ALSO
+.Xr cat 1 ,
+.Xr filesystem 7 ,
+.Xr sbase 7

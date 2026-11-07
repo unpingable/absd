@@ -3,8 +3,8 @@
 # (cxx/absd-llvm-toolchain.cmake; scripts/build-llvm-kit.sh). It is
 # absd-c++'s link (ld.lld-17, static ET_EXEC at the image window,
 # absd-c.ld, crt0, libc++ and libc++abi before the kit's group) with the
-# POSIX adapter at the head of the group, as tcc's share libc.a has it
-# (C-INTERFACE.md section 8), and --icf=all. The compiler driver is not
+# POSIX adapter at the head of the group (C-INTERFACE.md section 8), and
+# --icf=all. The compiler driver is not
 # used to link: for x86_64-unknown-none-elf clang hands links to the host
 # g++. CMake's link flags arrive driver-style: -Wl,a,b becomes a b;
 # -static, -no-pie and -fno-pie are what the link is anyway, and -lm names the kit's

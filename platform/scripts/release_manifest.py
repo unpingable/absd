@@ -37,6 +37,7 @@ Integrity, not authenticity: nothing here signs anything (RELEASE.md 11).
 import argparse
 import datetime
 import hashlib
+import json
 import os
 import pathlib
 import re
@@ -74,17 +75,17 @@ RUST_SRC_VERSION = "1.95.0 (59807616e 2026-04-14)"
 RUST_SRC_COMMIT = "59807616e1fa2540724bfbac14d7976d7e4a3860"
 RUST_SRC_TAR_LIBRARY = "rust-src-1.95.0/rust-src/lib/rustlib/src/rust/library"
 LIBRARY_FINGERPRINT = "fcb80715180e5a9cc3179b032d2df540bfadb7a3ea35b04f02d4d97e5aafda3b"
-# Patched library: 2251 files, 45,920,288 bytes. This is recorded metadata;
+# Patched library: 2251 files, 45,920,276 bytes. This is recorded metadata;
 # toolchain_check compares stock rust-src fields, not this staged fingerprint.
 # The native TLS builder/checker independently compare staged bytes and counts.
-STAGED_LIBRARY_FINGERPRINT = "c35493ccdf6cb87a81767902413ad4487caa1bff401d5ccecb1cce9e7a18760c"
+STAGED_LIBRARY_FINGERPRINT = "3961aa8abb13677871f3febc67b5d651da0cd195fd1711abccf288f0164f940c"
 
 STRIP = "llvm-strip-18"
 # How the boot image is made (scripts/operator_image.py kernel_iso, step 0
 # of a served boot): `make durable-iso` with these variables. The ELF
 # variables name platform artifacts; EXTERNAL_INPUT is empty.
-KERNEL_MAKE = {"DURABLE_STEP": "0", "DURABLE_OPTIONS": "net fsd served", "EXTERNAL_USER_ELF": "sshd.elf",
-               "FILE_SERVER_ELF": "absd-fsd.elf", "EXTERNAL_READER_ELF": "", "EXTERNAL_READER_INPUT": "",
+KERNEL_MAKE = {"ABSD_LOCAL_CONSOLE": "1", "DURABLE_STEP": "0", "DURABLE_OPTIONS": "net fsd served", "EXTERNAL_USER_ELF": "sshd.elf",
+               "FILE_SERVER_ELF": "absd-fsd.elf", "LOGD_ELF": "absd-logd.elf", "LOGD_FAULT": "0", "EXTERNAL_READER_ELF": "", "EXTERNAL_READER_INPUT": "",
                "NET_WAIT_TICKS": "", "EXTERNAL_KERNEL_FEATURES": SERVED_KERNEL_FEATURES}
 KERNEL_NORMALIZATION = f"{STRIP} --strip-all, then the .note.gnu.build-id descriptor zeroed"
 HOST_TOOLS = {
@@ -104,13 +105,15 @@ HOST_PACKAGES = ["clang-18", "llvm-18", "grub-common", "grub-pc-bin", "grub-efi-
 GRUB_MODULES = {"i386_pc": "/usr/lib/grub/i386-pc", "x86_64_efi": "/usr/lib/grub/x86_64-efi"}
 IDENTITY_KEYS = ["kernel_abi", "fsd_protocol", "fs_format", "app_abi"]
 SUPPORT = {
-    "environment": "local QEMU, TCG or KVM",
+    "environment": "local QEMU, TCG",
     "architecture": "x86-64",
-    "disk": "the primary IDE master or one NVMe namespace",
+    "disk": "the primary IDE master",
     "nic": "e1000",
     "physical_machine": False,
 }
 LIMITATIONS = [
+    "KVM with IDE has the known #74 deadline limitation; TCG qualification does not establish KVM support.",
+    "KVM with one NVMe namespace requires separate qualification before it is claimed.",
     "Integrity only: the digests detect corruption; nothing signs the manifest (RELEASE.md 11).",
     "The operator image (absd-operator.img) is site state, not a release artifact: it is not recorded.",
     "The ISO is not reproducible bit for bit: grub-mkrescue stamps it with the wall clock (volume UUID, "
@@ -553,14 +556,53 @@ def artifacts(release_dir, platform):
     return files
 
 
-def expected_bin(platform):
+def document_configuration(platform, release_dir):
+    """Bind the explicit selection to the installed bytes and native receipt."""
+    selected = os.environ.get("ABSD_HTTPS_DOCUMENT", "0")
+    if selected not in ("0", "1"):
+        raise Failed("ABSD_HTTPS_DOCUMENT must be 0 or 1")
+    app = release_dir / "tree/bin/https-document"
+    if selected == "0":
+        if app.exists():
+            raise Failed("https-document present without ABSD_HTTPS_DOCUMENT=1")
+        return {"enabled": False}
+    receipt_path = os.environ.get("ABSD_HTTPS_DOCUMENT_RECEIPT")
+    stage_path = os.environ.get("ABSD_TLS_STAGE")
+    if not receipt_path or not stage_path:
+        raise Failed("App A release requires ABSD_HTTPS_DOCUMENT_RECEIPT and ABSD_TLS_STAGE")
+    try:
+        receipt = json.loads(pathlib.Path(receipt_path).read_bytes())
+        stage = json.loads((pathlib.Path(stage_path) / "STAGE.json").read_bytes())
+        output = receipt["outputs"]["https_document"]
+        if (receipt["application"]["schema"] != "absd-https-document-build/1"
+                or receipt["application"]["fixture_selectors"] is not False
+                or receipt["source_revision"] != git(platform, "rev-parse", "HEAD")
+                or receipt["source_tree"] != git(platform, "rev-parse", "HEAD^{tree}")
+                or receipt["tracked_dirty"] is not False or receipt["untracked_source"] is not False
+                or receipt["ring_stage"] != stage
+                or not app.is_file() or output["sha256"] != sha256_file(app)
+                or output["bytes"] != app.stat().st_size
+                or output["sha256"] != sha256_file(platform / "commands/https-document")
+                or receipt["cargo_lock_sha256"] != sha256_file(platform / "tls/Cargo.lock")
+                or receipt["target_sha256"] != sha256_file(platform / "targets/x86_64-unknown-absd.json")):
+            raise Failed("App A release build receipt does not bind installed command/source/stage")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise Failed(f"App A release build inputs: {error}") from None
+    return {"enabled": True, "build_receipt_sha256": sha256_file(receipt_path),
+            "ring_stage_sha256": sha256_bytes(json.dumps(stage, sort_keys=True, separators=(",", ":")).encode()),
+            "cargo_lock_sha256": receipt["cargo_lock_sha256"],
+            "target_sha256": receipt["target_sha256"],
+            "staged_std_source_sha256": receipt["staged_std_source_sha256"]}
+
+
+def expected_bin(platform, document=False):
     """The commands and ports /bin must carry (scripts/operator_image.py)."""
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     try:
         import operator_image as oi
     except Exception:  # its imports need the platform's helpers; fall back
         return [], []
-    return list(oi.NATIVE) + ["absd-sh"], list(oi.PORTS)
+    return list(oi.NATIVE) + ["absd-sh"] + (["https-document"] if document else []), list(oi.PORTS)
 
 
 # -- build ---------------------------------------------------------------------------
@@ -579,7 +621,8 @@ def build(release_dir, platform, kernel, rid=None, given=None, tarball=None, com
     if not (release_dir / ISO).is_file():
         raise Failed(f"{release_dir}: no {ISO}")
     files = artifacts(release_dir, platform)
-    native, ports = expected_bin(platform)
+    document = document_configuration(platform, release_dir)
+    native, ports = expected_bin(platform, document["enabled"])
     absent = [n for n in native + ports if f"tree/bin/{n}" not in files]
     if absent:
         if not partial:
@@ -587,6 +630,9 @@ def build(release_dir, platform, kernel, rid=None, given=None, tarball=None, com
         limitations.append(f"Partial manifest: tree/bin lacks {', '.join(absent)}.")
     vars_ = dict(KERNEL_MAKE, **(make_vars or {}))
     build_out, targets, kernel_image = build_table(platform, kernel, rid, vars_)
+    import operator_image as oi
+    kernel_snapshot = oi.public_source_identity(kernel)
+    platform_snapshot = oi.public_source_identity(platform)
     kernel_local, kernel_remote = repository(kernel)
     platform_local, platform_remote = repository(platform)
     built = built or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -596,16 +642,23 @@ def build(release_dir, platform, kernel, rid=None, given=None, tarball=None, com
     doc["release"] = {"id": rid, "built": built, "built_clock": "host (unsynchronized wall clock, UTC)"}
     doc["identity"] = dict({k: ident[k] for k in IDENTITY_KEYS if k in ident}, source=" + ".join(ident_sources))
     doc["source"] = {
-        "kernel_commit": git(kernel, "rev-parse", "HEAD"),
+        "kernel_commit": kernel_snapshot["upstream_commit"] if kernel_snapshot else git(kernel, "rev-parse", "HEAD"),
+        "kernel_repository_commit": git(kernel, "rev-parse", "HEAD"),
+        "kernel_repository_tree": git(kernel, "rev-parse", "HEAD^{tree}"),
         "kernel_tree_clean": git(kernel, "status", "--porcelain", "--untracked-files=all") == "",
         "kernel_repository": kernel_local, "kernel_remote": kernel_remote,
         "platform_commit": git(platform, "rev-parse", "HEAD"),
         "platform_tree_clean": git(platform, "status", "--porcelain", "--untracked-files=all") == "",
         "platform_repository": platform_local, "platform_remote": platform_remote,
     }
+    if kernel_snapshot is not None:
+        doc["source.kernel_snapshot"] = kernel_snapshot
+    if platform_snapshot is not None:
+        doc["source.platform_snapshot"] = platform_snapshot
     doc["source.coordination_pins"] = coordination(platform, components)
     doc.update(toolchain if toolchain is not None else toolchain_tables(kernel, tarball))
     doc["build"] = build_out
+    doc["build.https_document"] = document
     doc["build.targets"] = targets
     doc["build.kernel_image"] = kernel_image
     doc["artifacts.iso"] = dict(iso, kernel_normalization=KERNEL_NORMALIZATION,
@@ -787,8 +840,7 @@ def main(argv=None):
         b.add_argument("--" + key.replace("_", "-"), type=int, dest=key)
     b.add_argument("--rust-src-tarball", help="also check the published tarball against the installed tree")
     b.add_argument("--components", default=os.environ.get("ABSD_COMPONENTS_TOML"),
-                   help="the qualified-lineage file (default: ABSD_COMPONENTS_TOML; "
-                        "no implicit file when unset)")
+                   help="optional qualified-lineage file (explicit --components or ABSD_COMPONENTS_TOML only)")
     b.add_argument("--kernel-make-var", action="append", default=[], metavar="NAME=VALUE",
                    help="a make variable the ISO was built with that differs from operator_image.py's")
     b.add_argument("--receipt", action="append", default=[], help="a qualification receipt name")

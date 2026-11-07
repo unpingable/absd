@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Host-only checks of scripts/clang-guest-matrix.py (no QEMU), after the
-tcc lane's scripts/tcc-matrix-selftest.py.
+"""Host-only checks of scripts/clang-guest-matrix.py (no QEMU).
 
 1. Steps of a held absd-sh session: split_step cuts a command's stdout,
    status and stderr out of the streams by the step's marks and refuses a
@@ -118,9 +117,10 @@ def fixture(m):
     check("fs_capacity grows with the image", gm.fs_capacity(128 << 20) < gm.fs_capacity(192 << 20) < gm.fs_capacity(256 << 20))
     files = [("/x", b"\0" * (100 << 20))]
     small = gm.smallest_fixture(files)
-    check("smallest_fixture: the first 64 MiB multiple holding payload + headroom",
-          small % gm.FIXTURE_STEP == 0 and gm.fs_capacity(small) >= (100 << 20) + gm.FS_HEADROOM
-          and gm.fs_capacity(small - gm.FIXTURE_STEP) < (100 << 20) + gm.FS_HEADROOM, str(small))
+    need = gm.em.import_peak_bytes(files) + gm.FS_HEADROOM
+    check("smallest_fixture: the first 64 MiB multiple holding peak import allocation + headroom",
+          small % gm.FIXTURE_STEP == 0 and gm.fs_capacity(small) >= need
+          and gm.fs_capacity(small - gm.FIXTURE_STEP) < need, str(small))
     line, fits = m.fixture_line()
     print(line, flush=True)
     check("IMAGE_BYTES holds the committed import list", fits, line)

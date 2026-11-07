@@ -1,0 +1,34 @@
+.Dd November 5, 2026
+.Dt PASTE 1
+.Os ABSD
+.Sh NAME
+.Nm paste
+.Nd combine lines from files
+.Sh SYNOPSIS
+.Nm
+.Op Fl s
+.Op Fl d Ar delimiters
+.Ar file ...
+.Sh DESCRIPTION
+Read one line from each file and print the lines side by side separated by tabs.
+A file that ends early contributes empty fields until every input ends.
+A dash names standard input.
+With
+.Fl s ,
+join the lines of each file into one output line.
+With
+.Fl d ,
+cycle through the given delimiter characters instead of tabs.
+The escapes for newline, tab, backslash and a zero delimiter are supported.
+The zero delimiter (\e0) emits a NUL byte between columns in parallel mode;
+in sequential mode it inserts nothing. An empty delimiter list is refused.
+.Sh EXIT STATUS
+Zero on success, nonzero on input, output or usage errors.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+paste /home/operator/left /home/operator/right
+paste -s -d , /home/operator/left
+.Ed
+.Sh SEE ALSO
+.Xr cut 1 ,
+.Xr sbase 7

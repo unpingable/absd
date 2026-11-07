@@ -115,6 +115,31 @@ impl<P: Pipe> NativeTransport<P> {
             hooks,
         )
     }
+    pub fn new_peer(
+        pipe: P,
+        peer: absd_net::datagram::Address,
+        deadline: u64,
+        hooks: Hooks,
+    ) -> Self {
+        Self::from_client(
+            Client::V4(stream::Client::new(pipe, peer, hooks.pause_ms)),
+            deadline,
+            hooks,
+        )
+    }
+    /// Explicit experimental IPv4 channel; ordinary TLS construction stays v1.
+    /// Typed refusal is preserved as Outcome::Native and fences this pipe.
+    pub fn new_mtu_refusal(pipe: P, deadline: u64, hooks: Hooks) -> Self {
+        Self::from_client(
+            Client::V4(stream::Client::new_mtu_refusal(
+                pipe,
+                crate::PEER,
+                hooks.pause_ms,
+            )),
+            deadline,
+            hooks,
+        )
+    }
     /// Consume a dedicated IPv6 stream channel for this exact scoped peer.
     /// The NIC owner must independently grant it; an address grants no authority.
     pub fn new_ipv6(pipe: P, peer: ipv6::Address, deadline: u64, hooks: Hooks) -> Self {
@@ -185,6 +210,21 @@ impl<P: Pipe> NativeTransport<P> {
     pub fn fence(&mut self) {
         self.client = None;
         self.metrics.pipe_fenced = true;
+    }
+    /// Check local completion work after CLOSE has already spent the pipe.
+    pub(crate) fn terminal_check(&mut self) -> Result<(), Outcome> {
+        let now = (self.hooks.now_ms)();
+        let refused = if (self.hooks.cancelled)() {
+            Some(Outcome::Cancelled)
+        } else if now < self.last {
+            Some(Outcome::Clock)
+        } else if now >= self.deadline {
+            Some(Outcome::Timeout)
+        } else {
+            None
+        };
+        self.last = now;
+        refused.map_or(Ok(()), Err)
     }
     pub fn connect(&mut self) -> io::Result<()> {
         self.check()?;
@@ -321,8 +361,8 @@ mod tests {
         io::{Read, Write},
         rc::Rc,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Mutex,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
     };
     static LOCK: Mutex<()> = Mutex::new(());
@@ -426,7 +466,12 @@ mod tests {
                             reply[10..12].copy_from_slice(&(bytes.len() as u16).to_be_bytes());
                             reply.extend_from_slice(bytes);
                         }
-                        Reply::Error(error) => reply[2] = error.code(),
+                        Reply::Error(error) => {
+                            reply[2] = error.code();
+                            if let stream::Error::FragmentationNeeded { mtu } = error {
+                                reply[10..12].copy_from_slice(&mtu.to_be_bytes());
+                            }
+                        }
                         Reply::Lost => {
                             self.lost = true;
                             return Ok(Some(n));
@@ -473,6 +518,32 @@ mod tests {
     fn reset() {
         NOW.store(1, Ordering::Relaxed);
         CANCELLED.store(false, Ordering::Relaxed);
+    }
+    #[test]
+    fn experimental_fragmentation_refusal_preserves_cause_and_fences_without_replay() {
+        let _lock = LOCK.lock().unwrap();
+        reset();
+        let (pipe, record) = FixturePipe::new(vec![
+            Reply::Connected,
+            Reply::Accepted(3),
+            Reply::Error(stream::Error::FragmentationNeeded { mtu: 900 }),
+        ]);
+        let mut transport = NativeTransport::new_mtu_refusal(pipe, 100, hooks());
+        transport.connect().unwrap();
+        assert_eq!(transport.write(b"abc").unwrap(), 3);
+        assert!(transport.read(&mut [0; 8]).is_err());
+        assert_eq!(
+            transport.native_error,
+            Some(stream::Error::FragmentationNeeded { mtu: 900 })
+        );
+        assert_eq!(transport.outcome, Some(Outcome::Native));
+        assert!(transport.metrics.pipe_fenced);
+        assert!(record.borrow().dropped);
+        let calls = record.borrow().calls.clone();
+        assert!(transport.write(b"abc").is_err());
+        assert_eq!(record.borrow().calls, calls);
+        assert_eq!(record.borrow().accepted, b"abc");
+        assert_eq!(transport.deadline, 100);
     }
     #[test]
     fn native_short_write_and_again_preserve_exact_accepted_prefixes() {

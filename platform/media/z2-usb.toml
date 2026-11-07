@@ -1,6 +1,6 @@
 # Media profile: a whole-disk GPT/EFI USB image for the HP Z2 Mini G3
-# attended boot (generalised from the S4 recipe for
-# bf8c7583/f8184ca, the development checkout).
+# attended boot (coordination record #28; generalised from the S4 recipe for
+# bf8c7583/f8184ca, archived-occurrence).
 #
 # Templates take {kernel} {platform} (full commits), {kernel7} {platform8}
 # (their short forms). Everything else in the image comes from the pair, the
@@ -123,7 +123,7 @@ grub-common = "2.12-1ubuntu7.3"
 grub-efi-amd64-bin = "2.12-1ubuntu7.3"
 libc6-dev = "2.39-0ubuntu8.9"
 mtools = "4.0.43-1build1"
-xz-utils = "5.6.1+really5.4.5-1ubuntu0.3"
+xz-utils = "5.6.1+really5.4.5-1ubuntu0.4"
 
 [pins.rust]
 # The kernel's toolchain, from this location only (never PATH or the rustup

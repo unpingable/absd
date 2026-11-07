@@ -1,9 +1,12 @@
-//! Foreground observation only: no clock discipline, UTC trust or TLS input.
+//! SNTP observations only: no clock discipline, UTC trust or TLS input.
+//! Query is foreground; Poller yields observations to an explicit owner policy.
 //! RFC 5905 packet fields; random transmit/origin correlation per RFC 8915 §9.2.
 use crate::{
     datagram,
     dns::{self, Transport},
 };
+
+pub mod poller;
 
 pub const ATTEMPTS: usize = 3;
 pub const ATTEMPT_MS: u64 = 2000;

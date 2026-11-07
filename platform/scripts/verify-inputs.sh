@@ -26,6 +26,11 @@ expect_file_hash() {
     test "$actual" = "$expected" || fail "unexpected SHA-256 for $path: $actual"
 }
 
+# The C port compiles this exact adaptation in its owned output tree.
+expect_file_hash \
+    f237a33bbe8cee44e186e141bcd638f98802d8f079d554fe70d184a128284427 \
+    "$root/patches/sqlite-3.54.0-clock.patch"
+
 # A file only the extended integration programs read: checked in the full
 # profile, where they are built.
 expect_extended_file_hash() {
@@ -101,7 +106,7 @@ if [ -n "${ABSD_RUST_SRC_TARBALL:-}" ]; then
 fi
 
 expect_file_hash \
-    9e51d04ffd36db6416080f88d6a3de1963bc5d1d629a7cadc9921b623379423b \
+    fccdc978139d92e3a6d5775abe80858abfdf65cbf8b17bcfc3783ff59bc608b5 \
     "$root/patches/rust-1.95.0-absd-std.patch"
 expect_extended_file_hash \
     c43c6822901c0ef4a00dfd63c9849f1f35e0bce69587c824a881f53843a53536 \
@@ -116,7 +121,7 @@ expect_file_hash \
     0558296e4ed45bb5abf111de1dad31dd9874926ce12c21d2b5f6e09b5a8a0faa \
     "$root/user-linker.ld"
 expect_file_hash \
-    b3de7df4ee6a8a3a58eaff56ecf3ccf834eeb9cbbc32818bfc47a0ea355e5c97 \
+    96fd40646f94da3205f22300b59e6a9e6d5555144cf0b13d998fac177dda2f57 \
     "$root/scripts/rustc-staged.sh"
 expect_file_hash \
     ec8167b113f25659f879487cd5d7bef7edfdbba81386fc2a72d01808d320cf9e \
@@ -155,7 +160,7 @@ expect_extended_file_hash \
     b53d2a3725f1da1a9f81afe86bffb38f1d83ec06df8335d9e7ac4726303cab7f \
     "$root/tools/pulse-support-reference/Cargo.lock"
 expect_extended_file_hash \
-    3b9c4e41f8111cfbecd632d6a77ada4b70f7545823623d8006a8a153470778a4 \
+    b0b88227b18cf377544325f44c13a71aed1b32e92180d33ea332349e64dc4ef2 \
     "$root/patches/nq-absd.patch"
 expect_extended_file_hash \
     946812dd976d2c4e36400e1cc46d930359a23a4e3d0e3e665923aa8748490b7c \
@@ -164,7 +169,7 @@ expect_extended_file_hash \
     01e95121eb3e0bb2c065bb89f652eb0ce3b5d590c5ad80abcb0dfb5af27e3041 \
     "$root/pins/nq-absd.Cargo.lock"
 expect_extended_file_hash \
-    d069450bf9203c4dd47acf083e1049ff7e53b0fd29b727b804fd6656e15a84e6 \
+    6e5258b6df38e2ecb55053c2a32ef41363452a838ace4b87b3d243b6ecf74f52 \
     "$root/patches/ag-loopctl-absd.patch"
 expect_extended_file_hash \
     284a0b6aa50f2a43c52d01dad9778420f50adda90eeb0e174d67863342c39f29 \
@@ -176,7 +181,7 @@ expect_extended_file_hash \
     4588737203d6aae311aa8f4fb006009576c313a96e0bb80fe44c419e120b605a \
     "$root/pins/ag-absd.Cargo.lock"
 expect_file_hash \
-    25ba533215a70314c2e00e724d1c88da4049ea00dc51ec2db41f689862fc9a78 \
+    360c7647456b0db4471463eeb3cbd716ecce82261f5c82a795fc2e60684552e1 \
     "$root/Cargo.toml"
 expect_extended_file_hash \
     046ad6a0afe080669291f969e863491d07f0dbc9d97305fe3180921acfa74ffc \
@@ -185,19 +190,19 @@ expect_extended_file_hash \
     b666aeacbbb90b00f08c25242168fba668dcdab33ac99fd187debf59d7299acb \
     "$root/integration/Cargo.lock"
 expect_file_hash \
-    c2507edc9ad5190c7ca18cdb37632ad8cb3101bdd6498ee3b7ec659a68d20284 \
+    517adf73e7b66f7677a9655058bf7dc15a97d45aff6bcd130e35bb7c7f885c39 \
     "$root/Cargo.lock"
 
 vendor_hash=$(
     cd "$root"
-    find vendor/rustc-literal-escaper vendor/ctrlc-stub vendor/tempfile vendor/nix-absd -type f -print0 |
+    find vendor/rustc-literal-escaper vendor/ctrlc-stub vendor/tempfile vendor/nix-absd vendor/conch-parser vendor/shell-glob -type f -print0 |
         LC_ALL=C sort -z |
         xargs -0 sha256sum |
         sha256sum |
         awk '{print $1}'
 )
 test "$vendor_hash" = \
-    17efa65ad2d1c098a385fb80c6232bac07640b0137f5e9c5a32e9fc889b20dfa || \
+    8ec70009519257baf7c7985e0653dc37cbd9c9e1bc52a399cd0d4b3feb126e0a || \
     fail "vendored crates changed: $vendor_hash"
 
 target_spec=$(
@@ -319,11 +324,22 @@ expect_file_hash \
     370a2f637fbecf5963f39c7d6db455708319276afd3b8b4671a278399818f0f5 \
     "$root/patches/sunset-server-channel.patch"
 expect_file_hash \
-    106195da818e39b54428abf213b113a5c4a78ade606c777b5db9f92fda24571f \
+    a2f5d64fadbd3caf06d27d9721e66ae0c8a2d496f37b722b24f4f12bda5742ad \
+    "$root/patches/sunset-terminal-metadata.patch"
+expect_file_hash \
+    8bd1a44514791c4454150aea7cf9f73207c398da7b3de0252da0c889fbed1502 \
     "$root/ssh/Cargo.toml"
 expect_file_hash \
     6d22e11ddaa76f1fbacce61cb9bcbde0d58a954fcf383b66871b73cabe565e96 \
     "$root/ssh/Cargo.lock"
+
+# The document application shares the reviewed TLS lock without new packages.
+expect_file_hash \
+    42d3ec5941409e42eca229e5c99686494b59c410022dfa4d2d15164711f23e44 \
+    "$root/tls/Cargo.toml"
+expect_file_hash \
+    cb9ae1c849fe3f86196e2d0a162453b7f437d1e32be633a4ac02888c26dd42d9 \
+    "$root/tls/Cargo.lock"
 
 # The source-portability probe: its program list (registry archives are
 # checked against these crates.io checksums by scripts/stage-compat.sh) and

@@ -133,7 +133,7 @@ Roles:
 | Role | Name | Handle |
 |---:|---|---|
 | 1 | stdin | read end of the standard input |
-| 2 | stdout | the stdout write end (the same pipe or console as the last handle) |
+| 2 | stdout | the stdout write end (the same pipe or console as the last handle); to signal EOF while staying alive, close every writable alias to that output pipe, including the console and any stderr alias |
 | 3 | stderr | the standard error write end |
 | 4 | block | the block device, as init hands it to a durable worker |
 | 5 | step | the step cell (read-only) |
@@ -281,7 +281,7 @@ on them, and `pipe_info`.
 `FILE_SERVER_ELF`, catalog program `file-server`, 38). Init
 (`run_durable_fsd`) refuses the boot without a file server image, with a
 broker policy, or with a reader. It mints the control channel and
-`FILE_SERVER_SLOTS` (10) client slots before anything starts, because a
+`FILE_SERVER_SLOTS` (18) client slots before anything starts, because a
 handle can reach a process only when it is spawned: each channel is a
 request pipe and a reply pipe, split into ends. Then:
 
@@ -577,6 +577,18 @@ then pauses instead of exiting (the host timeout ends it);
 and boots the same image again. On
 physical hardware none of the three is tested.
 
+An explicit `acpi-reset-qemu` feature plus boot option adds one FADT-first
+attempt to this existing authorized reset path after AP retirement. The
+validated plan accepts only QEMU Q35's byte System I/O descriptor
+(`0xcf9 <- 0x0f`, width 8, offset 0, access 0 or 1, support flag set).
+Disabled, absent or unsupported plans retain the legacy path; an attempt
+that returns after a finite wait records `ACPI RESET RETURNED
+fallback=legacy` before that path. Reset eligibility is independent of S5.
+This adds no reset caller or right and establishes no physical behavior.
+See [the opt-in and limits](USERSPACE.md#opt-in-qemu-q35-fadt-reset) and
+[the focused consumer recipe](x86-acpi-20261015/RESET-TEST.md).
+
+
 ### Machine authority
 
 The machine is a kernel object (`Object::Machine`) reached only through a
@@ -698,3 +710,214 @@ staleness (docs/DESIGN-INFLUENCES.md, "Identity mapping").
   pipes=0`, and the device holds the parent's write and none of the
   children's. `scripts/run-broker.sh` and `scripts/run-pipeline-matrix.sh`
   show the broker path unchanged.
+
+## Session terminal metadata
+
+Platform session children may receive role 21 (`TERMINAL`), a read-only Cell
+containing terminal dimensions. It grants no input, display, spawn or writer
+authority. Only the session owner updates the Cell. Cell schema v1 packs
+columns in bits 0–23, rows 24–47, source in 48–55 (1 local, 2 SSH), and
+version 1 in 56–63. Zero dimensions mean unknown. Consumers refuse unknown
+versions/sources. SSH dimensions are client reports. Reconnect constructs a
+new Cell; this adds no state-transfer or downgrade contract.
+
+`tests/fixtures/terminal-startup.bin` is the shared platform broker vector;
+`python3 scripts/test-terminal-startup.py` exercises this repository's real
+encoder/parser with its supported argument grammar and the same role bytes.
+
+## Logger admission and recovery
+
+In a served boot, init makes the first logd creation attempt with its initial
+frame reservation before reading the worker's stdout or stderr. The worker's
+stdout READY record still retires bootstrap admission at the existing kernel
+pipe-read boundary. Moving READY to stderr is not a supported recovery path.
+If reserved initial creation fails, only logd is refused: init records
+`logd: reserved start refused; not running` with service, generation, error
+and `next_backoff_ticks=none` on the console and typed lifecycle ring. FSD,
+sshd and boot continue without a logger. There is no unreserved first-generation
+fallback and no reserved retry after READY. A new boot may try again. A
+post-creation metadata/reap failure instead reports child state unknown and
+retains its exact handle under the existing quarantine/reaper rules; it never
+falsely reports that an unconfirmed child is not running.
+
+After a created logger generation is confirmed reaped, init uses its existing
+copied spawn (syscall 22), catalog LOGD 44 with NO_SPAWN and the same narrowed
+handles for replacements. No bootstrap authority, Clock grant or admission
+window is renewed. The initial reservation ends when that generation's frames
+are returned; later generations are best-effort. Their construction and growth
+can fail under ordinary memory pressure, while the allocator continues to
+protect outstanding FSD, sshd and init commitments. Initial reserved backing
+is not a promise of continuous reserved capacity for every replacement.
+
+Every refused replacement and ended generation produces a bounded console and
+lifecycle status record naming service=logd, the observation generation, error
+and next backoff (or none after terminal exhaustion). Generation here is a
+boot-local count of created logger processes; exact child handles/PIDs remain
+the reaping authority. A refused attempt names the next proposed generation.
+These records do not establish current persistence; the kernel ring remains
+available through volatile diagnostics even when logd is absent.
+
+R4 recovery remains bounded: consecutive unproductive attempts wait 1, 2, 4, 8,
+16, 30, 60 seconds, then 60 seconds, in delivered boot ticks. Only a later fresh,
+synced acquisition at least 60 seconds after the same generation's first such
+milestone resets this backoff. Heartbeats and elapsed lifetime alone do not.
+Resource refusals and attachment exit 75 do not consume or refund real crash
+history; four successfully created crash replacements exhaust that budget.
+Replacement never overlaps a live or unreaped prior identity; unconfirmed and
+quarantined outcomes retain their existing refusal/cleanup handling. This is
+boot-local recovery, with no live kernel generation transfer/downgrade claim.
+
+`python3 scripts/test-logd-admission.py --work <fresh-directory>` runs actual
+init startup/spawn/policy and bootstrap decoder code with kernel I/O/resource
+substitutions. It checks initial creation, unchanged READY retirement, copied
+replacement, visible pressure refusal and nonfatal initial logger refusal.
+It proves neither a guest boot nor hardware timing or persistence acceptance.
+
+## Managed local operator terminal
+
+The operator composition may build with `ABSD_LOCAL_CONSOLE=1`. In a served
+boot init then retains exclusive physical Console input ownership and keeps
+worker stdin open for bounded input forwarding. Startup role 19 names a separate
+write-only terminal display pipe to init; it is never passed to shell children.
+The platform's `docs/LOCAL-CONSOLE.md` and installed `local-console(7)` own the
+operator enrollment, keys, rights and terminal behavior. There is no default
+secret and no physical-presence shell grant.
+
+Ctrl-] k selects init's read-only retained kernel diagnostics, independent of
+FSD, SSH, network and logging. Ctrl-] r returns to a live worker view. Captured
+service streams remain separate from the display stream. A local-enabled
+terminal suppresses logger console rendering after startup capture closes;
+init still submits those bytes to the service ring and handles its fault markers.
+Headless boots retain the same escaped logger console output. A local-enabled
+served failure first uses the existing bounded essential-service stop and reap.
+A generation that reached readiness may then request a machine recovery reset
+within its advertised recovery budget. A pre-ready generation, an exhausted or
+unknown budget, or a refused reset holds read-only maintenance; an explicit
+external operator reboot is then required for service restart. The unflagged
+headless boot retains its previous recovery-budget behavior.
+
+This is boot composition, not live replacement. There is no state/authority
+transfer protocol or downgrade claim: older startup consumers reject role 19.
+Producer and platform consumer pin identical [golden startup bytes](../user/tests/vectors/local-terminal-startup.hex).
+Init's authority remains bound to its existing physical Console capability;
+local shells receive private terminal/process-control and filesystem channels.
+Host tests establish bounded byte routing and cleanup dispatch, not physical
+hardware_fixture input/display, safe hardware transfer or post-effect rollback.
+
+The physical Console FIFO and init's private input relay each retain at most
+8192 bytes, enough for two 4095-byte canonical lines and their terminators
+between consumer reads. Init still reads at most 128 bytes per terminal step;
+COM1 IRQ4 still banks at most 16 bytes per interrupt. These are bounded burst
+buffers, not physical flow control or an arbitrary-rate delivery guarantee.
+The worker's own queue/line discipline retains its existing bounds.
+
+FIFO exhaustion keeps the older queued prefix and drops new bytes, with
+saturating per-source counters. At a later Console read boundary, new losses
+produce a count-only `console-input` warning in retained kernel diagnostics,
+coalesced to at most one attempt per 1000 ticks. No entered bytes are logged,
+and managed normal display is not interrupted. A busy log defers that sample
+until a later read after the interval; normal bounded log retention/loss still
+applies. A loss warning means the input stream is incomplete, not that a whole
+line was canceled or recovered. The relay's separate overrun cancellation and
+maintenance/session-end cleanup remain unchanged. Deterministic host tests
+cover the preserved 393-byte failure input, a full line, two coalesced lines,
+source ordering, wrap and explicit overflow. Composed IRQ/consumer scheduling
+and physical delivery still require their own runtime observation.
+
+The init maintenance snapshot uses the platform's checked v1 log-frame decoder
+through `absd_user::kernel_log::read_decoded(0, cursor)`, which resolves init's
+retained read-only Diagnostics grant. Each pass reads at most eight records.
+The display includes source, numeric severity, sequence, tick availability,
+record flags, retention gaps and changes in the producer-drop total. Source
+and message controls are escaped. A read or decode failure prints its error
+code once per requested snapshot; a later pass can recover without a reset,
+and Ctrl-] k explicitly starts a fresh snapshot and rearms failure reporting.
+Display writes bypass retained logging, preventing feedback from the reader.
+
+## Served mixed-session capacity
+
+Eighteen session channels plus the worker control channel and private logger
+channel give twenty FSD channels. The startup parser accepts at most 24 channels
+while startup vectors retain the existing 64-entry bound and u64 assignment
+mask. FSD receives 47 handles, SSHD 48 (49 with the optional PCM input). Init's
+construction peak is 94 handles with all twenty channels. SSHD retains at
+most 47 startup handles after startup delivery; six terminal shells add at
+most six handles each (child, input, merged output, two control ends and
+terminal cell), leaving room for the temporary handles of the next spawn
+below its 128-entry table. Local-enabled workers reserve
+six session channels for two local shells and twelve for four remote shells.
+Each admitted shell receives a primary and two spares; release acknowledges
+revocation before reuse.
+
+The 32-slot process table holds four services, six shells and three foreground
+children per shell (28 records), leaving four records. This bound assumes
+ordinary native children do not themselves spawn and that exited children are
+reaped. Unbounded explicit spawning, unreaped children or additional background
+commands can still exhaust global tables.
+
+The legacy broker pipe-pressure fixture uses one process to exhaust the global
+pipe table. Its assumption no longer holds with 128 handles and two handles per
+pipe: it now returns UNSUPPORTED (77), rather than claiming global exhaustion.
+`scripts/broker-test.sh` case 9 retains its historical required PASS marker and
+therefore does not pass this profile. A two-producer offline apparatus repair
+is tracked separately; direct host tests exhaust all 128 global pipe entries
+and verify free/reuse. Spawn-copy tests separately cover 64 successful transfers,
+65 refused transfers and batch insertion rollback. The old full-destination
+spawn fixture is unreachable because 64 transfers plus inherited handles fit
+within the new table.
+
+These capacities change static table layouts, not object identities or handle
+generations. Live generation replacement would have to quiesce scheduling and
+channel traffic, export explicit versioned process/handle/session state,
+validate all bounds and reconstruct authority before commit. Native Rust table
+layout is not a transfer schema; shrinking the table while upper slots are live
+must refuse. No replacement or post-effect rollback is qualified here.
+
+The reservation experiment producer also derives its filler array and printed
+occupied count from the actual process bound. Its historical runner
+`scripts/frame-reservation-experiment.py` still requires `occupied=16`; that
+profile-specific qualification gate is unsupported for this 32-slot profile
+until its apparatus is updated offline. Its historical verdict is unchanged.
+
+On x86-64 the measured HandleTable grows from 2056 to 4104 bytes and Process
+from 3104 to 5152 bytes. The static ProcessTable grows from 49680 to 164880
+bytes (+115200), and six-CPU run queues from 3856 to 7696 bytes (+3840).
+The ordinary FrameAllocator remains 262232 bytes; enabling frame admission
+adds 392 bytes at 32 slots (192 more than its old sixteen-record metadata).
+Other scheduler and optional fixture arrays derive their length from the
+process bound. Ordinary kernel stacks remain eight pages (32 KiB), allocated
+per live process; the capacity change does not preallocate 32 stacks.
+
+Observation syscall 0x7fc1 query 257 returns a 256-byte v1 kind-4 record with
+eight little-endian u64 words: version, kind, ticks, process slots, handles
+per process, maximum spawn transfers, pipes and cells. The remaining bytes
+are zero. Query 256 remains NIC status; kind 3 remains PCI candidates. The
+platform decoder bounds traversal to 1..256 process slots and refuses unknown
+versions/kinds, impossible capacities and nonzero reserved bytes.
+
+### Capacity-sensitive smoke and host oracles
+
+The default smoke refusal oracle follows the current workloads. The maximum
+64-entry COPY child proves two denied operations per imported handle; successful
+COPY is separate from the legacy-entry vector refusal. Client-service filler
+counts derive from process slots, with AP reservations subtracted. The three
+object-pressure cycles reach process handle capacity before global pipe capacity:
+init retains Console and Machine, leaving 126 of 128 handles versus 128 pipe objects.
+Their six boundary refusals therefore count as handle refusals, with zero global
+pipe refusals. The exact ledger lives beside `smoke_handle_refusals` in
+`src/suite.rs`; it expands the former opaque baseline into named workload terms.
+No resource bound, workload, authority, or ABI changes with this oracle correction.
+
+`python3 scripts/test-smoke-accounting.py` evaluates the actual lifecycle and ABI
+expressions against the retained failed smoke summary, using actual table/syscall
+host consumers for the two counters not emitted in that summary. Neighboring
+counter mutations must still refuse. `python3 scripts/test-capacity-oracles.py`
+checks actual SMP slot/peak guards and the full handle-pressure trace. These are
+host checks of selected consumers, not whole SMP receipts or a passing guest.
+Current SMP oracles read the same-source ABI/catalog limits; the kernel app matrix
+explicitly excludes logger input and requires exactly 19 FSD channels and 18 slots.
+An included logger would require 20 channels and is outside that matrix's binding.
+The declared unsupported reservation and broker profiles above retain their
+historical contracts. Independent source review precedes canonical smoke and any
+affected admitted SMP/served matrix execution; host replay never changes a prior
+failed guest verdict or substitutes for that execution.

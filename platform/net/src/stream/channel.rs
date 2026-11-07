@@ -55,6 +55,9 @@ impl Channel<Session> {
     pub fn grant<L: Link>(stack: &mut Stack<L>, grant: Grant) -> Result<Self, Error> {
         Ok(Self::new(Session::grant(stack, grant)?))
     }
+    pub fn grant_mtu_refusal<L: Link>(stack: &mut Stack<L>, grant: Grant) -> Result<Self, Error> {
+        Ok(Self::new(Session::grant_mtu_refusal(stack, grant)?))
+    }
 }
 impl<H: Handler> Channel<H> {
     pub fn new(session: H) -> Self {

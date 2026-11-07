@@ -16,7 +16,11 @@ cpu = 'x86_64'
 endian = 'little'
 
 [properties]
-c_args = ['-ffreestanding', '-nostdlib', '-mcmodel=large', '-fno-pic', '-fno-pie',
+# -nostdlibinc: search only the -I directories and clang's own resource
+# headers, never /usr/local/include or /usr/include. Without it clang's
+# limits.h (reached by Picolibc's #include_next) opens the host glibc
+# limits.h for its __has_include_next probe, even under -ffreestanding.
+c_args = ['-ffreestanding', '-nostdlibinc', '-nostdlib', '-mcmodel=large', '-fno-pic', '-fno-pie',
           '-fno-stack-protector', '-mno-avx', '-march=x86-64',
           '-fno-asynchronous-unwind-tables', '-ffunction-sections', '-fdata-sections',
           '-fdebug-compilation-dir=.', '-fdebug-prefix-map=' + absd_tmpdir + '=/tmp']

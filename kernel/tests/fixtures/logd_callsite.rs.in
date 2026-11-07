@@ -1,0 +1,62 @@
+//! Actual run_external_with startup prefix; callee/resource I/O endpoints trace only.
+use std::fmt::Write;
+use std::sync::Mutex;
+extern crate self as absd_user;
+#[path = "@ROOT@/user/src/worker_console.rs"] mod worker_console;
+#[path = "@ROOT@/user/src/console_lines.rs"] mod console_lines;
+const MAX_WRITE: usize = 256;
+static TRACE:Mutex<Vec<&'static str>>=Mutex::new(Vec::new());
+static mut LOCAL:bool=false;
+#[derive(Clone,Copy)]struct Console;
+impl Console{fn write_once(self,b:&[u8])->Result<usize,()>{Ok(b.len())}}
+#[derive(Clone,Copy)]struct Pipe(u64);
+impl Pipe{
+ fn create()->Result<Self,()>{Ok(Self(10))}fn raw(self)->u64{self.0}fn from_raw(n:u64)->Self{Self(n)}
+ fn read_timeout(self,_:&mut[u8],_:u64)->Result<usize,()>{TRACE.lock().unwrap().push("first_output_read");std::panic::panic_any(AtOutputBoundary)}
+}
+#[derive(Debug)]struct AtOutputBoundary;
+#[derive(Clone,Copy)]struct Child(u64);impl Child{fn raw(self)->u64{self.0}}
+#[derive(Clone,Copy)]enum Party{Plain,Worker(u64),Reader}
+#[derive(Clone,Copy)]struct Outcome;
+#[derive(Clone,Copy)]struct SpawnHandleCopy;
+impl SpawnHandleCopy{fn new(_:u64,_:u64)->Self{Self}fn console(_:u64,_:u64)->Self{Self}}
+struct CapturedStderr(u64);
+mod program{pub const EXTERNAL_WORKLOAD:u64=30;}
+mod broker{pub fn enabled()->bool{false}}
+mod local_console{
+ pub fn enabled()->bool{unsafe{super::LOCAL}}
+ pub struct Terminal;
+ impl Terminal{pub fn new()->Result<Self,&'static str>{Ok(Self)}pub fn writer(&self)->u64{17}pub fn spawned(&mut self){}}
+}
+struct Info{pid:u64}
+fn info(_:Option<Child>)->Result<Info,()>{Ok(Info{pid:3})}
+fn served()->bool{true}fn fsd_boot()->bool{true}fn worker_nic()->u64{1}
+fn duplicate(n:u64,_:u64)->Result<u64,()>{Ok(n)}fn close(_:u64)->Result<(),()>{Ok(())}
+fn split_pipe()->Result<(u64,u64),&'static str>{Ok((12,13))}
+fn spawn_worker_brokered(_:Console,_:u64,_:u64,_:&[SpawnHandleCopy],_:u64,_:u64,_:u64)->Result<Child,&'static str>{TRACE.lock().unwrap().push("worker_spawn");Ok(Child(3))}
+fn spawn_many_copy(_:u64,_:&[SpawnHandleCopy])->Result<Child,()>{panic!("unexpected unrecorded worker")}
+fn service_record(_:Console,_:u64,_:u64,_:u64,_:&[u8]){}
+fn logd_bootstrap(_:Console){TRACE.lock().unwrap().push("logger_bootstrap")}
+fn external_abort(_:Child,_:Pipe,_:bool,_:Pipe){}
+fn external_line(_:Console,_:&String)->Result<(),&'static str>{Ok(())}
+fn external_chunk(_:Console,_:usize,_:&[u8])->Result<(),&'static str>{panic!("unexpected publication before output read")}
+fn external_split_notice(_:Console,_:usize,_:worker_console::Split,_:usize,_:usize)->Result<(),&'static str>{panic!("unexpected split before output read")}
+fn net_wait_ticks()->u64{1000}fn time()->u64{1}
+enum LiveInputError{ReaderClosed,Failed(&'static str)}
+fn receive_live_input(_:Console,_:Pipe,_:u64)->Result<usize,LiveInputError>{panic!("non-live fixture")}
+type LineBuffer=String;
+const RIGHT_READ:u64=1;const RIGHT_WRITE:u64=2;const LOGD_PRESENT:bool=true;const EXTERNAL_WAIT_TICKS:u64=1000;
+static mut SERVED_WORKER_HANDLE:u64=0;static mut EXTERNAL_OUTPUT_OFFSET:usize=0;static mut EXTERNAL_OUTPUT_DIGEST:u32=0;
+EXTRACTED_PREFIX
+fn main(){
+ // The panic is a typed I/O boundary, not an accepted arbitrary failure.
+ std::panic::set_hook(Box::new(|_|{}));
+ for local in [false,true]{
+  TRACE.lock().unwrap().clear();unsafe{LOCAL=local;}
+  let end=std::panic::catch_unwind(||run_external_with(Console,false,30,&[],b"",Party::Worker(1)));
+  assert!(end.as_ref().err().is_some_and(|p|p.is::<AtOutputBoundary>()),"actual prefix did not reach output boundary");
+  let trace=TRACE.lock().unwrap().clone();println!("local={local} actual_callsite_trace={trace:?}");
+  assert_eq!(trace,["worker_spawn","logger_bootstrap","first_output_read"],"logger call missing or outside worker-spawn/output-read interval");
+ }
+ println!("actual run_external_with call-site order PASS (local and headless)");
+}

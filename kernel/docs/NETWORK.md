@@ -121,6 +121,30 @@ development evidence only: no I219 has been observed holding or
 completing a descriptor without carrier (§10 (c) on the Z2 is open), and
 the transmit-hold fixture is refused under `net-i219`.
 
+The opt-in RTL8125B backend (`net-rtl8125`, docs/RTL8125.md "Ring state")
+arms only inside the declared VM envelope (a KVM guest on q35, reference_host's
+VFIO launcher) and refuses a physical boot (`NIC UNAVAILABLE
+Rtl8125(Uncontained(..))`). It sends through `TxSlots` too, with the same
+§10 outcomes: `0` only once the posted descriptor came back without TXERR
+or excessive collisions (one bound: a short spin, then up to 10 polls 1 ms
+apart); a collision count alone is a sent frame. Carrier is the PHY's BMSR
+link and negotiation-complete bits, never PHYSTAT; a BMSR, PHYSTAT, ISR or
+PHY register read of all ones disables the NIC (`ERROR_IO`), it is never
+carrier. A descriptor that completes with TXERR or excessive collisions
+counts in `tx_errors`, not `tx_frames`, and disables the NIC. A frame is
+received only if its FCS is the CRC-32 of its bytes and the interrupt
+status read after its descriptor shows no receive trouble (descriptor
+unavailable, FIFO overflow, system error). Trouble counts one in
+`rx_missed` per overflow episode (a lower bound: the chip gives no count)
+and disables the NIC for the rest of the boot: its rings are quarantined,
+not rebuilt, so a receive overrun costs the NIC until reboot. Pause is not
+advertised, so a link partner's PAUSE frames do not stall transmission. The
+rings are 16 TX and 32 RX slots of 2048 bytes, pinned for the boot; a stop
+and fence are attempted at `exit_qemu`. Received lengths drop the 4-byte
+FCS. This is reference_host-vfio development evidence only, and the transmit-hold
+fixture is refused under `net-rtl8125`. The probe marker prints the PCI
+vendor (`vendor=10ec device=8125`) and this ring geometry.
+
 Boot markers: `NIC CONTROLLER pci=BB:DD.F vendor=8086 device=100e
 mac=...`, then `NETWORK LINK OK rx_descriptors=32 tx_descriptors=16
 buffer_bytes=2048` or `NIC LINK DOWN AT PROBE rx_descriptors=32
@@ -291,7 +315,7 @@ laptop's I219 (e1000e) or I225 (igc) is a different driver.
 
 This source change is based on kernel candidate 5
 `2bfe825a980379583467e80572561f23834435c8`, for the static IPv6 UDP/DNS
-consumer recorded in the internal tracker.
+consumer in coordination issue 41.
 Its result identity is the commit containing this section and the changed
 `src/e1000.rs` / `src/e1000_ring.rs` blobs. The three receive-destination unit
 tests cover station/broadcast preservation, arbitrary solicited-node suffixes
@@ -357,7 +381,7 @@ writes RCTL in the probe, so on QEMU a guest receives nothing for the first
 second after `NIC CONTROLLER`: frames that arrive earlier are delivered
 when the timer fires, and a tap backend stops reading behind the queued
 frame, so a `filter-dump` capture on the netdev also shows later inbound
-frames late. Measured (recorded internally, QEMU 8.2.2, Vultr bare metal, three
+frames late. Measured (archived work item, QEMU 8.2.2, Vultr bare metal, three
 boots per point): a frame sent at any time before the gate opens is
 reflected 1000-1004 ms after the RCTL write, under TCG and KVM alike; a
 frame sent after it is reflected within 4 ms (TCG) or 1-16 ms (KVM). The
